@@ -1,0 +1,1 @@
+{"root":["./src/commands/shell.ts","./src/core/agent.ts","./src/utils/boot.ts","./src/utils/config.ts","./src/utils/human-in-loop.ts","./src/utils/repo-map.ts","./src/utils/setup.ts"],"version":"5.9.3"}
