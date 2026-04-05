@@ -6,6 +6,8 @@ import { type LanguageModel, type ModelMessage, stepCountIs, streamText, tool, t
 import { exec } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import * as vm from 'node:vm';
+import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createOllama } from 'ollama-ai-provider';
 import { z } from 'zod';
@@ -190,14 +192,27 @@ function createSearchCodebaseTool(resolvedTargetPath: string) {
       }
 
       let regex: RegExp;
+
+      // Reusable VM context for better performance
+      const sandbox = { re: /./, str: '' };
+      const context = vm.createContext(sandbox);
+      const script = new vm.Script('re.test(str)');
+
+      // Helper to safely test regex with a timeout to prevent ReDoS
+      const safeTest = (re: RegExp, str: string): boolean => {
+        sandbox.re = re;
+        sandbox.str = str;
+        return script.runInContext(context, { timeout: 100 }); // 100ms timeout
+      };
+
       try {
         // Use a timeout for regex compilation and testing
         regex = new RegExp(regexPattern, 'gi');
-        // Test the regex with a simple string to catch catastrophic backtracking early
-        const testString = 'a'.repeat(100);
-        regex.test(testString);
+        // Test the regex with a string that triggers backtracking to catch ReDoS early
+        const testString = 'a'.repeat(100) + 'b';
+        safeTest(regex, testString);
       } catch (error) {
-        return `[ERROR] Invalid regex pattern: ${(error as Error).message}`;
+        return `[ERROR] Invalid regex pattern or potential ReDoS: ${(error as Error).message}`;
       }
 
       async function searchDir(dir: string): Promise<void> {
@@ -223,10 +238,15 @@ function createSearchCodebaseTool(resolvedTargetPath: string) {
               const content = await fs.readFile(fullPath, 'utf8');
               const lines = content.split('\n');
               
-              for (const [i, line] of lines.entries()) {
-                if (regex.test(line)) {
+              for (let i = 0; i < lines.length; i++) {
+                try {
+                  if (safeTest(regex, lines[i])) {
+                    const relativePath = path.relative(resolvedTargetPath, fullPath);
+                    results.push(`${relativePath}:${i + 1}: ${lines[i].trim()}`);
+                  }
+                } catch (error) {
                   const relativePath = path.relative(resolvedTargetPath, fullPath);
-                  results.push(`${relativePath}:${i + 1}: ${line.trim()}`);
+                  results.push(`${relativePath}:${i + 1}: [TIMEOUT] Search skipped on this line due to potential ReDoS`);
                 }
 
                 // Reset regex lastIndex for global flag
