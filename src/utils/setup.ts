@@ -1,7 +1,9 @@
-import React from 'react';
 import { render } from 'ink';
-import { loadConfig, saveConfig } from './config.js';
+import React from 'react';
+
 import type { ShadowConfig } from './config.js';
+
+import { loadConfig, saveConfig } from './config.js';
 
 /**
  * Runs the interactive setup wizard using React/Ink if configuration is missing or forced via --reconfigure.
@@ -24,19 +26,32 @@ export async function runSetupWizard(forceReconfigure = false): Promise<ShadowCo
  */
 export function getModelPlaceholder(provider: string): string {
   switch (provider) {
-    case 'anthropic':
+    case 'anthropic': {
       return 'claude-sonnet-4-20250514';
-    case 'openai':
-      return 'gpt-4o';
-    case 'google':
-      return 'gemini-2.5-pro-preview-05-06';
-    case 'mistral':
-      return 'mistral-large-latest';
-    case 'ollama':
-      return 'llama3';
-    case 'custom':
+    }
+
+    case 'custom': {
       return 'your-model-name';
-    default:
+    }
+
+    case 'google': {
+      return 'gemini-2.5-pro-preview-05-06';
+    }
+
+    case 'mistral': {
+      return 'mistral-large-latest';
+    }
+
+    case 'ollama': {
+      return 'llama3';
+    }
+
+    case 'openai': {
+      return 'gpt-4o';
+    }
+
+    default: {
       return 'model-name';
+    }
   }
 }

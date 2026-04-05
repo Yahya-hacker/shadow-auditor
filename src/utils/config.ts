@@ -1,15 +1,15 @@
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 import * as os from 'node:os';
+import * as path from 'node:path';
 
 /**
  * Configuration interface for Shadow Auditor
  */
 export interface ShadowConfig {
-  provider: string;
-  model: string;
   apiKey: string;
   customBaseUrl?: string;
+  model: string;
+  provider: string;
 }
 
 const CONFIG_FILENAME = '.shadow-auditor.json';
@@ -25,11 +25,11 @@ function getConfigPath(): string {
  * Loads the Shadow Auditor configuration from ~/.shadow-auditor.json
  * Returns null if the file doesn't exist or is invalid
  */
-export async function loadConfig(): Promise<ShadowConfig | null> {
+export async function loadConfig(): Promise<null | ShadowConfig> {
   const configPath = getConfigPath();
 
   try {
-    const raw = await fs.readFile(configPath, 'utf-8');
+    const raw = await fs.readFile(configPath, 'utf8');
     const parsed = JSON.parse(raw) as ShadowConfig;
 
     // Validate essential fields

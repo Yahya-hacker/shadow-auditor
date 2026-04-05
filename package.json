@@ -76,6 +76,7 @@
   },
   "repository": "Yahya-hacker/shadow-auditor",
   "scripts": {
+    "start": "node ./bin/run.js shell --reconfigure",
     "build": "shx rm -rf dist && tsc -b",
     "lint": "eslint",
     "postpack": "shx rm -f oclif.manifest.json",
