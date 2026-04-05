@@ -456,6 +456,31 @@ const CANVAS_WIDTH = 80;
 const CANVAS_HEIGHT = 24;
 const DEFAULT_LOOP = true;
 
+/**
+ * Calculates the next frame index and playback status.
+ *
+ * @param currentIndex - The index of the current frame.
+ * @param totalFrames - Total number of frames in the animation.
+ * @param loop - Whether the animation should loop back to the beginning.
+ * @returns An object containing the next frame index and whether playback should continue.
+ */
+const calculateNextFrame = (
+  currentIndex: number,
+  totalFrames: number,
+  loop: boolean,
+): { nextIndex: number; continuePlaying: boolean } => {
+  const nextIndex = currentIndex + 1;
+
+  if (nextIndex >= totalFrames) {
+    if (loop) {
+      return { nextIndex: 0, continuePlaying: true };
+    }
+    return { nextIndex: currentIndex, continuePlaying: false };
+  }
+
+  return { nextIndex, continuePlaying: true };
+};
+
 export const AsciiMotionCli: React.FC<AsciiMotionCliProps> = ({
   autoPlay = true,
   hasDarkBackground = true,
@@ -499,13 +524,10 @@ export const AsciiMotionCli: React.FC<AsciiMotionCliProps> = ({
       const currentFrame = FRAMES[frameIndex];
       if (frameElapsedRef.current >= currentFrame.duration) {
         frameElapsedRef.current = 0;
-        const nextIndex = frameIndex + 1;
-        if (nextIndex >= FRAMES.length) {
-          if (loop) {
-            setFrameIndex(0);
-          } else {
-            setIsPlaying(false);
-          }
+        const { nextIndex, continuePlaying } = calculateNextFrame(frameIndex, FRAMES.length, loop);
+
+        if (!continuePlaying) {
+          setIsPlaying(false);
         } else {
           setFrameIndex(nextIndex);
         }
