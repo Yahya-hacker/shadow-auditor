@@ -1,15 +1,15 @@
-import React, { useState } from 'react';
 import { Box, Text } from 'ink';
 import SelectInput from 'ink-select-input';
+import React, { useState } from 'react';
 
 interface ConfirmDialogProps {
-  title: string;
-  message: string;
   details?: string;
+  message: string;
   onConfirm: (confirmed: boolean) => void;
+  title: string;
 }
 
-export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ title, message, details, onConfirm }) => {
+export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ details, message, onConfirm, title }) => {
   const options = [
     { label: 'Yes, approve', value: true },
     { label: 'No, deny', value: false },
@@ -20,7 +20,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ title, message, de
   };
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="yellow" padding={1}>
+    <Box borderColor="yellow" borderStyle="round" flexDirection="column" padding={1}>
       <Box marginBottom={1}>
         <Text bold color="yellow">{title}</Text>
       </Box>
@@ -28,7 +28,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ title, message, de
         <Text>{message}</Text>
       </Box>
       {details && (
-        <Box marginBottom={1} borderStyle="single" borderColor="gray" padding={1}>
+        <Box borderColor="gray" borderStyle="single" marginBottom={1} padding={1}>
           <Text dimColor>{details}</Text>
         </Box>
       )}
@@ -39,16 +39,16 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ title, message, de
 
 interface FileEditPreviewProps {
   filePath: string;
-  targetCode: string;
-  replacementCode: string;
   onConfirm: (confirmed: boolean) => void;
+  replacementCode: string;
+  targetCode: string;
 }
 
 export const FileEditPreview: React.FC<FileEditPreviewProps> = ({
   filePath,
-  targetCode,
-  replacementCode,
   onConfirm,
+  replacementCode,
+  targetCode,
 }) => {
   const options = [
     { label: 'Apply patch', value: true },
@@ -60,7 +60,7 @@ export const FileEditPreview: React.FC<FileEditPreviewProps> = ({
   };
 
   return (
-    <Box flexDirection="column" borderStyle="double" borderColor="yellow" padding={1}>
+    <Box borderColor="yellow" borderStyle="double" flexDirection="column" padding={1}>
       <Box marginBottom={1}>
         <Text bold color="yellow">🔧 PROPOSED FILE EDIT</Text>
       </Box>
@@ -70,18 +70,18 @@ export const FileEditPreview: React.FC<FileEditPreviewProps> = ({
       </Box>
       
       {/* Remove section */}
-      <Box marginBottom={1} flexDirection="column">
+      <Box flexDirection="column" marginBottom={1}>
         <Text bold color="red">─── REMOVE ───</Text>
         {targetCode.split('\n').map((line, idx) => (
-          <Text key={`remove-${idx}`} color="red">- {line}</Text>
+          <Text color="red" key={`remove-${idx}`}>- {line}</Text>
         ))}
       </Box>
 
       {/* Add section */}
-      <Box marginBottom={1} flexDirection="column">
+      <Box flexDirection="column" marginBottom={1}>
         <Text bold color="green">+++ ADD +++</Text>
         {replacementCode.split('\n').map((line, idx) => (
-          <Text key={`add-${idx}`} color="green">+ {line}</Text>
+          <Text color="green" key={`add-${idx}`}>+ {line}</Text>
         ))}
       </Box>
 
@@ -110,11 +110,11 @@ export const CommandPreview: React.FC<CommandPreviewProps> = ({ command, onConfi
   };
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="yellow" padding={1}>
+    <Box borderColor="yellow" borderStyle="round" flexDirection="column" padding={1}>
       <Box marginBottom={1}>
         <Text bold color="yellow">⚡ PROPOSED COMMAND EXECUTION</Text>
       </Box>
-      <Box marginBottom={1} borderStyle="single" borderColor="magenta" padding={1}>
+      <Box borderColor="magenta" borderStyle="single" marginBottom={1} padding={1}>
         <Text color="magenta">$ {command}</Text>
       </Box>
       <Box marginBottom={1}>

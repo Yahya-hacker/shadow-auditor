@@ -1,34 +1,34 @@
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import Parser from 'tree-sitter';
 import JavaScript from 'tree-sitter-javascript';
 import TypeScript from 'tree-sitter-typescript';
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 
 // Node types whose structural signatures we extract
 const STRUCTURAL_TYPES = new Set([
-  'import_statement',
-  'class_declaration',
-  'function_declaration',
-  'method_definition',
-  'export_statement',
-  'interface_declaration',
-  'type_alias_declaration',
-  'enum_declaration',
   'arrow_function',
+  'class_declaration',
+  'enum_declaration',
+  'export_statement',
+  'function_declaration',
+  'import_statement',
+  'interface_declaration',
   'lexical_declaration',
+  'method_definition',
+  'type_alias_declaration',
 ]);
 
 // Directories to skip during traversal
 const IGNORED_DIRS = new Set([
-  'node_modules',
-  '.git',
-  'dist',
-  'build',
-  '.next',
-  'coverage',
-  '__pycache__',
-  '.turbo',
   '.cache',
+  '.git',
+  '.next',
+  '.turbo',
+  '__pycache__',
+  'build',
+  'coverage',
+  'dist',
+  'node_modules',
 ]);
 
 /**
@@ -54,7 +54,7 @@ async function collectFiles(dirPath: string): Promise<string[]> {
         }
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name);
-        if (['.js', '.ts', '.tsx', '.jsx'].includes(ext)) {
+        if (['.js', '.jsx', '.ts', '.tsx'].includes(ext)) {
           results.push(fullPath);
         }
       }
@@ -68,17 +68,22 @@ async function collectFiles(dirPath: string): Promise<string[]> {
 /**
  * Gets the correct parser language for a file extension
  */
-function getLanguage(filePath: string): unknown | null {
+function getLanguage(filePath: string): null | unknown {
   const ext = path.extname(filePath);
   switch (ext) {
-    case '.ts':
-    case '.tsx':
-      return TypeScript.typescript;
     case '.js':
-    case '.jsx':
+    case '.jsx': {
       return JavaScript;
-    default:
+    }
+
+    case '.ts':
+    case '.tsx': {
+      return TypeScript.typescript;
+    }
+
+    default: {
       return null;
+    }
   }
 }
 
@@ -200,7 +205,7 @@ function extractFunctionSignature(node: Parser.SyntaxNode): string {
 function extractMethodSignature(node: Parser.SyntaxNode): string {
   const isAsync = node.children.some((c) => c.type === 'async');
   const isStatic = node.children.some((c) => c.text === 'static');
-  const accessModifier = node.children.find((c) => ['public', 'private', 'protected'].includes(c.text))?.text;
+  const accessModifier = node.children.find((c) => ['private', 'protected', 'public'].includes(c.text))?.text;
   const name = node.childForFieldName('name')?.text ?? 'anonymous';
   const params = node.childForFieldName('parameters')?.text ?? '()';
   const returnType = node.childForFieldName('return_type')?.text ?? '';
@@ -217,13 +222,13 @@ function extractMethodSignature(node: Parser.SyntaxNode): string {
 /**
  * Parses a single file and returns its structural skeleton
  */
-async function parseFile(parser: Parser, filePath: string, basePath: string): Promise<string | null> {
+async function parseFile(parser: Parser, filePath: string, basePath: string): Promise<null | string> {
   const language = getLanguage(filePath);
   if (!language) return null;
 
   let sourceCode: string;
   try {
-    sourceCode = await fs.readFile(filePath, 'utf-8');
+    sourceCode = await fs.readFile(filePath, 'utf8');
   } catch {
     return null; // Silently skip unreadable files
   }

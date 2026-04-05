@@ -1,13 +1,13 @@
 // boot.ts
-import { setTimeout } from 'timers/promises';
+import { setTimeout } from 'node:timers/promises';
 
 // ANSI escape codes for color fidelity
-const C = '\x1b[38;5;51m'; // Neon Cyan (Hexagon and circuits)
-const B = '\x1b[38;5;33m'; // Deep Blue
-const R = '\x1b[38;5;196m'; // Bright Red (Red Team Helmet)
-const W = '\x1b[1;37m'; // Bright White (Main text)
-const G = '\x1b[38;5;242m'; // Gray (Subtitles)
-const Z = '\x1b[0m'; // Reset
+const C = '\u001B[38;5;51m'; // Neon Cyan (Hexagon and circuits)
+const B = '\u001B[38;5;33m'; // Deep Blue
+const R = '\u001B[38;5;196m'; // Bright Red (Red Team Helmet)
+const W = '\u001B[1;37m'; // Bright White (Main text)
+const G = '\u001B[38;5;242m'; // Gray (Subtitles)
+const Z = '\u001B[0m'; // Reset
 
 // Abstract ASCII representation of the image
 export const bootSequence = [
@@ -15,7 +15,7 @@ export const bootSequence = [
   `${C}               .:::                           :::.`,
   `${C}            .:::       ${R}       _-------_       ${C}   :::.`,
   `${C}         .:::          ${R}    .\`           \`.    ${C}      :::.`,
-  `${C}        :::    10110   ${R}   /   \x1b[41m  \x1b[0m${R}     \x1b[41m  \x1b[0m${R}   \\   ${C}  00101   :::`,
+  `${C}        :::    10110   ${R}   /   \u001B[41m  \u001B[0m${R}     \u001B[41m  \u001B[0m${R}   \\   ${C}  00101   :::`,
   `${C}        :::   ---o     ${R}  |    ${W}*${R}       ${W}*${R}    |  ${C}     o--- :::`,
   `${C}        :::            ${R}  |   ___     ___   |  ${C}          :::`,
   `${C}        :::     []     ${R}   \\  | |     | |  /   ${C}    []    :::`,
