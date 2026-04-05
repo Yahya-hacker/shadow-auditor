@@ -1,15 +1,15 @@
 // boot.ts
 import { setTimeout } from 'timers/promises';
 
-// Codes d'échappement ANSI pour la fidélité des couleurs
-const C = '\x1b[38;5;51m'; // Cyan néon (Hexagone et circuits)
-const B = '\x1b[38;5;33m'; // Bleu profond
-const R = '\x1b[38;5;196m'; // Rouge vif (Casque Red Team)
-const W = '\x1b[1;37m'; // Blanc brillant (Texte principal)
-const G = '\x1b[38;5;242m'; // Gris (Sous-titres)
-const Z = '\x1b[0m'; // Réinitialisation
+// ANSI escape codes for color fidelity
+const C = '\x1b[38;5;51m'; // Neon Cyan (Hexagon and circuits)
+const B = '\x1b[38;5;33m'; // Deep Blue
+const R = '\x1b[38;5;196m'; // Bright Red (Red Team Helmet)
+const W = '\x1b[1;37m'; // Bright White (Main text)
+const G = '\x1b[38;5;242m'; // Gray (Subtitles)
+const Z = '\x1b[0m'; // Reset
 
-// Représentation ASCII abstraite de l'image
+// Abstract ASCII representation of the image
 export const bootSequence = [
   `${C}                  .::._____________________.::.`,
   `${C}               .:::                           :::.`,
@@ -39,20 +39,20 @@ export const bootSequence = [
 ];
 
 /**
- * Moteur d'animation pour l'art ASCII et les logs de démarrage
- * @param lines Le tableau de lignes ASCII pré-colorées
- * @param delayMs Le délai en millisecondes entre chaque ligne
+ * Animation engine for ASCII art and boot logs
+ * @param lines The array of pre-colored ASCII lines
+ * @param delayMs The delay in milliseconds between each line
  */
 export async function animateBootUp(lines: string[], delayMs: number = 50): Promise<void> {
   console.clear();
 
   for (let i = 0; i < lines.length; i++) {
-    // Écrit la ligne directement dans le flux standard sans saut de ligne supplémentaire
+    // Write the line directly to stdout without extra newline
     process.stdout.write(lines[i] + '\n');
 
-    // Ajoute un effet dramatique pour les dernières lignes (simulation de chargement réseau)
+    // Add dramatic effect for the last lines (network loading simulation)
     if (i > lines.length - 4) {
-      await setTimeout(600); // Délai plus long pour les logs de fin
+      await setTimeout(600); // Longer delay for end logs
     } else {
       await setTimeout(delayMs);
     }
