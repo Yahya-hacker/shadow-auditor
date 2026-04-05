@@ -1,19 +1,24 @@
-import { streamText, tool, stepCountIs, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
-import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createMistral } from '@ai-sdk/mistral';
-import { createOllama } from 'ollama-ai-provider';
-import { z } from 'zod';
+import { createOpenAI } from '@ai-sdk/openai';
+import { type LanguageModel, type ModelMessage, stepCountIs, streamText, tool, type ToolSet } from 'ai';
+import { exec } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as vm from 'node:vm';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createOllama } from 'ollama-ai-provider';
+import { z } from 'zod';
+
 import type { ShadowConfig } from '../utils/config.js';
-import { confirmFileEdit, confirmCommandExecution } from '../utils/human-in-loop.js';
+
+import { confirmCommandExecution, confirmFileEdit } from '../utils/human-in-loop.js';
 
 const execAsync = promisify(exec);
+
+const TEXT_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json', '.yaml', '.yml', '.md', '.txt', '.py', '.rb', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.hpp', '.cs', '.php', '.html', '.css', '.scss', '.vue', '.svelte'];
 
 // ─── THE SYSTEM PROMPT ──────────────────────────────────────────────────────────
 
@@ -58,7 +63,7 @@ For each finding, provide:
  * Supports: Anthropic, OpenAI, Google, Mistral, Ollama, and any OpenAI-compatible custom endpoint.
  */
 export function getModel(config: ShadowConfig): LanguageModel {
-  const { provider, model, apiKey, customBaseUrl } = config;
+  const { apiKey, customBaseUrl, model, provider } = config;
 
   switch (provider) {
     case 'anthropic': {
@@ -66,9 +71,12 @@ export function getModel(config: ShadowConfig): LanguageModel {
       return anthropic(model) as LanguageModel;
     }
 
-    case 'openai': {
-      const openai = createOpenAI({ apiKey });
-      return openai(model) as LanguageModel;
+    case 'custom': {
+      const customProvider = createOpenAI({
+        apiKey,
+        baseURL: customBaseUrl,
+      });
+      return customProvider(model) as LanguageModel;
     }
 
     case 'google': {
@@ -86,16 +94,14 @@ export function getModel(config: ShadowConfig): LanguageModel {
       return ollama(model) as unknown as LanguageModel;
     }
 
-    case 'custom': {
-      const customProvider = createOpenAI({
-        apiKey,
-        baseURL: customBaseUrl,
-      });
-      return customProvider(model) as LanguageModel;
+    case 'openai': {
+      const openai = createOpenAI({ apiKey });
+      return openai(model) as LanguageModel;
     }
 
-    default:
+    default: {
       throw new Error(`[SHADOW-AUDITOR] Unknown provider: "${provider}". Supported: anthropic, openai, google, mistral, ollama, custom.`);
+    }
   }
 }
 
@@ -108,10 +114,7 @@ function createFileReadTool(resolvedTargetPath: string) {
   return tool({
     description:
       'Reads the full, uncompressed source code of a specific file. Use this when you need to inspect the actual implementation of a function, class, or module that appears suspicious in the Repo Map or that the user has asked about.',
-    inputSchema: z.object({
-      filePath: z.string().describe('The relative file path from the repository root to read.'),
-    }),
-    execute: async ({ filePath }: { filePath: string }) => {
+    async execute({ filePath }: { filePath: string }) {
       const absolutePath = path.resolve(resolvedTargetPath, filePath);
 
       // Security: prevent directory traversal outside the target
@@ -123,12 +126,15 @@ function createFileReadTool(resolvedTargetPath: string) {
       }
 
       try {
-        const content = await fs.readFile(absolutePath, 'utf-8');
+        const content = await fs.readFile(absolutePath, 'utf8');
         return `// ─── FILE: ${filePath} ───\n${content}`;
       } catch (error) {
         return `[ERROR] Could not read file "${filePath}": ${(error as Error).message}`;
       }
     },
+    inputSchema: z.object({
+      filePath: z.string().describe('The relative file path from the repository root to read.'),
+    }),
   });
 }
 
@@ -139,10 +145,7 @@ function createListDirectoryTool(resolvedTargetPath: string) {
   return tool({
     description:
       'Lists the contents of a directory. Use this when the Repo Map lacks specific configuration files or when you need to explore folder structures to find hidden configuration, test files, or other relevant files.',
-    inputSchema: z.object({
-      path: z.string().describe('The relative directory path from the repository root to list. Use "." for root.'),
-    }),
-    execute: async ({ path: dirPath }: { path: string }) => {
+    async execute({ path: dirPath }: { path: string }) {
       const absolutePath = path.resolve(resolvedTargetPath, dirPath);
 
       // Security: prevent directory traversal outside the target
@@ -166,6 +169,9 @@ function createListDirectoryTool(resolvedTargetPath: string) {
         return `[ERROR] Could not list directory "${dirPath}": ${(error as Error).message}`;
       }
     },
+    inputSchema: z.object({
+      path: z.string().describe('The relative directory path from the repository root to list. Use "." for root.'),
+    }),
   });
 }
 
@@ -176,11 +182,7 @@ function createSearchCodebaseTool(resolvedTargetPath: string) {
   return tool({
     description:
       'Searches the entire codebase for a specific regex pattern. Use this to hunt for dangerous sinks (e.g., "exec", "eval", "innerHTML", "dangerouslySetInnerHTML"), hardcoded secrets, or specific function calls across all files. Excludes node_modules and .git directories.',
-    inputSchema: z.object({
-      regexPattern: z.string().describe('The regex pattern to search for (e.g., "eval\\\\s*\\\\(", "password\\\\s*=").'),
-      fileExtension: z.string().optional().describe('Optional file extension filter (e.g., ".ts", ".js", ".py").'),
-    }),
-    execute: async ({ regexPattern, fileExtension }: { regexPattern: string; fileExtension?: string }) => {
+    async execute({ fileExtension, regexPattern }: { fileExtension?: string; regexPattern: string; }) {
       const results: string[] = [];
 
       // Security: Validate regex pattern to prevent ReDoS attacks
@@ -229,12 +231,11 @@ function createSearchCodebaseTool(resolvedTargetPath: string) {
             if (fileExtension && !entry.name.endsWith(fileExtension)) continue;
             
             // Only search text files
-            const textExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json', '.yaml', '.yml', '.md', '.txt', '.py', '.rb', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.hpp', '.cs', '.php', '.html', '.css', '.scss', '.vue', '.svelte'];
-            const hasTextExt = textExtensions.some((ext) => entry.name.endsWith(ext));
+            const hasTextExt = TEXT_EXTENSIONS.some((ext) => entry.name.endsWith(ext));
             if (!hasTextExt) continue;
 
             try {
-              const content = await fs.readFile(fullPath, 'utf-8');
+              const content = await fs.readFile(fullPath, 'utf8');
               const lines = content.split('\n');
               
               for (let i = 0; i < lines.length; i++) {
@@ -247,6 +248,7 @@ function createSearchCodebaseTool(resolvedTargetPath: string) {
                   const relativePath = path.relative(resolvedTargetPath, fullPath);
                   results.push(`${relativePath}:${i + 1}: [TIMEOUT] Search skipped on this line due to potential ReDoS`);
                 }
+
                 // Reset regex lastIndex for global flag
                 regex.lastIndex = 0;
               }
@@ -271,6 +273,10 @@ function createSearchCodebaseTool(resolvedTargetPath: string) {
         return `[ERROR] Search failed: ${(error as Error).message}`;
       }
     },
+    inputSchema: z.object({
+      fileExtension: z.string().optional().describe('Optional file extension filter (e.g., ".ts", ".js", ".py").'),
+      regexPattern: z.string().describe(String.raw`The regex pattern to search for (e.g., "eval\\s*\\(", "password\\s*=").`),
+    }),
   });
 }
 
@@ -281,12 +287,7 @@ function createEditFileTool(resolvedTargetPath: string) {
   return tool({
     description:
       'Proposes and applies a patch to a file. Use this to fix security vulnerabilities by replacing vulnerable code with secure alternatives. REQUIRES USER CONFIRMATION before applying. If the user denies, you should propose an alternative solution.',
-    inputSchema: z.object({
-      filePath: z.string().describe('The relative file path from the repository root to edit.'),
-      targetCode: z.string().describe('The exact code snippet to find and replace (must match exactly).'),
-      replacementCode: z.string().describe('The new code to replace the target with.'),
-    }),
-    execute: async ({ filePath, targetCode, replacementCode }: { filePath: string; targetCode: string; replacementCode: string }) => {
+    async execute({ filePath, replacementCode, targetCode }: { filePath: string; replacementCode: string; targetCode: string; }) {
       const absolutePath = path.resolve(resolvedTargetPath, filePath);
 
       // Security: prevent directory traversal outside the target
@@ -299,7 +300,7 @@ function createEditFileTool(resolvedTargetPath: string) {
 
       try {
         // Read the current file content
-        const content = await fs.readFile(absolutePath, 'utf-8');
+        const content = await fs.readFile(absolutePath, 'utf8');
         
         // Check if target code exists
         if (!content.includes(targetCode)) {
@@ -322,6 +323,11 @@ function createEditFileTool(resolvedTargetPath: string) {
         return `[ERROR] Could not edit file "${filePath}": ${(error as Error).message}`;
       }
     },
+    inputSchema: z.object({
+      filePath: z.string().describe('The relative file path from the repository root to edit.'),
+      replacementCode: z.string().describe('The new code to replace the target with.'),
+      targetCode: z.string().describe('The exact code snippet to find and replace (must match exactly).'),
+    }),
   });
 }
 
@@ -332,10 +338,7 @@ function createExecuteCommandTool(resolvedTargetPath: string) {
   return tool({
     description:
       'Executes a shell command in the target repository. Use this to run git commands, test suites, linters, or build tools. REQUIRES USER CONFIRMATION before executing. Returns stdout and stderr so you can analyze the results.',
-    inputSchema: z.object({
-      command: z.string().describe('The shell command to execute (e.g., "git status", "npm test", "npm run lint").'),
-    }),
-    execute: async ({ command }: { command: string }) => {
+    async execute({ command }: { command: string }) {
       // Ask for user confirmation (Human-in-the-Loop)
       const confirmed = await confirmCommandExecution(command);
       
@@ -344,37 +347,44 @@ function createExecuteCommandTool(resolvedTargetPath: string) {
       }
 
       try {
-        const { stdout, stderr } = await execAsync(command, {
+        const { stderr, stdout } = await execAsync(command, {
           cwd: resolvedTargetPath,
-          timeout: 60000, // 60 second timeout
           maxBuffer: 1024 * 1024 * 10, // 10MB buffer
+          timeout: 60_000, // 60 second timeout
         });
         
         let output = `// ─── COMMAND: ${command} ───\n`;
         if (stdout.trim()) {
           output += `\n[STDOUT]\n${stdout.trim()}`;
         }
+
         if (stderr.trim()) {
           output += `\n\n[STDERR]\n${stderr.trim()}`;
         }
+
         if (!stdout.trim() && !stderr.trim()) {
           output += '\n[INFO] Command completed with no output.';
         }
         
         return output;
       } catch (error: unknown) {
-        const execError = error as { stdout?: string; stderr?: string; message: string };
+        const execError = error as { message: string; stderr?: string; stdout?: string; };
         let output = `// ─── COMMAND FAILED: ${command} ───\n`;
         output += `\n[ERROR] ${execError.message}`;
         if (execError.stdout?.trim()) {
           output += `\n\n[STDOUT]\n${execError.stdout.trim()}`;
         }
+
         if (execError.stderr?.trim()) {
           output += `\n\n[STDERR]\n${execError.stderr.trim()}`;
         }
+
         return output;
       }
     },
+    inputSchema: z.object({
+      command: z.string().describe('The shell command to execute (e.g., "git status", "npm test", "npm run lint").'),
+    }),
   });
 }
 
@@ -395,17 +405,16 @@ export class AgentSession {
 
     // Initialize all agentic tools
     this.tools = {
-      read_file_content: createFileReadTool(resolvedTargetPath),
-      list_directory: createListDirectoryTool(resolvedTargetPath),
-      search_codebase: createSearchCodebaseTool(resolvedTargetPath),
       edit_file: createEditFileTool(resolvedTargetPath),
       execute_command: createExecuteCommandTool(resolvedTargetPath),
+      list_directory: createListDirectoryTool(resolvedTargetPath),
+      read_file_content: createFileReadTool(resolvedTargetPath),
+      search_codebase: createSearchCodebaseTool(resolvedTargetPath),
     } as ToolSet;
 
     // Initialize conversation with the repo map as context
     this.messages = [
       {
-        role: 'user' as const,
         content: `## REPOSITORY ARCHITECTURE MAP
 
 The following is a compressed architectural map of the target codebase at \`${resolvedTargetPath}\`. It contains ONLY structural signatures (imports, class declarations, function signatures, type definitions) — no implementation bodies.
@@ -422,9 +431,9 @@ You now have full context of this repository's architecture. You have access to 
 - **execute_command**: Run shell commands like git, npm, etc. (requires confirmation)
 
 Await the user's instructions.`,
+        role: 'user' as const,
       },
       {
-        role: 'assistant' as const,
         content: `I've ingested the repository architecture map and I'm fully armed with agentic capabilities. I can see the complete structural layout and I'm ready to perform deep, autonomous security analysis.
 
 **What I can do:**
@@ -437,6 +446,7 @@ Await the user's instructions.`,
 **Pro tip:** Say "full audit" for comprehensive SAST, or give me a specific target like "analyze authentication" or "find all SQL injection vectors".
 
 What would you like me to investigate?`,
+        role: 'assistant' as const,
       },
     ];
   }
@@ -449,17 +459,17 @@ What would you like me to investigate?`,
   async sendMessage(userMessage: string, onChunk: (text: string) => void): Promise<string> {
     // Push the user's message into conversation history
     this.messages.push({
-      role: 'user' as const,
       content: userMessage,
+      role: 'user' as const,
     });
 
     const result = streamText({
-      model: this.model,
-      system: SYSTEM_PROMPT,
+      maxOutputTokens: 16_384,
       messages: this.messages,
-      tools: this.tools,
+      model: this.model,
       stopWhen: stepCountIs(10), // Allow agent to chain up to 10 tool calls
-      maxOutputTokens: 16384,
+      system: SYSTEM_PROMPT,
+      tools: this.tools,
     });
 
     // Stream the text to the terminal in real-time
@@ -483,38 +493,38 @@ What would you like me to investigate?`,
           const assistantContent: Array<Record<string, unknown>> = [];
 
           if (step.text) {
-            assistantContent.push({ type: 'text', text: step.text });
+            assistantContent.push({ text: step.text, type: 'text' });
           }
 
           if (step.toolCalls) {
             for (const tc of step.toolCalls) {
               assistantContent.push({
-                type: 'tool-call',
+                input: tc.input,
                 toolCallId: tc.toolCallId,
                 toolName: tc.toolName,
-                input: tc.input,
+                type: 'tool-call',
               });
             }
           }
 
           this.messages.push({
-            role: 'assistant' as const,
             content: assistantContent,
+            role: 'assistant' as const,
           } as ModelMessage);
 
           // Add tool results if any
           if (step.toolResults) {
             for (const tr of step.toolResults) {
               this.messages.push({
-                role: 'tool' as const,
                 content: [
                   {
-                    type: 'tool-result',
+                    output: tr.output,
                     toolCallId: tr.toolCallId,
                     toolName: tr.toolName,
-                    output: tr.output,
+                    type: 'tool-result',
                   },
                 ],
+                role: 'tool' as const,
               } as unknown as ModelMessage);
             }
           }
@@ -523,8 +533,8 @@ What would you like me to investigate?`,
     } else {
       // Fallback: if no steps, just append the full text response
       this.messages.push({
-        role: 'assistant' as const,
         content: fullResponse,
+        role: 'assistant' as const,
       });
     }
 
