@@ -1,4 +1,4 @@
-import { Box, Static, Text } from 'ink';
+import { Box, Static, Text, useApp } from 'ink';
 import SelectInput from 'ink-select-input';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
@@ -177,11 +177,14 @@ const App = ({ forceReconfigure }: { forceReconfigure: boolean }) => {
     }
   };
 
+  const { exit } = useApp();
+
   const handleCommandSubmit = async (command: string) => {
     if (!command.trim() || isProcessing) return;
 
     if ([':q', ':quit', 'exit', 'quit'].includes(command.trim().toLowerCase())) {
-      process.exit(0);
+      exit();
+      return;
     }
 
     const newMsgId = Date.now().toString();

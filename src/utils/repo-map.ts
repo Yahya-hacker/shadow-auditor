@@ -76,9 +76,12 @@ function getLanguage(filePath: string): null | unknown {
       return JavaScript;
     }
 
-    case '.ts':
-    case '.tsx': {
+    case '.ts': {
       return TypeScript.typescript;
+    }
+
+    case '.tsx': {
+      return TypeScript.tsx;
     }
 
     default: {

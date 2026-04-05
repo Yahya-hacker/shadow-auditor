@@ -23,10 +23,10 @@ static override flags = {
 
     console.clear();
 
-    render(<App forceReconfigure={flags.reconfigure} />, {
+    const { waitUntilExit } = render(<App forceReconfigure={flags.reconfigure} />, {
       exitOnCtrlC: true,
     });
 
-    // We can add logic to wait for unmount or handle specific exit signals here if needed
+    await waitUntilExit();
   }
 }
