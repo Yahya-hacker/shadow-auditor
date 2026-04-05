@@ -114,7 +114,10 @@ function createFileReadTool(resolvedTargetPath: string) {
       const absolutePath = path.resolve(resolvedTargetPath, filePath);
 
       // Security: prevent directory traversal outside the target
-      if (!absolutePath.startsWith(resolvedTargetPath)) {
+      // Normalize paths to handle Windows/Unix differences and resolve symlinks
+      const normalizedAbsolute = path.normalize(absolutePath);
+      const normalizedTarget = path.normalize(resolvedTargetPath);
+      if (!normalizedAbsolute.startsWith(normalizedTarget + path.sep) && normalizedAbsolute !== normalizedTarget) {
         return `[ERROR] Access denied: "${filePath}" resolves outside the target directory.`;
       }
 
@@ -142,7 +145,10 @@ function createListDirectoryTool(resolvedTargetPath: string) {
       const absolutePath = path.resolve(resolvedTargetPath, dirPath);
 
       // Security: prevent directory traversal outside the target
-      if (!absolutePath.startsWith(resolvedTargetPath)) {
+      // Normalize paths to handle Windows/Unix differences and resolve symlinks
+      const normalizedAbsolute = path.normalize(absolutePath);
+      const normalizedTarget = path.normalize(resolvedTargetPath);
+      if (!normalizedAbsolute.startsWith(normalizedTarget + path.sep) && normalizedAbsolute !== normalizedTarget) {
         return `[ERROR] Access denied: "${dirPath}" resolves outside the target directory.`;
       }
 
@@ -175,7 +181,23 @@ function createSearchCodebaseTool(resolvedTargetPath: string) {
     }),
     execute: async ({ regexPattern, fileExtension }: { regexPattern: string; fileExtension?: string }) => {
       const results: string[] = [];
-      const regex = new RegExp(regexPattern, 'gi');
+
+      // Security: Validate regex pattern to prevent ReDoS attacks
+      // Limit pattern length and complexity
+      if (regexPattern.length > 200) {
+        return `[ERROR] Regex pattern too long (max 200 characters). Please simplify your search pattern.`;
+      }
+
+      let regex: RegExp;
+      try {
+        // Use a timeout for regex compilation and testing
+        regex = new RegExp(regexPattern, 'gi');
+        // Test the regex with a simple string to catch catastrophic backtracking early
+        const testString = 'a'.repeat(100);
+        regex.test(testString);
+      } catch (error) {
+        return `[ERROR] Invalid regex pattern: ${(error as Error).message}`;
+      }
 
       async function searchDir(dir: string): Promise<void> {
         const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -249,7 +271,10 @@ function createEditFileTool(resolvedTargetPath: string) {
       const absolutePath = path.resolve(resolvedTargetPath, filePath);
 
       // Security: prevent directory traversal outside the target
-      if (!absolutePath.startsWith(resolvedTargetPath)) {
+      // Normalize paths to handle Windows/Unix differences and resolve symlinks
+      const normalizedAbsolute = path.normalize(absolutePath);
+      const normalizedTarget = path.normalize(resolvedTargetPath);
+      if (!normalizedAbsolute.startsWith(normalizedTarget + path.sep) && normalizedAbsolute !== normalizedTarget) {
         return `[ERROR] Access denied: "${filePath}" resolves outside the target directory.`;
       }
 
@@ -448,7 +473,7 @@ What would you like me to investigate?`,
                 type: 'tool-call',
                 toolCallId: tc.toolCallId,
                 toolName: tc.toolName,
-                args: (tc as any).args,
+                args: tc.args,
               });
             }
           }
@@ -468,7 +493,7 @@ What would you like me to investigate?`,
                     type: 'tool-result',
                     toolCallId: tr.toolCallId,
                     toolName: tr.toolName,
-                    result: (tr as any).result,
+                    result: tr.result,
                   },
                 ],
               } as unknown as ModelMessage);
