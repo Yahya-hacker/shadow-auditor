@@ -1,1 +1,1 @@
-{"root":["./src/commands/shell.ts","./src/core/agent.ts","./src/utils/boot.ts","./src/utils/config.ts","./src/utils/human-in-loop.ts","./src/utils/repo-map.ts","./src/utils/setup.ts"],"version":"5.9.3"}
+{"root":["./src/commands/shell.ts","./src/core/agent.ts","./src/ui/ConfirmDialog.tsx","./src/ui/Shell.tsx","./src/utils/ascii-motion-cli.tsx","./src/utils/boot.ts","./src/utils/config.ts","./src/utils/human-in-loop.ts","./src/utils/repo-map.ts","./src/utils/setup.ts"],"version":"5.9.3"}
