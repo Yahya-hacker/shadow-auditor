@@ -473,7 +473,7 @@ What would you like me to investigate?`,
                 type: 'tool-call',
                 toolCallId: tc.toolCallId,
                 toolName: tc.toolName,
-                args: tc.args,
+                input: tc.input,
               });
             }
           }
@@ -493,7 +493,7 @@ What would you like me to investigate?`,
                     type: 'tool-result',
                     toolCallId: tr.toolCallId,
                     toolName: tr.toolName,
-                    result: tr.result,
+                    output: tr.output,
                   },
                 ],
               } as unknown as ModelMessage);

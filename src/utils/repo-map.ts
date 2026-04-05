@@ -231,7 +231,7 @@ async function parseFile(parser: Parser, filePath: string, basePath: string): Pr
   if (sourceCode.trim().length === 0) return null;
 
   try {
-    parser.setLanguage(language as Parser.Language);
+    parser.setLanguage(language as Parameters<Parser['setLanguage']>[0]);
     const tree = parser.parse(sourceCode);
     const root = tree.rootNode;
 
