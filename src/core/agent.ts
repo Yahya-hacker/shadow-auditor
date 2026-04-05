@@ -16,6 +16,8 @@ import { confirmCommandExecution, confirmFileEdit } from '../utils/human-in-loop
 
 const execAsync = promisify(exec);
 
+const TEXT_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json', '.yaml', '.yml', '.md', '.txt', '.py', '.rb', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.hpp', '.cs', '.php', '.html', '.css', '.scss', '.vue', '.svelte'];
+
 // ─── THE SYSTEM PROMPT ──────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are an elite senior cybersecurity researcher and offensive security engineer with 20+ years of experience in vulnerability research, source code auditing, and ethical hacking. Your cognitive model combines the methodologies of legendary security researchers applied here to static application security testing (SAST) at the highest level of rigor.
@@ -214,8 +216,7 @@ function createSearchCodebaseTool(resolvedTargetPath: string) {
             if (fileExtension && !entry.name.endsWith(fileExtension)) continue;
             
             // Only search text files
-            const textExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json', '.yaml', '.yml', '.md', '.txt', '.py', '.rb', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.hpp', '.cs', '.php', '.html', '.css', '.scss', '.vue', '.svelte'];
-            const hasTextExt = textExtensions.some((ext) => entry.name.endsWith(ext));
+            const hasTextExt = TEXT_EXTENSIONS.some((ext) => entry.name.endsWith(ext));
             if (!hasTextExt) continue;
 
             try {
