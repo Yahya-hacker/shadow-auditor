@@ -15,7 +15,6 @@
     "@clack/prompts": "^1.2.0",
     "@oclif/core": "^4",
     "@oclif/plugin-help": "^6",
-    "@oclif/plugin-plugins": "^5",
     "ai": "^6.0.146",
     "dotenv": "^17.4.0",
     "ink": "^5.0.1",
@@ -71,8 +70,7 @@
     "dirname": "shadow-auditor",
     "commands": "./dist/commands",
     "plugins": [
-      "@oclif/plugin-help",
-      "@oclif/plugin-plugins"
+      "@oclif/plugin-help"
     ],
     "topicSeparator": " "
   },
