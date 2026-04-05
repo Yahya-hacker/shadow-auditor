@@ -142,7 +142,7 @@ Stored fields include:
 
 ## Requirements
 
-- Node.js `>=18`
+- Node.js `>=24.14.1` (LTS)
 - npm
 
 ## Development

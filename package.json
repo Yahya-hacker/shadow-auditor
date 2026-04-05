@@ -34,7 +34,7 @@
     "@oclif/test": "^4",
     "@types/chai": "^4",
     "@types/mocha": "^10",
-    "@types/node": "^18.19.130",
+    "@types/node": "^24.0.0",
     "@types/react": "^18.3.0",
     "chai": "^4",
     "eslint": "^9",
@@ -47,7 +47,7 @@
     "typescript": "^5"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=24.14.1"
   },
   "files": [
     "./bin",
