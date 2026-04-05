@@ -2,400 +2,163 @@
   <img src="https://github.com/user-attachments/assets/df96b04f-7324-4a07-9100-ff81526e0d31" alt="Shadow Auditor">
 </div>
 
+# Shadow Auditor
+
+**Autonomous AI-powered cybersecurity operations CLI** focused (in this first version) on **SAST**.
+
+Shadow Auditor is built for offensive-minded static security reviews: it maps your codebase, enters an interactive analyst shell, and lets an AI security agent investigate vulnerabilities, read code, search patterns, and propose fixes with human approval.
+
+## Why Shadow Auditor
+
+- Designed for **cybersecurity operations**, not generic chat.
+- Uses a **security-specialized system prompt** and structured audit workflow.
+- Supports **agentic tooling** (file reads, code search, directory listing, patch proposals, command execution).
+- Built with **human-in-the-loop controls** for sensitive actions.
+- Starts as a **SAST-first engine** and is evolving rapidly toward a complete multi-agent security platform.
+
+## Current Version Scope (v1)
+
+This release is specialized in **Static Application Security Testing (SAST)**:
+
+- Structural codebase mapping using Tree-sitter
+- Interactive security shell (`shadow-auditor`)
+- Stateful analysis session with streaming responses
+- Tool-assisted vulnerability hunting and remediation proposals
+- User-confirmed file edits and command execution
+
+## Roadmap
+
+Shadow Auditor is moving quickly. Upcoming versions will focus on:
+
+1. **Performance**: faster mapping, lower latency, and larger-repo scalability.
+2. **UX/UI**: cleaner interaction flow and improved operator ergonomics.
+3. **Expanded security domains**:
+   - **Active pentesting workflows**
+   - **DAST (Dynamic Application Security Testing)**
+4. **Full multi-agent orchestration**:
+   - Multiple cooperating agents
+   - Agents from the same provider or different providers
+   - Smooth cross-agent coordination for complex security operations
+
+## Supported AI Providers
+
+Shadow Auditor already supports a broad provider base:
+
+- **Anthropic**
+- **OpenAI**
+- **Google (Gemini)**
+- **Mistral**
+- **Ollama** (local models)
+- **Custom OpenAI-compatible providers** via custom base URL
+
+This means you can use many additional vendor endpoints through the OpenAI-compatible integration path.
+
+## Installation
+
+### Global install
+
+```bash
+npm install -g shadow-auditor
+```
+
+### Local development
+
+```bash
+git clone https://github.com/Yahya-hacker/shadow-auditor.git
+cd shadow-auditor
+npm install
+npm run build
+```
+
+## Quick Start
+
+Run:
+
+```bash
 shadow-auditor
-=================
-
-A new CLI generated with oclif
-
-
-[![oclif](https://img.shields.io/badge/cli-oclif-brightgreen.svg)](https://oclif.io)
-[![Version](https://img.shields.io/npm/v/shadow-auditor.svg)](https://npmjs.org/package/shadow-auditor)
-[![Downloads/week](https://img.shields.io/npm/dw/shadow-auditor.svg)](https://npmjs.org/package/shadow-auditor)
-
-
-<!-- toc -->
-* [Usage](#usage)
-* [Commands](#commands)
-<!-- tocstop -->
-# Usage
-<!-- usage -->
-```sh-session
-$ npm install -g shadow-auditor
-$ shadow-auditor COMMAND
-running command...
-$ shadow-auditor (--version)
-shadow-auditor/0.0.0 linux-x64 node-v22.22.0
-$ shadow-auditor --help [COMMAND]
-USAGE
-  $ shadow-auditor COMMAND
-...
-```
-<!-- usagestop -->
-# Commands
-<!-- commands -->
-* [`shadow-auditor hello PERSON`](#shadow-auditor-hello-person)
-* [`shadow-auditor hello world`](#shadow-auditor-hello-world)
-* [`shadow-auditor help [COMMAND]`](#shadow-auditor-help-command)
-* [`shadow-auditor plugins`](#shadow-auditor-plugins)
-* [`shadow-auditor plugins add PLUGIN`](#shadow-auditor-plugins-add-plugin)
-* [`shadow-auditor plugins:inspect PLUGIN...`](#shadow-auditor-pluginsinspect-plugin)
-* [`shadow-auditor plugins install PLUGIN`](#shadow-auditor-plugins-install-plugin)
-* [`shadow-auditor plugins link PATH`](#shadow-auditor-plugins-link-path)
-* [`shadow-auditor plugins remove [PLUGIN]`](#shadow-auditor-plugins-remove-plugin)
-* [`shadow-auditor plugins reset`](#shadow-auditor-plugins-reset)
-* [`shadow-auditor plugins uninstall [PLUGIN]`](#shadow-auditor-plugins-uninstall-plugin)
-* [`shadow-auditor plugins unlink [PLUGIN]`](#shadow-auditor-plugins-unlink-plugin)
-* [`shadow-auditor plugins update`](#shadow-auditor-plugins-update)
-
-## `shadow-auditor hello PERSON`
-
-Say hello
-
-```
-USAGE
-  $ shadow-auditor hello PERSON -f <value>
-
-ARGUMENTS
-  PERSON  Person to say hello to
-
-FLAGS
-  -f, --from=<value>  (required) Who is saying hello
-
-DESCRIPTION
-  Say hello
-
-EXAMPLES
-  $ shadow-auditor hello friend --from oclif
-  hello friend from oclif! (./src/commands/hello/index.ts)
 ```
 
-_See code: [src/commands/hello/index.ts](https://github.com/Yahya-hacker/shadow-auditor/blob/v0.0.0/src/commands/hello/index.ts)_
+What happens:
 
-## `shadow-auditor hello world`
+1. Welcome/boot sequence
+2. Config check (or interactive setup wizard)
+3. Target directory selection
+4. Repo map generation
+5. Drop into interactive shell prompt
 
-Say hello world
+You can also force setup:
 
-```
-USAGE
-  $ shadow-auditor hello world
-
-DESCRIPTION
-  Say hello world
-
-EXAMPLES
-  $ shadow-auditor hello world
-  hello world! (./src/commands/hello/world.ts)
+```bash
+shadow-auditor --reconfigure
 ```
 
-_See code: [src/commands/hello/world.ts](https://github.com/Yahya-hacker/shadow-auditor/blob/v0.0.0/src/commands/hello/world.ts)_
+## Interactive Shell
 
-## `shadow-auditor help [COMMAND]`
+Prompt:
 
-Display help for shadow-auditor.
-
-```
-USAGE
-  $ shadow-auditor help [COMMAND...] [-n]
-
-ARGUMENTS
-  [COMMAND...]  Command to show help for.
-
-FLAGS
-  -n, --nested-commands  Include all nested commands in the output.
-
-DESCRIPTION
-  Display help for shadow-auditor.
+```text
+Shadow Auditor ❯
 ```
 
-_See code: [@oclif/plugin-help](https://github.com/oclif/plugin-help/blob/6.2.42/src/commands/help.ts)_
+Example prompts:
 
-## `shadow-auditor plugins`
+- `Analyze authentication flow`
+- `Find all injection vulnerabilities`
+- `Run a full audit`
+- `Review dangerous command execution patterns`
 
-List installed plugins.
+Exit with:
 
-```
-USAGE
-  $ shadow-auditor plugins [--json] [--core]
+- `exit`
+- `quit`
+- `Ctrl+C`
 
-FLAGS
-  --core  Show core plugins.
+## Security Workflow Model
 
-GLOBAL FLAGS
-  --json  Format output as json.
+Shadow Auditor combines:
 
-DESCRIPTION
-  List installed plugins.
+- **Repo-level structural intelligence** (compressed architecture map)
+- **Deep file inspection on demand**
+- **Global pattern hunting**
+- **Patch proposal with user confirmation**
+- **Command execution with user confirmation**
 
-EXAMPLES
-  $ shadow-auditor plugins
-```
+This keeps the tool autonomous enough to be productive while preserving operator control.
 
-_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/5.4.59/src/commands/plugins/index.ts)_
+## Configuration
 
-## `shadow-auditor plugins add PLUGIN`
+On first run, configuration is saved in:
 
-Installs a plugin into shadow-auditor.
-
-```
-USAGE
-  $ shadow-auditor plugins add PLUGIN... [--json] [-f] [-h] [-s | -v]
-
-ARGUMENTS
-  PLUGIN...  Plugin to install.
-
-FLAGS
-  -f, --force    Force npm to fetch remote resources even if a local copy exists on disk.
-  -h, --help     Show CLI help.
-  -s, --silent   Silences npm output.
-  -v, --verbose  Show verbose npm output.
-
-GLOBAL FLAGS
-  --json  Format output as json.
-
-DESCRIPTION
-  Installs a plugin into shadow-auditor.
-
-  Uses npm to install plugins.
-
-  Installation of a user-installed plugin will override a core plugin.
-
-  Use the SHADOW_AUDITOR_NPM_LOG_LEVEL environment variable to set the npm loglevel.
-  Use the SHADOW_AUDITOR_NPM_REGISTRY environment variable to set the npm registry.
-
-ALIASES
-  $ shadow-auditor plugins add
-
-EXAMPLES
-  Install a plugin from npm registry.
-
-    $ shadow-auditor plugins add myplugin
-
-  Install a plugin from a github url.
-
-    $ shadow-auditor plugins add https://github.com/someuser/someplugin
-
-  Install a plugin from a github slug.
-
-    $ shadow-auditor plugins add someuser/someplugin
+```text
+~/.shadow-auditor.json
 ```
 
-## `shadow-auditor plugins:inspect PLUGIN...`
+Stored fields include:
 
-Displays installation properties of a plugin.
+- `provider`
+- `model`
+- `apiKey` (not required for Ollama)
+- `customBaseUrl` (for custom OpenAI-compatible providers)
 
-```
-USAGE
-  $ shadow-auditor plugins inspect PLUGIN...
+## Requirements
 
-ARGUMENTS
-  PLUGIN...  [default: .] Plugin to inspect.
+- Node.js `>=18`
+- npm
 
-FLAGS
-  -h, --help     Show CLI help.
-  -v, --verbose
+## Development
 
-GLOBAL FLAGS
-  --json  Format output as json.
-
-DESCRIPTION
-  Displays installation properties of a plugin.
-
-EXAMPLES
-  $ shadow-auditor plugins inspect myplugin
+```bash
+npm run lint
+npm run build
+npm test
 ```
 
-_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/5.4.59/src/commands/plugins/inspect.ts)_
+## Disclaimer
 
-## `shadow-auditor plugins install PLUGIN`
+Shadow Auditor is a cybersecurity tool. Use only on codebases and systems you are authorized to assess. You are responsible for lawful and ethical usage.
 
-Installs a plugin into shadow-auditor.
+## Vision
 
-```
-USAGE
-  $ shadow-auditor plugins install PLUGIN... [--json] [-f] [-h] [-s | -v]
+Shadow Auditor is not just a CLI scanner—it is the foundation of a **complete multi-agent cybersecurity operating system**.
 
-ARGUMENTS
-  PLUGIN...  Plugin to install.
-
-FLAGS
-  -f, --force    Force npm to fetch remote resources even if a local copy exists on disk.
-  -h, --help     Show CLI help.
-  -s, --silent   Silences npm output.
-  -v, --verbose  Show verbose npm output.
-
-GLOBAL FLAGS
-  --json  Format output as json.
-
-DESCRIPTION
-  Installs a plugin into shadow-auditor.
-
-  Uses npm to install plugins.
-
-  Installation of a user-installed plugin will override a core plugin.
-
-  Use the SHADOW_AUDITOR_NPM_LOG_LEVEL environment variable to set the npm loglevel.
-  Use the SHADOW_AUDITOR_NPM_REGISTRY environment variable to set the npm registry.
-
-ALIASES
-  $ shadow-auditor plugins add
-
-EXAMPLES
-  Install a plugin from npm registry.
-
-    $ shadow-auditor plugins install myplugin
-
-  Install a plugin from a github url.
-
-    $ shadow-auditor plugins install https://github.com/someuser/someplugin
-
-  Install a plugin from a github slug.
-
-    $ shadow-auditor plugins install someuser/someplugin
-```
-
-_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/5.4.59/src/commands/plugins/install.ts)_
-
-## `shadow-auditor plugins link PATH`
-
-Links a plugin into the CLI for development.
-
-```
-USAGE
-  $ shadow-auditor plugins link PATH [-h] [--install] [-v]
-
-ARGUMENTS
-  PATH  [default: .] path to plugin
-
-FLAGS
-  -h, --help          Show CLI help.
-  -v, --verbose
-      --[no-]install  Install dependencies after linking the plugin.
-
-DESCRIPTION
-  Links a plugin into the CLI for development.
-
-  Installation of a linked plugin will override a user-installed or core plugin.
-
-  e.g. If you have a user-installed or core plugin that has a 'hello' command, installing a linked plugin with a 'hello'
-  command will override the user-installed or core plugin implementation. This is useful for development work.
-
-
-EXAMPLES
-  $ shadow-auditor plugins link myplugin
-```
-
-_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/5.4.59/src/commands/plugins/link.ts)_
-
-## `shadow-auditor plugins remove [PLUGIN]`
-
-Removes a plugin from the CLI.
-
-```
-USAGE
-  $ shadow-auditor plugins remove [PLUGIN...] [-h] [-v]
-
-ARGUMENTS
-  [PLUGIN...]  plugin to uninstall
-
-FLAGS
-  -h, --help     Show CLI help.
-  -v, --verbose
-
-DESCRIPTION
-  Removes a plugin from the CLI.
-
-ALIASES
-  $ shadow-auditor plugins unlink
-  $ shadow-auditor plugins remove
-
-EXAMPLES
-  $ shadow-auditor plugins remove myplugin
-```
-
-## `shadow-auditor plugins reset`
-
-Remove all user-installed and linked plugins.
-
-```
-USAGE
-  $ shadow-auditor plugins reset [--hard] [--reinstall]
-
-FLAGS
-  --hard       Delete node_modules and package manager related files in addition to uninstalling plugins.
-  --reinstall  Reinstall all plugins after uninstalling.
-```
-
-_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/5.4.59/src/commands/plugins/reset.ts)_
-
-## `shadow-auditor plugins uninstall [PLUGIN]`
-
-Removes a plugin from the CLI.
-
-```
-USAGE
-  $ shadow-auditor plugins uninstall [PLUGIN...] [-h] [-v]
-
-ARGUMENTS
-  [PLUGIN...]  plugin to uninstall
-
-FLAGS
-  -h, --help     Show CLI help.
-  -v, --verbose
-
-DESCRIPTION
-  Removes a plugin from the CLI.
-
-ALIASES
-  $ shadow-auditor plugins unlink
-  $ shadow-auditor plugins remove
-
-EXAMPLES
-  $ shadow-auditor plugins uninstall myplugin
-```
-
-_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/5.4.59/src/commands/plugins/uninstall.ts)_
-
-## `shadow-auditor plugins unlink [PLUGIN]`
-
-Removes a plugin from the CLI.
-
-```
-USAGE
-  $ shadow-auditor plugins unlink [PLUGIN...] [-h] [-v]
-
-ARGUMENTS
-  [PLUGIN...]  plugin to uninstall
-
-FLAGS
-  -h, --help     Show CLI help.
-  -v, --verbose
-
-DESCRIPTION
-  Removes a plugin from the CLI.
-
-ALIASES
-  $ shadow-auditor plugins unlink
-  $ shadow-auditor plugins remove
-
-EXAMPLES
-  $ shadow-auditor plugins unlink myplugin
-```
-
-## `shadow-auditor plugins update`
-
-Update installed plugins.
-
-```
-USAGE
-  $ shadow-auditor plugins update [-h] [-v]
-
-FLAGS
-  -h, --help     Show CLI help.
-  -v, --verbose
-
-DESCRIPTION
-  Update installed plugins.
-```
-
-_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/5.4.59/src/commands/plugins/update.ts)_
-<!-- commandsstop -->
+Version 1 starts with SAST. The next iterations expand into performance, UX/UI, active pentest operations, DAST, and coordinated multi-agent execution across multiple AI providers.
