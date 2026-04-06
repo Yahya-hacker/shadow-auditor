@@ -105,10 +105,16 @@ export async function loadConfig(): Promise<null | ShadowConfig> {
  */
 export async function saveConfig(configData: ShadowConfig): Promise<void> {
   const configPath = getConfigPath();
-  const json = JSON.stringify(configData, null, 2);
-  await fs.writeFile(configPath, json, 'utf-8');
 
   if (configData.provider !== 'ollama' && configData.apiKey && secretStoreAdapter?.setApiKey) {
     await secretStoreAdapter.setApiKey(configData.provider, configData.apiKey);
+
+    const { apiKey: _apiKey, ...configWithoutApiKey } = configData;
+    const json = JSON.stringify(configWithoutApiKey, null, 2);
+    await fs.writeFile(configPath, json, 'utf-8');
+    return;
   }
+
+  const json = JSON.stringify(configData, null, 2);
+  await fs.writeFile(configPath, json, 'utf-8');
 }
