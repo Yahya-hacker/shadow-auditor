@@ -34,7 +34,21 @@ export interface ToolArtifactEvent {
 async function writeFileAtomic(filePath: string, content: string): Promise<void> {
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   await fs.writeFile(tempPath, content, 'utf8');
-  await fs.rename(tempPath, filePath);
+
+  try {
+    await fs.rename(tempPath, filePath);
+  } catch (error) {
+    const renameError = error as NodeJS.ErrnoException;
+
+    if (renameError.code === 'EEXIST' || renameError.code === 'EPERM') {
+      await fs.rm(filePath, { force: true });
+      await fs.rename(tempPath, filePath);
+      return;
+    }
+
+    await fs.rm(tempPath, { force: true });
+    throw error;
+  }
 }
 
 function createRunId(): string {
