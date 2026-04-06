@@ -11,6 +11,10 @@ static override examples = [
     '<%= config.bin %> --reconfigure',
   ];
 static override flags = {
+    expertUnsafe: Flags.boolean({
+      default: false,
+      description: 'Permit broader command and MCP tool execution surface with explicit warnings',
+    }),
     reconfigure: Flags.boolean({
       char: 'r',
       default: false,
@@ -23,9 +27,12 @@ static override flags = {
 
     console.clear();
 
-    const { waitUntilExit } = render(<App forceReconfigure={flags.reconfigure} />, {
+    const { waitUntilExit } = render(
+      <App expertUnsafe={flags.expertUnsafe} forceReconfigure={flags.reconfigure} />,
+      {
       exitOnCtrlC: true,
-    });
+      },
+    );
 
     await waitUntilExit();
   }
