@@ -12,8 +12,9 @@ import type { ShadowConfig } from '../utils/config.js';
  */
 export function getModel(config: ShadowConfig): LanguageModel {
   const { apiKey, customBaseUrl, model, provider } = config;
+  const normalizedProvider = provider.trim().toLowerCase();
 
-  switch (provider) {
+  switch (normalizedProvider) {
     case 'anthropic': {
       const anthropic = createAnthropic({ apiKey });
       return anthropic(model) as LanguageModel;
