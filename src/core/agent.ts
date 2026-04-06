@@ -1,543 +1,355 @@
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createMistral } from '@ai-sdk/mistral';
-import { createOpenAI } from '@ai-sdk/openai';
-import { type LanguageModel, type ModelMessage, stepCountIs, streamText, tool, type ToolSet } from 'ai';
-import { exec } from 'node:child_process';
-import * as fs from 'node:fs/promises';
+import { generateText, type LanguageModel, type ModelMessage, type StepResult, type ToolSet } from 'ai';
 import * as path from 'node:path';
-import * as vm from 'node:vm';
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
-import { createOllama } from 'ollama-ai-provider';
-import { z } from 'zod';
 
+import { createChromeDevtoolsAdapter } from './mcp/adapters/chrome-devtools.js';
+import { createKaliLinuxAdapter } from './mcp/adapters/kali-linux.js';
+import { MCPManager } from './mcp/manager.js';
+import type { MCPRawInvoker } from './mcp/types.js';
+import { resolveRuntimeSettings, type RuntimeSettings } from './model-capabilities.js';
+import { getModel } from './model-router.js';
+import { generateSarifReport } from './output/sarif.js';
+import { validateAndRepairReport } from './output/report-validator.js';
+import { createExecuteCommandTool } from './tools/execute-command.js';
+import { createEditFileTool } from './tools/edit-file.js';
+import { createListDirectoryTool } from './tools/list-directory.js';
+import { createReadFileTool } from './tools/read-file.js';
+import { createSearchCodebaseTool } from './tools/search-codebase.js';
+import { buildSystemPrompt } from './system-prompt.js';
+import { createPathGuard } from './policy/path-guard.js';
+import { RunArtifacts } from './run-artifacts.js';
+import { streamWithContinuation } from './session.js';
 import type { ShadowConfig } from '../utils/config.js';
 
-import { confirmCommandExecution, confirmFileEdit } from '../utils/human-in-loop.js';
+export interface AgentSessionOptions {
+  expertUnsafe?: boolean;
+}
 
-const execAsync = promisify(exec);
-
-const TEXT_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json', '.yaml', '.yml', '.md', '.txt', '.py', '.rb', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.hpp', '.cs', '.php', '.html', '.css', '.scss', '.vue', '.svelte'];
-
-// ─── THE SYSTEM PROMPT ──────────────────────────────────────────────────────────
-
-const SYSTEM_PROMPT = `You are an elite senior cybersecurity researcher and offensive security engineer with 20+ years of experience in vulnerability research, source code auditing, and ethical hacking. Your cognitive model combines the methodologies of legendary security researchers applied here to static application security testing (SAST) at the highest level of rigor.
-
-## CAPABILITIES
-You have access to powerful agentic tools:
-- **read_file_content**: Read the full source code of any file
-- **list_directory**: Explore folder contents when the Repo Map lacks details
-- **search_codebase**: Hunt for specific patterns (e.g., "exec", "eval", "innerHTML") globally
-- **edit_file**: Propose and apply security patches (requires user confirmation)
-- **execute_command**: Run shell commands like \`git status\`, \`npm test\`, etc. (requires user confirmation)
-
-## GIT-AWARE WORKFLOW
-At the start of an audit, consider running \`git status\` using the execute_command tool to:
-- Identify newly modified files that may contain fresh vulnerabilities
-- Focus your analysis on recent changes when doing incremental security reviews
-- Understand the current state of the repository
-
-## AUDIT METHODOLOGY
-1. Assume the attacker has full knowledge
-2. Never stop at the obvious — CVE-pattern matching is your floor, not your ceiling
-3. Chain vulnerabilities for maximum impact
-4. Think outside the box: business logic flaws, race conditions, cryptographic misuse
-5. After finding vulnerabilities, propose concrete patches using edit_file
-6. Verify fixes by running tests with execute_command
-
-## OUTPUT FORMAT
-For each finding, provide:
-- Vulnerability ID, Title, Hypothesis
-- Severity (Critical/High/Medium/Low)
-- Location (file:line)
-- Root Cause Analysis
-- Exploit Scenario
-- Remediation (with proposed patch)
-- Chaining Potential`;
-
-// ─── MODEL ROUTER ────────────────────────────────────────────────────────────────
-
-/**
- * Returns the correct AI provider model instance based on the user's configuration.
- * Supports: Anthropic, OpenAI, Google, Mistral, Ollama, and any OpenAI-compatible custom endpoint.
- */
-export function getModel(config: ShadowConfig): LanguageModel {
-  const { apiKey, customBaseUrl, model, provider } = config;
-
-  switch (provider) {
-    case 'anthropic': {
-      const anthropic = createAnthropic({ apiKey });
-      return anthropic(model) as LanguageModel;
+const REPORT_REPAIR_SYSTEM_PROMPT = `You are a strict JSON repair engine.
+Return only valid JSON for this schema:
+{
+  "findings": [
+    {
+      "vuln_id": "string",
+      "title": "string",
+      "severity_label": "Critical|High|Medium|Low|Info",
+      "cvss_v31_score": 0.0,
+      "cvss_v31_vector": "CVSS:3.1/...",
+      "cvss_v40_score": null,
+      "cwe": "CWE-000",
+      "file_paths": ["path/to/file"]
     }
+  ]
+}
+If no findings, return {"findings":[]}.
+Do not include markdown fences or extra text.`;
 
-    case 'custom': {
-      const customProvider = createOpenAI({
-        apiKey,
-        baseURL: customBaseUrl,
-      });
-      return customProvider(model) as LanguageModel;
-    }
-
-    case 'google': {
-      const google = createGoogleGenerativeAI({ apiKey });
-      return google(model) as LanguageModel;
-    }
-
-    case 'mistral': {
-      const mistral = createMistral({ apiKey });
-      return mistral(model) as LanguageModel;
-    }
-
-    case 'ollama': {
-      const ollama = createOllama();
-      return ollama(model) as unknown as LanguageModel;
-    }
-
-    case 'openai': {
-      const openai = createOpenAI({ apiKey });
-      return openai(model) as LanguageModel;
-    }
-
-    default: {
-      throw new Error(`[SHADOW-AUDITOR] Unknown provider: "${provider}". Supported: anthropic, openai, google, mistral, ollama, custom.`);
-    }
+function normalizeRole(role: string): 'assistant' | 'system' | 'tool' | 'user' {
+  if (role === 'assistant' || role === 'tool' || role === 'user') {
+    return role;
   }
+
+  return 'system';
 }
 
-// ─── TOOL DEFINITIONS ────────────────────────────────────────────────────────────
+function maybeCreateHttpInvoker(endpoint?: string): MCPRawInvoker | undefined {
+  const normalizedEndpoint = endpoint?.trim();
+  if (!normalizedEndpoint) {
+    return undefined;
+  }
 
-/**
- * Creates the read_file_content tool bound to a specific target directory.
- */
-function createFileReadTool(resolvedTargetPath: string) {
-  return tool({
-    description:
-      'Reads the full, uncompressed source code of a specific file. Use this when you need to inspect the actual implementation of a function, class, or module that appears suspicious in the Repo Map or that the user has asked about.',
-    async execute({ filePath }: { filePath: string }) {
-      const absolutePath = path.resolve(resolvedTargetPath, filePath);
+  return async (operation: string, input: Record<string, unknown>) => {
+    const response = await fetch(normalizedEndpoint, {
+      body: JSON.stringify({ input, operation }),
+      headers: {
+        'content-type': 'application/json',
+      },
+      method: 'POST',
+    });
 
-      // Security: prevent directory traversal outside the target
-      // Normalize paths to handle Windows/Unix differences and resolve symlinks
-      const normalizedAbsolute = path.normalize(absolutePath);
-      const normalizedTarget = path.normalize(resolvedTargetPath);
-      if (!normalizedAbsolute.startsWith(normalizedTarget + path.sep) && normalizedAbsolute !== normalizedTarget) {
-        return `[ERROR] Access denied: "${filePath}" resolves outside the target directory.`;
-      }
+    if (!response.ok) {
+      throw new Error(`MCP endpoint error (${response.status}): ${response.statusText}`);
+    }
 
-      try {
-        const content = await fs.readFile(absolutePath, 'utf8');
-        return `// ─── FILE: ${filePath} ───\n${content}`;
-      } catch (error) {
-        return `[ERROR] Could not read file "${filePath}": ${(error as Error).message}`;
-      }
-    },
-    inputSchema: z.object({
-      filePath: z.string().describe('The relative file path from the repository root to read.'),
-    }),
-  });
+    const rawBody = await response.text();
+    if (!rawBody) {
+      return '';
+    }
+
+    try {
+      return JSON.parse(rawBody) as unknown;
+    } catch {
+      return rawBody;
+    }
+  };
 }
 
-/**
- * Creates the list_directory tool for exploring folder contents.
- */
-function createListDirectoryTool(resolvedTargetPath: string) {
-  return tool({
-    description:
-      'Lists the contents of a directory. Use this when the Repo Map lacks specific configuration files or when you need to explore folder structures to find hidden configuration, test files, or other relevant files.',
-    async execute({ path: dirPath }: { path: string }) {
-      const absolutePath = path.resolve(resolvedTargetPath, dirPath);
+function toContentString(content: ModelMessage['content']): string {
+  if (typeof content === 'string') {
+    return content;
+  }
 
-      // Security: prevent directory traversal outside the target
-      // Normalize paths to handle Windows/Unix differences and resolve symlinks
-      const normalizedAbsolute = path.normalize(absolutePath);
-      const normalizedTarget = path.normalize(resolvedTargetPath);
-      if (!normalizedAbsolute.startsWith(normalizedTarget + path.sep) && normalizedAbsolute !== normalizedTarget) {
-        return `[ERROR] Access denied: "${dirPath}" resolves outside the target directory.`;
-      }
-
-      try {
-        const entries = await fs.readdir(absolutePath, { withFileTypes: true });
-        const formatted = entries
-          .map((entry) => {
-            const prefix = entry.isDirectory() ? '📁' : '📄';
-            return `${prefix} ${entry.name}`;
-          })
-          .join('\n');
-        return `// ─── DIRECTORY: ${dirPath} ───\n${formatted}`;
-      } catch (error) {
-        return `[ERROR] Could not list directory "${dirPath}": ${(error as Error).message}`;
-      }
-    },
-    inputSchema: z.object({
-      path: z.string().describe('The relative directory path from the repository root to list. Use "." for root.'),
-    }),
-  });
+  return JSON.stringify(content);
 }
 
-/**
- * Creates the search_codebase tool for hunting specific patterns.
- */
-function createSearchCodebaseTool(resolvedTargetPath: string) {
-  return tool({
-    description:
-      'Searches the entire codebase for a specific regex pattern. Use this to hunt for dangerous sinks (e.g., "exec", "eval", "innerHTML", "dangerouslySetInnerHTML"), hardcoded secrets, or specific function calls across all files. Excludes node_modules and .git directories.',
-    async execute({ fileExtension, regexPattern }: { fileExtension?: string; regexPattern: string; }) {
-      const results: string[] = [];
-
-      // Security: Validate regex pattern to prevent ReDoS attacks
-      // Limit pattern length and complexity
-      if (regexPattern.length > 200) {
-        return `[ERROR] Regex pattern too long (max 200 characters). Please simplify your search pattern.`;
-      }
-
-      let regex: RegExp;
-
-      // Reusable VM context for better performance
-      const sandbox = { re: /./, str: '' };
-      const context = vm.createContext(sandbox);
-      const script = new vm.Script('re.test(str)');
-
-      // Helper to safely test regex with a timeout to prevent ReDoS
-      const safeTest = (re: RegExp, str: string): boolean => {
-        sandbox.re = re;
-        sandbox.str = str;
-        return script.runInContext(context, { timeout: 100 }); // 100ms timeout
-      };
-
-      try {
-        // Use a timeout for regex compilation and testing
-        regex = new RegExp(regexPattern, 'gi');
-        // Test the regex with a string that triggers backtracking to catch ReDoS early
-        const testString = 'a'.repeat(100) + 'b';
-        safeTest(regex, testString);
-      } catch (error) {
-        return `[ERROR] Invalid regex pattern or potential ReDoS: ${(error as Error).message}`;
-      }
-
-      async function searchDir(dir: string): Promise<void> {
-        const entries = await fs.readdir(dir, { withFileTypes: true });
-
-        for (const entry of entries) {
-          const fullPath = path.join(dir, entry.name);
-          
-          // Skip node_modules and .git
-          if (entry.name === 'node_modules' || entry.name === '.git') continue;
-
-          if (entry.isDirectory()) {
-            await searchDir(fullPath);
-          } else if (entry.isFile()) {
-            // Apply file extension filter if specified
-            if (fileExtension && !entry.name.endsWith(fileExtension)) continue;
-            
-            // Only search text files
-            const hasTextExt = TEXT_EXTENSIONS.some((ext) => entry.name.endsWith(ext));
-            if (!hasTextExt) continue;
-
-            try {
-              const content = await fs.readFile(fullPath, 'utf8');
-              const lines = content.split('\n');
-              
-              for (let i = 0; i < lines.length; i++) {
-                try {
-                  if (safeTest(regex, lines[i])) {
-                    const relativePath = path.relative(resolvedTargetPath, fullPath);
-                    results.push(`${relativePath}:${i + 1}: ${lines[i].trim()}`);
-                  }
-                } catch (error) {
-                  const relativePath = path.relative(resolvedTargetPath, fullPath);
-                  results.push(`${relativePath}:${i + 1}: [TIMEOUT] Search skipped on this line due to potential ReDoS`);
-                }
-
-                // Reset regex lastIndex for global flag
-                regex.lastIndex = 0;
-              }
-            } catch {
-              // Skip files that can't be read
-            }
-          }
-        }
-      }
-
-      try {
-        await searchDir(resolvedTargetPath);
-        
-        if (results.length === 0) {
-          return `[INFO] No matches found for pattern: ${regexPattern}`;
-        }
-        
-        const limitedResults = results.slice(0, 50);
-        const output = `// ─── SEARCH RESULTS for "${regexPattern}" ───\n// Found ${results.length} matches${results.length > 50 ? ' (showing first 50)' : ''}\n\n${limitedResults.join('\n')}`;
-        return output;
-      } catch (error) {
-        return `[ERROR] Search failed: ${(error as Error).message}`;
-      }
-    },
-    inputSchema: z.object({
-      fileExtension: z.string().optional().describe('Optional file extension filter (e.g., ".ts", ".js", ".py").'),
-      regexPattern: z.string().describe(String.raw`The regex pattern to search for (e.g., "eval\\s*\\(", "password\\s*=").`),
-    }),
-  });
-}
-
-/**
- * Creates the edit_file tool with human-in-the-loop confirmation.
- */
-function createEditFileTool(resolvedTargetPath: string) {
-  return tool({
-    description:
-      'Proposes and applies a patch to a file. Use this to fix security vulnerabilities by replacing vulnerable code with secure alternatives. REQUIRES USER CONFIRMATION before applying. If the user denies, you should propose an alternative solution.',
-    async execute({ filePath, replacementCode, targetCode }: { filePath: string; replacementCode: string; targetCode: string; }) {
-      const absolutePath = path.resolve(resolvedTargetPath, filePath);
-
-      // Security: prevent directory traversal outside the target
-      // Normalize paths to handle Windows/Unix differences and resolve symlinks
-      const normalizedAbsolute = path.normalize(absolutePath);
-      const normalizedTarget = path.normalize(resolvedTargetPath);
-      if (!normalizedAbsolute.startsWith(normalizedTarget + path.sep) && normalizedAbsolute !== normalizedTarget) {
-        return `[ERROR] Access denied: "${filePath}" resolves outside the target directory.`;
-      }
-
-      try {
-        // Read the current file content
-        const content = await fs.readFile(absolutePath, 'utf8');
-        
-        // Check if target code exists
-        if (!content.includes(targetCode)) {
-          return `[ERROR] Target code not found in "${filePath}". The exact code snippet must match. Please read the file again to get the exact code.`;
-        }
-
-        // Ask for user confirmation (Human-in-the-Loop)
-        const confirmed = await confirmFileEdit(filePath, targetCode, replacementCode);
-        
-        if (!confirmed) {
-          return `[DENIED] User denied the patch to "${filePath}". Please propose an alternative solution or explain why this patch is necessary.`;
-        }
-
-        // Apply the patch
-        const newContent = content.replace(targetCode, replacementCode);
-        await fs.writeFile(absolutePath, newContent, 'utf-8');
-        
-        return `[SUCCESS] Patch applied to "${filePath}". The vulnerable code has been replaced with the secure version.`;
-      } catch (error) {
-        return `[ERROR] Could not edit file "${filePath}": ${(error as Error).message}`;
-      }
-    },
-    inputSchema: z.object({
-      filePath: z.string().describe('The relative file path from the repository root to edit.'),
-      replacementCode: z.string().describe('The new code to replace the target with.'),
-      targetCode: z.string().describe('The exact code snippet to find and replace (must match exactly).'),
-    }),
-  });
-}
-
-/**
- * Creates the execute_command tool with human-in-the-loop confirmation.
- */
-function createExecuteCommandTool(resolvedTargetPath: string) {
-  return tool({
-    description:
-      'Executes a shell command in the target repository. Use this to run git commands, test suites, linters, or build tools. REQUIRES USER CONFIRMATION before executing. Returns stdout and stderr so you can analyze the results.',
-    async execute({ command }: { command: string }) {
-      // Ask for user confirmation (Human-in-the-Loop)
-      const confirmed = await confirmCommandExecution(command);
-      
-      if (!confirmed) {
-        return `[DENIED] User denied command execution: "${command}". You may need to explain why this command is necessary or propose an alternative approach.`;
-      }
-
-      try {
-        const { stderr, stdout } = await execAsync(command, {
-          cwd: resolvedTargetPath,
-          maxBuffer: 1024 * 1024 * 10, // 10MB buffer
-          timeout: 60_000, // 60 second timeout
-        });
-        
-        let output = `// ─── COMMAND: ${command} ───\n`;
-        if (stdout.trim()) {
-          output += `\n[STDOUT]\n${stdout.trim()}`;
-        }
-
-        if (stderr.trim()) {
-          output += `\n\n[STDERR]\n${stderr.trim()}`;
-        }
-
-        if (!stdout.trim() && !stderr.trim()) {
-          output += '\n[INFO] Command completed with no output.';
-        }
-        
-        return output;
-      } catch (error: unknown) {
-        const execError = error as { message: string; stderr?: string; stdout?: string; };
-        let output = `// ─── COMMAND FAILED: ${command} ───\n`;
-        output += `\n[ERROR] ${execError.message}`;
-        if (execError.stdout?.trim()) {
-          output += `\n\n[STDOUT]\n${execError.stdout.trim()}`;
-        }
-
-        if (execError.stderr?.trim()) {
-          output += `\n\n[STDERR]\n${execError.stderr.trim()}`;
-        }
-
-        return output;
-      }
-    },
-    inputSchema: z.object({
-      command: z.string().describe('The shell command to execute (e.g., "git status", "npm test", "npm run lint").'),
-    }),
-  });
-}
-
-// ─── AGENT SESSION ───────────────────────────────────────────────────────────────
-
-/**
- * Represents a stateful agent session that maintains conversation history
- * and supports streaming responses with tool execution.
- */
 export class AgentSession {
+  private artifacts: null | RunArtifacts = null;
+  private expertUnsafe: boolean;
+  private initialized: Promise<void>;
+  private mcpManager: MCPManager | null = null;
   private messages: ModelMessage[] = [];
   private model: LanguageModel;
-  private tools: ToolSet;
+  private runtime: RuntimeSettings;
+  private runtimeWarnings: string[] = [];
+  private systemPrompt = '';
+  private tools: ToolSet = {};
 
-  constructor(config: ShadowConfig, repoMap: string, targetPath: string) {
+  constructor(
+    private readonly config: ShadowConfig,
+    repoMap: string,
+    private readonly targetPath: string,
+    options: AgentSessionOptions = {},
+  ) {
     this.model = getModel(config);
+    this.expertUnsafe = options.expertUnsafe ?? config.expertUnsafe ?? false;
+    this.runtime = resolveRuntimeSettings(config, (warning) => {
+      this.runtimeWarnings.push(warning);
+      console.warn(warning);
+    });
+
     const resolvedTargetPath = path.resolve(targetPath);
-
-    // Initialize all agentic tools
-    this.tools = {
-      edit_file: createEditFileTool(resolvedTargetPath),
-      execute_command: createExecuteCommandTool(resolvedTargetPath),
-      list_directory: createListDirectoryTool(resolvedTargetPath),
-      read_file_content: createFileReadTool(resolvedTargetPath),
-      search_codebase: createSearchCodebaseTool(resolvedTargetPath),
-    } as ToolSet;
-
-    // Initialize conversation with the repo map as context
     this.messages = [
       {
         content: `## REPOSITORY ARCHITECTURE MAP
 
-The following is a compressed architectural map of the target codebase at \`${resolvedTargetPath}\`. It contains ONLY structural signatures (imports, class declarations, function signatures, type definitions) — no implementation bodies.
+The following is a compressed architectural map of the target codebase at \`${resolvedTargetPath}\`.
+It contains structural signatures (imports, declarations, type surfaces), not implementation bodies.
 
 \`\`\`
 ${repoMap}
 \`\`\`
 
-You now have full context of this repository's architecture. You have access to powerful agentic tools:
-- **read_file_content**: Inspect full source code of any file
-- **list_directory**: Explore folder contents
-- **search_codebase**: Hunt for specific patterns globally
-- **edit_file**: Propose and apply security patches (requires confirmation)
-- **execute_command**: Run shell commands like git, npm, etc. (requires confirmation)
-
-Await the user's instructions.`,
-        role: 'user' as const,
+Use your tools to inspect implementation details, verify assumptions, and produce precise security findings.`,
+        role: 'user',
       },
       {
-        content: `I've ingested the repository architecture map and I'm fully armed with agentic capabilities. I can see the complete structural layout and I'm ready to perform deep, autonomous security analysis.
-
-**What I can do:**
-• 🔍 **Hunt vulnerabilities** — Search for dangerous patterns (eval, exec, innerHTML, etc.)
-• 📖 **Deep-dive** — Read and analyze any file in detail
-• 🔧 **Propose patches** — Suggest and apply security fixes (with your approval)
-• ⚡ **Run commands** — Execute git, tests, linters (with your approval)
-• 🗂️ **Explore** — Navigate directories and discover hidden configs
-
-**Pro tip:** Say "full audit" for comprehensive SAST, or give me a specific target like "analyze authentication" or "find all SQL injection vectors".
-
-What would you like me to investigate?`,
-        role: 'assistant' as const,
+        content: `Repository map ingested. Ready for autonomous security analysis with controlled tooling and machine-readable reporting.`,
+        role: 'assistant',
       },
     ];
+
+    this.initialized = this.initialize();
   }
 
-  /**
-   * Sends a user message and streams the assistant's response.
-   * Handles tool calls transparently and appends all messages to history.
-   * Calls the onChunk callback for each text chunk to enable real-time printing.
-   */
   async sendMessage(userMessage: string, onChunk: (text: string) => void): Promise<string> {
-    // Push the user's message into conversation history
+    await this.initialized;
+    if (!this.artifacts) {
+      throw new Error('Run artifacts are not initialized.');
+    }
+
+    const timestamp = new Date().toISOString();
     this.messages.push({
       content: userMessage,
-      role: 'user' as const,
+      role: 'user',
+    });
+    await this.artifacts.recordMessage({
+      content: userMessage,
+      role: 'user',
+      timestamp,
     });
 
-    const result = streamText({
-      maxOutputTokens: 16_384,
+    const streamResult = await streamWithContinuation({
+      maxContinuations: this.config.continuation?.maxContinuations ?? 2,
+      maxOutputTokens: this.runtime.maxOutputTokens,
+      maxToolSteps: this.runtime.maxToolSteps,
       messages: this.messages,
       model: this.model,
-      stopWhen: stepCountIs(10), // Allow agent to chain up to 10 tool calls
-      system: SYSTEM_PROMPT,
-      tools: this.tools,
+      onChunk,
+      systemPrompt: this.systemPrompt,
+      tools: this.tools as ToolSet,
     });
 
-    // Stream the text to the terminal in real-time
-    let fullResponse = '';
-    for await (const chunk of result.textStream) {
-      fullResponse += chunk;
-      onChunk(chunk);
+    this.messages.push(...streamResult.messagesDelta);
+    await this.persistMessages(streamResult.messagesDelta);
+    await this.persistToolEvents(streamResult.steps);
+
+    await this.artifacts.writeReportMarkdown(streamResult.text);
+
+    try {
+      const validation = await validateAndRepairReport({
+        maxRetries: this.config.reportValidation?.maxRepairRetries ?? 2,
+        repair: async ({ attempt, lastCandidate, validationError }) => {
+          const prompt = `Original response:
+${streamResult.text}
+
+Last invalid candidate:
+${lastCandidate ?? '<none>'}
+
+Validation error:
+${validationError}
+
+Repair attempt:
+${attempt}
+
+Return corrected JSON now.`;
+
+          const repaired = await generateText({
+            maxOutputTokens: Math.min(this.runtime.maxOutputTokens, 4_096),
+            model: this.model,
+            prompt,
+            system: REPORT_REPAIR_SYSTEM_PROMPT,
+            temperature: 0,
+          });
+
+          return repaired.text;
+        },
+        responseText: streamResult.text,
+      });
+
+      await this.artifacts.writeReportJson(validation.report);
+      if (validation.report.findings.length > 0) {
+        await this.artifacts.writeReportSarif(generateSarifReport(validation.report));
+      }
+    } catch (error) {
+      const fallbackReport = { findings: [] as [] };
+      await this.artifacts.writeReportJson(fallbackReport);
+      this.runtimeWarnings.push(`Report validation fallback applied: ${(error as Error).message}`);
     }
 
-    // After streaming completes, capture the final response and append to history
-    const finalResult = await result;
+    await this.artifacts.updateMeta({
+      warnings: [...this.runtimeWarnings],
+    });
 
-    const steps = await result.steps;
+    return streamResult.text;
+  }
 
-    // Append all the steps' messages to our conversation history
-    // The response includes the assistant message and any tool call/result messages
-    if (steps) {
-      for (const step of steps) {
-        // Add the assistant message from this step
-        if (step.text || step.toolCalls?.length) {
-          const assistantContent: Array<Record<string, unknown>> = [];
+  private async initialize(): Promise<void> {
+    const pathGuard = await createPathGuard(this.targetPath);
+    const resolvedTargetPath = pathGuard.rootRealPath;
 
-          if (step.text) {
-            assistantContent.push({ text: step.text, type: 'text' });
-          }
+    const mcpEnabled = this.isMcpEnabled();
+    const mcpTools = await this.initializeMcpTools(resolvedTargetPath, mcpEnabled);
 
-          if (step.toolCalls) {
-            for (const tc of step.toolCalls) {
-              assistantContent.push({
-                input: tc.input,
-                toolCallId: tc.toolCallId,
-                toolName: tc.toolName,
-                type: 'tool-call',
-              });
-            }
-          }
+    this.tools = {
+      edit_file: createEditFileTool(pathGuard),
+      execute_command: createExecuteCommandTool({
+        commandPolicy: {
+          additionalAllowedCommandPatterns: this.config.commandPolicy?.additionalAllowedCommandPatterns,
+          additionalDeniedPatterns: this.config.commandPolicy?.additionalDeniedPatterns,
+          allowPnpmYarn: this.config.commandPolicy?.allowPnpmYarn ?? true,
+          expertUnsafe: this.expertUnsafe,
+        },
+        workingDirectory: resolvedTargetPath,
+      }),
+      list_directory: createListDirectoryTool(pathGuard),
+      read_file_content: createReadFileTool(pathGuard),
+      search_codebase: createSearchCodebaseTool(pathGuard),
+      ...mcpTools,
+    };
 
-          this.messages.push({
-            content: assistantContent,
-            role: 'assistant' as const,
-          } as ModelMessage);
+    this.systemPrompt = buildSystemPrompt({
+      auditMode: this.config.auditMode ?? this.runtime.capabilities.preferredAuditMode,
+      mcpEnabled: Object.keys(mcpTools).length > 0,
+    });
 
-          // Add tool results if any
-          if (step.toolResults) {
-            for (const tr of step.toolResults) {
-              this.messages.push({
-                content: [
-                  {
-                    output: tr.output,
-                    toolCallId: tr.toolCallId,
-                    toolName: tr.toolName,
-                    type: 'tool-result',
-                  },
-                ],
-                role: 'tool' as const,
-              } as unknown as ModelMessage);
-            }
-          }
-        }
-      }
-    } else {
-      // Fallback: if no steps, just append the full text response
-      this.messages.push({
-        content: fullResponse,
-        role: 'assistant' as const,
+    this.artifacts = await RunArtifacts.create(resolvedTargetPath, {
+      maxOutputTokens: this.runtime.maxOutputTokens,
+      maxToolSteps: this.runtime.maxToolSteps,
+      mcpEnabled: Object.keys(mcpTools).length > 0,
+      model: this.config.model,
+      provider: this.config.provider,
+      targetPath: resolvedTargetPath,
+      warnings: [...this.runtimeWarnings],
+    });
+
+    await this.artifacts.recordMessage({
+      content: {
+        model: this.config.model,
+        provider: this.config.provider,
+        runtime: this.runtime,
+      },
+      role: 'system',
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  private isMcpEnabled(): boolean {
+    if (typeof this.config.mcp?.enabled === 'boolean') {
+      return this.config.mcp.enabled;
+    }
+
+    return process.env.SHADOW_AUDITOR_ENABLE_MCP === '1';
+  }
+
+  private async initializeMcpTools(targetPath: string, enabled: boolean): Promise<ToolSet> {
+    if (!enabled) {
+      return {};
+    }
+
+    const manager = new MCPManager({
+      expertUnsafe: this.expertUnsafe,
+      targetPath,
+    });
+
+    const chromeInvoker = maybeCreateHttpInvoker(
+      this.config.mcp?.chromeDevtoolsEndpoint ?? process.env.SHADOW_AUDITOR_MCP_CHROME_ENDPOINT,
+    );
+    const kaliInvoker = maybeCreateHttpInvoker(
+      this.config.mcp?.kaliLinuxEndpoint ?? process.env.SHADOW_AUDITOR_MCP_KALI_ENDPOINT,
+    );
+
+    const enabledAdapters = new Set(this.config.mcp?.adapters ?? ['chrome-devtools', 'kali-linux']);
+    if (enabledAdapters.has('chrome-devtools')) {
+      manager.registerAdapter(createChromeDevtoolsAdapter({ invoker: chromeInvoker }));
+    }
+
+    if (enabledAdapters.has('kali-linux')) {
+      manager.registerAdapter(createKaliLinuxAdapter({ invoker: kaliInvoker }));
+    }
+
+    await manager.initialize();
+    this.mcpManager = manager;
+    return manager.buildAgentTools();
+  }
+
+  private async persistMessages(messages: ModelMessage[]): Promise<void> {
+    if (!this.artifacts) {
+      return;
+    }
+
+    for (const message of messages) {
+      await this.artifacts.recordMessage({
+        content: toContentString(message.content),
+        role: normalizeRole(message.role),
+        timestamp: new Date().toISOString(),
       });
     }
+  }
 
-    return fullResponse;
+  private async persistToolEvents(steps: Array<StepResult<ToolSet>>): Promise<void> {
+    if (!this.artifacts) {
+      return;
+    }
+
+    for (const step of steps) {
+      for (const toolCall of step.toolCalls) {
+        await this.artifacts.recordToolEvent({
+          data: toolCall.input,
+          event: 'call',
+          timestamp: new Date().toISOString(),
+          toolCallId: toolCall.toolCallId,
+          toolName: toolCall.toolName,
+        });
+      }
+
+      for (const toolResult of step.toolResults) {
+        await this.artifacts.recordToolEvent({
+          data: toolResult.output,
+          event: 'result',
+          timestamp: new Date().toISOString(),
+          toolCallId: toolResult.toolCallId,
+          toolName: toolResult.toolName,
+        });
+      }
+    }
   }
 }

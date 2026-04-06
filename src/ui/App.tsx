@@ -43,7 +43,7 @@ const providerOptions = [
 // ... Target Selection Component (to be implemented)
 // ... Chat Shell Component (to be implemented)
 
-const App = ({ forceReconfigure }: { forceReconfigure: boolean }) => {
+const App = ({ expertUnsafe, forceReconfigure }: { expertUnsafe: boolean; forceReconfigure: boolean }) => {
   const [appState, setAppState] = useState<AppState>('booting');
   const [config, setConfig] = useState<null | ShadowConfig>(null);
   const [targetPath, setTargetPath] = useState<string>('');
@@ -134,7 +134,7 @@ const App = ({ forceReconfigure }: { forceReconfigure: boolean }) => {
         try {
           const map = await generateRepoMap(targetPath);
 
-          const session = new AgentSession(config, map, targetPath);
+          const session = new AgentSession(config, map, targetPath, { expertUnsafe });
           setAgentSession(session);
 
           setAppState('shell');
@@ -150,7 +150,7 @@ const App = ({ forceReconfigure }: { forceReconfigure: boolean }) => {
 
       initSession();
     }
-  }, [appState, targetPath, config]);
+  }, [appState, targetPath, config, expertUnsafe]);
 
   const handlePathSubmit = async (p: string) => {
     try {
@@ -357,7 +357,10 @@ const App = ({ forceReconfigure }: { forceReconfigure: boolean }) => {
           {/* Status Bar */}
           <Box marginBottom={1} paddingX={1}>
             <Text color="blue">● Environment loaded: </Text>
-            <Text color="white">Provider: {config?.provider} | Model: {config?.model} | Target: {path.basename(targetPath)}</Text>
+            <Text color="white">
+              Provider: {config?.provider} | Model: {config?.model} | Target: {path.basename(targetPath)}
+              {expertUnsafe ? ' | Mode: EXPERT-UNSAFE' : ''}
+            </Text>
           </Box>
 
           {/* Chat History */}

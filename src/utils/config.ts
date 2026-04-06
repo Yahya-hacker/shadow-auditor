@@ -6,13 +6,50 @@ import * as path from 'node:path';
  * Configuration interface for Shadow Auditor
  */
 export interface ShadowConfig {
+  auditMode?: 'balanced' | 'deep' | 'quick';
   apiKey: string;
+  commandPolicy?: {
+    additionalAllowedCommandPatterns?: string[];
+    additionalDeniedPatterns?: string[];
+    allowPnpmYarn?: boolean;
+  };
+  continuation?: {
+    maxContinuations?: number;
+  };
   customBaseUrl?: string;
+  expertUnsafe?: boolean;
+  maxOutputTokens?: number;
+  maxToolSteps?: number;
+  mcp?: {
+    adapters?: Array<'chrome-devtools' | 'kali-linux'>;
+    chromeDevtoolsEndpoint?: string;
+    enabled?: boolean;
+    kaliLinuxEndpoint?: string;
+  };
   model: string;
   provider: string;
+  reportValidation?: {
+    maxRepairRetries?: number;
+  };
 }
 
 const CONFIG_FILENAME = '.shadow-auditor.json';
+let plaintextApiKeyWarningShown = false;
+
+/**
+ * Extension point for future secure keychain integration.
+ * Current behavior remains JSON-file based for backward compatibility.
+ */
+export interface SecretStoreAdapter {
+  getApiKey(provider: string): Promise<null | string>;
+  setApiKey?(provider: string, apiKey: string): Promise<void>;
+}
+
+let secretStoreAdapter: null | SecretStoreAdapter = null;
+
+export function registerSecretStoreAdapter(adapter: SecretStoreAdapter): void {
+  secretStoreAdapter = adapter;
+}
 
 /**
  * Resolves the absolute path to the global config file
@@ -38,8 +75,23 @@ export async function loadConfig(): Promise<null | ShadowConfig> {
     }
 
     // API key is required for non-Ollama providers
+    if (parsed.provider !== 'ollama' && !parsed.apiKey && secretStoreAdapter) {
+      const secureApiKey = await secretStoreAdapter.getApiKey(parsed.provider);
+      if (secureApiKey) {
+        parsed.apiKey = secureApiKey;
+      }
+    }
+
     if (parsed.provider !== 'ollama' && !parsed.apiKey) {
       return null;
+    }
+
+    if (parsed.provider !== 'ollama' && parsed.apiKey && !plaintextApiKeyWarningShown) {
+      plaintextApiKeyWarningShown = true;
+      console.warn(
+        `[SHADOW-AUDITOR][WARN] API key is stored in plaintext at ${configPath}. ` +
+          'Consider using environment variables or registerSecretStoreAdapter(...) for keychain integration.',
+      );
     }
 
     return parsed;
@@ -55,4 +107,8 @@ export async function saveConfig(configData: ShadowConfig): Promise<void> {
   const configPath = getConfigPath();
   const json = JSON.stringify(configData, null, 2);
   await fs.writeFile(configPath, json, 'utf-8');
+
+  if (configData.provider !== 'ollama' && configData.apiKey && secretStoreAdapter?.setApiKey) {
+    await secretStoreAdapter.setApiKey(configData.provider, configData.apiKey);
+  }
 }

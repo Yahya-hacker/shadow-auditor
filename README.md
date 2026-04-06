@@ -113,6 +113,35 @@ Exit with:
 - `quit`
 - `Ctrl+C`
 
+## Safe vs Expert Command Surface
+
+By default, command execution is policy-limited to safe families (`git status|diff|log`, `npm test|run lint|run build`, and pnpm/yarn equivalents when enabled), with explicit deny rules for destructive patterns.
+
+Use expert mode only when needed:
+
+```bash
+shadow-auditor --expert-unsafe
+```
+
+In expert mode, broader command/MCP tool calls are allowed but still require explicit confirmation and show warnings.
+
+## Run Artifacts and CI Outputs
+
+Each session writes persistent artifacts under:
+
+```text
+<target>/.shadow-auditor/runs/<ISO-timestamp>-<id>/
+```
+
+Generated files:
+
+- `session-meta.json`
+- `messages.jsonl`
+- `tool-events.jsonl`
+- `report.md`
+- `report.json` (validated structured findings)
+- `report.sarif` (generated when findings exist)
+
 ## Security Workflow Model
 
 Shadow Auditor combines:
@@ -139,6 +168,9 @@ Stored fields include:
 - `model`
 - `apiKey` (not required for Ollama)
 - `customBaseUrl` (for custom OpenAI-compatible providers)
+- optional runtime controls (`maxOutputTokens`, `maxToolSteps`, policy/MCP extensions)
+
+> ⚠️ API keys in `~/.shadow-auditor.json` are plaintext. This remains for backward compatibility; a secure secret-store extension hook exists for future keychain integration.
 
 ## Requirements
 
