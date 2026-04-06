@@ -1,6 +1,6 @@
 import type { MCPToolDefinition } from './types.js';
 
-export interface MCPPPolicyDecision {
+export interface MCPPolicyDecision {
   allowed: boolean;
   reason: string;
   warning?: string;
@@ -22,7 +22,7 @@ export function evaluateMcpPolicy(
   adapterId: string,
   toolDefinition: MCPToolDefinition,
   expertUnsafe: boolean,
-): MCPPPolicyDecision {
+): MCPPolicyDecision {
   const safeTools = SAFE_ADAPTER_TOOLS[adapterId] ?? new Set<string>();
   const isSafeTool = safeTools.has(toolDefinition.name);
   const isHighRisk = toolDefinition.riskLevel === 'high' || HIGH_RISK_TOOLS.has(toolDefinition.name);
