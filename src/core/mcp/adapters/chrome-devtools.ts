@@ -11,7 +11,7 @@ function unavailableMessage(operation: string): string {
 }
 
 export function createChromeDevtoolsAdapter(options: ChromeDevtoolsAdapterOptions = {}): MCPAdapter {
-  const invoker = options.invoker;
+  const {invoker} = options;
 
   return {
     capabilities: ['browser-observation', 'dom-snapshot', 'network-inspection'],

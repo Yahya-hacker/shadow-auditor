@@ -1,11 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { randomUUID } from 'node:crypto';
 
 import type { SecurityReport } from './output/report-schema.js';
 
 export interface SessionMetadata {
   completedAt?: string;
+  maxOutputTokens: number;
+  maxToolSteps: number;
   mcpEnabled: boolean;
   model: string;
   provider: string;
@@ -13,8 +15,6 @@ export interface SessionMetadata {
   startedAt: string;
   targetPath: string;
   warnings: string[];
-  maxOutputTokens: number;
-  maxToolSteps: number;
 }
 
 export interface MessageArtifactEvent {

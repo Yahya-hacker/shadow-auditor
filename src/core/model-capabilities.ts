@@ -120,7 +120,7 @@ const CAPABILITY_RULES: CapabilityRule[] = [
   },
   {
     capabilities: {
-      maxOutputTokens: 8_000,
+      maxOutputTokens: 8000,
       maxToolSteps: 10,
       preferredAuditMode: 'quick',
       supportsLongOutput: false,

@@ -2,15 +2,12 @@ import { tool } from 'ai';
 import * as fs from 'node:fs/promises';
 import { z } from 'zod';
 
-import { PathGuardError, type PathGuard } from '../policy/path-guard.js';
+import { type PathGuard, PathGuardError } from '../policy/path-guard.js';
 
 export function createListDirectoryTool(pathGuard: PathGuard) {
   return tool({
     description:
       'Lists directory contents using symlink-safe path resolution. Use this to discover files and repository layout.',
-    inputSchema: z.object({
-      path: z.string().describe('Relative directory path from repository root (use "." for root).'),
-    }),
     async execute({ path: dirPath }: { path: string }) {
       try {
         const absolutePath = await pathGuard.resolveExistingPath(dirPath);
@@ -39,5 +36,8 @@ export function createListDirectoryTool(pathGuard: PathGuard) {
         return `[ERROR] Could not list directory "${dirPath}": ${(error as Error).message}`;
       }
     },
+    inputSchema: z.object({
+      path: z.string().describe('Relative directory path from repository root (use "." for root).'),
+    }),
   });
 }

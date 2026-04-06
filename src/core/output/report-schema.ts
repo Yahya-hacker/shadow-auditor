@@ -4,10 +4,10 @@ const severitySchema = z.enum(['Critical', 'High', 'Info', 'Low', 'Medium']);
 
 export const findingSchema = z
   .object({
-    cwe: z.string().min(1),
     cvss_v31_score: z.number().min(0).max(10),
     cvss_v31_vector: z.string().min(1),
     cvss_v40_score: z.number().min(0).max(10).nullable().optional(),
+    cwe: z.string().min(1),
     file_paths: z.array(z.string().min(1)).min(1),
     severity_label: severitySchema,
     title: z.string().min(1),

@@ -38,7 +38,7 @@ describe('path guard', () => {
     try {
       await fs.symlink(outsideFile, inRootSymlink);
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
+      const {code} = (error as NodeJS.ErrnoException);
       if (code === 'EPERM' || code === 'EACCES') {
         this.skip();
         return;
@@ -66,7 +66,7 @@ describe('path guard', () => {
     try {
       await fs.symlink(outsideNested, symlinkedDir, 'dir');
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
+      const {code} = (error as NodeJS.ErrnoException);
       if (code === 'EPERM' || code === 'EACCES') {
         this.skip();
         return;

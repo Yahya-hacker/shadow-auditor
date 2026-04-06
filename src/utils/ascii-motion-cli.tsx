@@ -468,17 +468,18 @@ const calculateNextFrame = (
   currentIndex: number,
   totalFrames: number,
   loop: boolean,
-): { nextIndex: number; continuePlaying: boolean } => {
+): { continuePlaying: boolean; nextIndex: number; } => {
   const nextIndex = currentIndex + 1;
 
   if (nextIndex >= totalFrames) {
     if (loop) {
-      return { nextIndex: 0, continuePlaying: true };
+      return { continuePlaying: true, nextIndex: 0 };
     }
-    return { nextIndex: currentIndex, continuePlaying: false };
+
+    return { continuePlaying: false, nextIndex: currentIndex };
   }
 
-  return { nextIndex, continuePlaying: true };
+  return { continuePlaying: true, nextIndex };
 };
 
 export const AsciiMotionCli: React.FC<AsciiMotionCliProps> = ({
@@ -524,12 +525,12 @@ export const AsciiMotionCli: React.FC<AsciiMotionCliProps> = ({
       const currentFrame = FRAMES[frameIndex];
       if (frameElapsedRef.current >= currentFrame.duration) {
         frameElapsedRef.current = 0;
-        const { nextIndex, continuePlaying } = calculateNextFrame(frameIndex, FRAMES.length, loop);
+        const { continuePlaying, nextIndex } = calculateNextFrame(frameIndex, FRAMES.length, loop);
 
-        if (!continuePlaying) {
-          setIsPlaying(false);
-        } else {
+        if (continuePlaying) {
           setFrameIndex(nextIndex);
+        } else {
+          setIsPlaying(false);
         }
       }
     }, 16);

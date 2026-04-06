@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { z } from 'zod';
 
 import { confirmCommandExecution } from '../../utils/human-in-loop.js';
-import { evaluateCommandPolicy, type CommandPolicyConfig } from '../policy/command-policy.js';
+import { type CommandPolicyConfig, evaluateCommandPolicy } from '../policy/command-policy.js';
 
 const execAsync = promisify(exec);
 
@@ -17,9 +17,6 @@ export function createExecuteCommandTool(options: ExecuteCommandToolOptions) {
   return tool({
     description:
       'Executes a repository command. Enforces policy checks before user confirmation, then returns stdout/stderr.',
-    inputSchema: z.object({
-      command: z.string().describe('Shell command to execute.'),
-    }),
     async execute({ command }: { command: string }) {
       const policyDecision = evaluateCommandPolicy(command, options.commandPolicy);
       if (!policyDecision.allowed) {
@@ -66,5 +63,8 @@ export function createExecuteCommandTool(options: ExecuteCommandToolOptions) {
         return output;
       }
     },
+    inputSchema: z.object({
+      command: z.string().describe('Shell command to execute.'),
+    }),
   });
 }

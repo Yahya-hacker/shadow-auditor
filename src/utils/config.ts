@@ -6,8 +6,8 @@ import * as path from 'node:path';
  * Configuration interface for Shadow Auditor
  */
 export interface ShadowConfig {
-  auditMode?: 'balanced' | 'deep' | 'quick';
   apiKey: string;
+  auditMode?: 'balanced' | 'deep' | 'quick';
   commandPolicy?: {
     additionalAllowedCommandPatterns?: string[];
     additionalDeniedPatterns?: string[];

@@ -20,10 +20,10 @@ describe('report validator', () => {
         JSON.stringify({
           findings: [
             {
-              cwe: 'CWE-79',
               cvss_v31_score: 7.5,
               cvss_v31_vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N',
               cvss_v40_score: null,
+              cwe: 'CWE-79',
               file_paths: ['src/ui/render.ts'],
               severity_label: 'High',
               title: 'Reflected XSS via unsanitized HTML sink',

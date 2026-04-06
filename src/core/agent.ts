@@ -1,24 +1,25 @@
 import { generateText, type LanguageModel, type ModelMessage, type StepResult, type ToolSet } from 'ai';
 import * as path from 'node:path';
 
+import type { ShadowConfig } from '../utils/config.js';
+import type { MCPRawInvoker } from './mcp/types.js';
+
 import { createChromeDevtoolsAdapter } from './mcp/adapters/chrome-devtools.js';
 import { createKaliLinuxAdapter } from './mcp/adapters/kali-linux.js';
 import { MCPManager } from './mcp/manager.js';
-import type { MCPRawInvoker } from './mcp/types.js';
 import { resolveRuntimeSettings, type RuntimeSettings } from './model-capabilities.js';
 import { getModel } from './model-router.js';
-import { generateSarifReport } from './output/sarif.js';
 import { validateAndRepairReport } from './output/report-validator.js';
-import { createExecuteCommandTool } from './tools/execute-command.js';
-import { createEditFileTool } from './tools/edit-file.js';
-import { createListDirectoryTool } from './tools/list-directory.js';
-import { createReadFileTool } from './tools/read-file.js';
-import { createSearchCodebaseTool } from './tools/search-codebase.js';
-import { buildSystemPrompt } from './system-prompt.js';
+import { generateSarifReport } from './output/sarif.js';
 import { createPathGuard } from './policy/path-guard.js';
 import { RunArtifacts } from './run-artifacts.js';
 import { streamWithContinuation } from './session.js';
-import type { ShadowConfig } from '../utils/config.js';
+import { buildSystemPrompt } from './system-prompt.js';
+import { createEditFileTool } from './tools/edit-file.js';
+import { createExecuteCommandTool } from './tools/execute-command.js';
+import { createListDirectoryTool } from './tools/list-directory.js';
+import { createReadFileTool } from './tools/read-file.js';
+import { createSearchCodebaseTool } from './tools/search-codebase.js';
 
 export interface AgentSessionOptions {
   expertUnsafe?: boolean;
@@ -193,7 +194,7 @@ ${attempt}
 Return corrected JSON now.`;
 
           const repaired = await generateText({
-            maxOutputTokens: Math.min(this.runtime.maxOutputTokens, 4_096),
+            maxOutputTokens: Math.min(this.runtime.maxOutputTokens, 4096),
             model: this.model,
             prompt,
             system: REPORT_REPAIR_SYSTEM_PROMPT,
@@ -272,14 +273,6 @@ Return corrected JSON now.`;
     });
   }
 
-  private isMcpEnabled(): boolean {
-    if (typeof this.config.mcp?.enabled === 'boolean') {
-      return this.config.mcp.enabled;
-    }
-
-    return process.env.SHADOW_AUDITOR_ENABLE_MCP === '1';
-  }
-
   private async initializeMcpTools(targetPath: string, enabled: boolean): Promise<ToolSet> {
     if (!enabled) {
       return {};
@@ -309,6 +302,14 @@ Return corrected JSON now.`;
     await manager.initialize();
     this.mcpManager = manager;
     return manager.buildAgentTools();
+  }
+
+  private isMcpEnabled(): boolean {
+    if (typeof this.config.mcp?.enabled === 'boolean') {
+      return this.config.mcp.enabled;
+    }
+
+    return process.env.SHADOW_AUDITOR_ENABLE_MCP === '1';
   }
 
   private async persistMessages(messages: ModelMessage[]): Promise<void> {

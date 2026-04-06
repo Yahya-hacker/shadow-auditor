@@ -13,8 +13,8 @@ function toSarifLevel(severity: SecurityFinding['severity_label']): SarifLevel {
       return 'warning';
     }
 
-    case 'Low':
     case 'Info':
+    case 'Low':
     default: {
       return 'note';
     }

@@ -9,10 +9,10 @@ export class PathGuardError extends Error {
 }
 
 export interface PathGuard {
-  readonly rootPath: string;
-  readonly rootRealPath: string;
   resolveExistingPath(relativePath: string): Promise<string>;
   resolvePathForWrite(relativePath: string): Promise<string>;
+  readonly rootPath: string;
+  readonly rootRealPath: string;
   toRelative(absolutePath: string): string;
 }
 
@@ -97,10 +97,10 @@ export async function createPathGuard(rootPath: string): Promise<PathGuard> {
   }
 
   return {
-    rootPath: resolvedRoot,
-    rootRealPath,
     resolveExistingPath,
     resolvePathForWrite,
+    rootPath: resolvedRoot,
+    rootRealPath,
     toRelative,
   };
 }

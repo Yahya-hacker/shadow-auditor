@@ -1,8 +1,9 @@
 import { tool, type ToolSet } from 'ai';
 
+import type { MCPAdapter, MCPExecutionContext, MCPToolDefinition } from './types.js';
+
 import { confirmMcpToolExecution } from '../../utils/human-in-loop.js';
 import { evaluateMcpPolicy } from './policy.js';
-import type { MCPAdapter, MCPExecutionContext, MCPToolDefinition } from './types.js';
 
 export interface MCPManagerOptions {
   expertUnsafe: boolean;
@@ -34,36 +35,6 @@ export class MCPManager {
 
   constructor(private readonly options: MCPManagerOptions) {}
 
-  async initialize(): Promise<void> {
-    for (const adapter of this.adapters.values()) {
-      if (adapter.initialize) {
-        await adapter.initialize();
-      }
-    }
-  }
-
-  async shutdown(): Promise<void> {
-    for (const adapter of this.adapters.values()) {
-      if (adapter.shutdown) {
-        await adapter.shutdown();
-      }
-    }
-  }
-
-  registerAdapter(adapter: MCPAdapter): void {
-    this.adapters.set(adapter.id, adapter);
-  }
-
-  discoverCapabilities(): MCPDiscoveredCapability[] {
-    return [...this.adapters.values()].map((adapter) => ({
-      adapterId: adapter.id,
-      available: adapter.isAvailable ? adapter.isAvailable() : true,
-      capabilities: adapter.capabilities,
-      displayName: adapter.displayName,
-      tools: adapter.listTools().map((toolDefinition) => toolDefinition.name),
-    }));
-  }
-
   buildAgentTools(): ToolSet {
     const tools: ToolSet = {};
 
@@ -86,6 +57,36 @@ export class MCPManager {
     return tools;
   }
 
+  discoverCapabilities(): MCPDiscoveredCapability[] {
+    return [...this.adapters.values()].map((adapter) => ({
+      adapterId: adapter.id,
+      available: adapter.isAvailable ? adapter.isAvailable() : true,
+      capabilities: adapter.capabilities,
+      displayName: adapter.displayName,
+      tools: adapter.listTools().map((toolDefinition) => toolDefinition.name),
+    }));
+  }
+
+  async initialize(): Promise<void> {
+    for (const adapter of this.adapters.values()) {
+      if (adapter.initialize) {
+        await adapter.initialize();
+      }
+    }
+  }
+
+  registerAdapter(adapter: MCPAdapter): void {
+    this.adapters.set(adapter.id, adapter);
+  }
+
+  async shutdown(): Promise<void> {
+    for (const adapter of this.adapters.values()) {
+      if (adapter.shutdown) {
+        await adapter.shutdown();
+      }
+    }
+  }
+
   private wrapTool(
     adapterId: string,
     definition: MCPToolDefinition,
@@ -93,14 +94,13 @@ export class MCPManager {
   ): ToolSet[string] {
     return tool<Record<string, unknown>, string>({
       description: `[MCP:${adapterId}] ${definition.description}`,
-      inputSchema: definition.inputSchema,
       async execute(input: Record<string, unknown>) {
         const policyDecision = evaluateMcpPolicy(adapterId, definition, context.expertUnsafe);
         if (!policyDecision.allowed) {
           return policyDecision.reason;
         }
 
-        const warning = policyDecision.warning;
+        const {warning} = policyDecision;
         if (definition.requiresConfirmation || warning) {
           const confirmed = await confirmMcpToolExecution(
             adapterId,
@@ -117,6 +117,7 @@ export class MCPManager {
         const output = await definition.execute(input, context);
         return formatMcpOutput(output);
       },
+      inputSchema: definition.inputSchema,
     });
   }
 }

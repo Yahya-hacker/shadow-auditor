@@ -7,10 +7,10 @@ describe('sarif output', () => {
     const sarif = generateSarifReport({
       findings: [
         {
-          cwe: 'CWE-89',
           cvss_v31_score: 9.1,
           cvss_v31_vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:L',
           cvss_v40_score: null,
+          cwe: 'CWE-89',
           file_paths: ['src/db/query.ts', 'src/api/user.ts'],
           severity_label: 'Critical',
           title: 'SQL injection through string concatenation',

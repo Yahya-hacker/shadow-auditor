@@ -1,4 +1,4 @@
-import { securityReportSchema, type SecurityReport } from './report-schema.js';
+import { type SecurityReport, securityReportSchema } from './report-schema.js';
 
 export interface RepairContext {
   attempt: number;
@@ -40,7 +40,7 @@ export function extractJsonBlock(text: string): null | string {
 
   const firstBrace = text.indexOf('{');
   const lastBrace = text.lastIndexOf('}');
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
     return text.slice(firstBrace, lastBrace + 1);
   }
 

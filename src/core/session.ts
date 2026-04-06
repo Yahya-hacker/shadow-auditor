@@ -1,10 +1,10 @@
 import {
-  stepCountIs,
-  streamText,
   type FinishReason,
   type LanguageModel,
   type ModelMessage,
+  stepCountIs,
   type StepResult,
+  streamText,
   type ToolSet,
 } from 'ai';
 
@@ -31,7 +31,7 @@ export interface StreamWithContinuationResult<TOOLS extends ToolSet> {
 }
 
 function overlapLength(base: string, addition: string): number {
-  const maxWindow = Math.min(base.length, addition.length, 2_000);
+  const maxWindow = Math.min(base.length, addition.length, 2000);
   for (let length = maxWindow; length >= 16; length--) {
     if (base.endsWith(addition.slice(0, length))) {
       return length;

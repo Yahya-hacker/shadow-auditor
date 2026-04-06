@@ -11,7 +11,7 @@ function unavailableMessage(operation: string): string {
 }
 
 export function createKaliLinuxAdapter(options: KaliLinuxAdapterOptions = {}): MCPAdapter {
-  const invoker = options.invoker;
+  const {invoker} = options;
 
   return {
     capabilities: ['network-scanning', 'web-scanning'],

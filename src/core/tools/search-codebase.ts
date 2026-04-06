@@ -53,13 +53,6 @@ export function createSearchCodebaseTool(pathGuard: PathGuard) {
   return tool({
     description:
       'Searches code for regex patterns with text-file filtering and symlink-safe traversal. Excludes node_modules and .git.',
-    inputSchema: z.object({
-      fileExtension: z.string().optional().describe('Optional extension filter (".ts", ".js", ".py").'),
-      regexPattern: z
-        .string()
-        .max(200)
-        .describe(String.raw`Regex pattern to search for (example: "eval\\s*\\(").`),
-    }),
     async execute({ fileExtension, regexPattern }: { fileExtension?: string; regexPattern: string }) {
       const results: string[] = [];
       const extensionFilter = normalizeExtensionFilter(fileExtension);
@@ -115,10 +108,10 @@ export function createSearchCodebaseTool(pathGuard: PathGuard) {
           }
 
           const lines = content.split(/\r?\n/u);
-          for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-            if (regex.test(lines[lineIndex])) {
+          for (const [lineIndex, line] of lines.entries()) {
+            if (regex.test(line)) {
               const relativePath = path.relative(pathGuard.rootRealPath, fullPath);
-              results.push(`${relativePath}:${lineIndex + 1}: ${lines[lineIndex].trim()}`);
+              results.push(`${relativePath}:${lineIndex + 1}: ${line.trim()}`);
             }
 
             regex.lastIndex = 0;
@@ -140,5 +133,12 @@ export function createSearchCodebaseTool(pathGuard: PathGuard) {
       const limitedResults = results.slice(0, maxResults);
       return `// ─── SEARCH RESULTS for "${regexPattern}" ───\n// Found ${results.length} matches${results.length > maxResults ? ` (showing first ${maxResults})` : ''}\n\n${limitedResults.join('\n')}`;
     },
+    inputSchema: z.object({
+      fileExtension: z.string().optional().describe('Optional extension filter (".ts", ".js", ".py").'),
+      regexPattern: z
+        .string()
+        .max(200)
+        .describe(String.raw`Regex pattern to search for (example: "eval\\s*\\(").`),
+    }),
   });
 }
