@@ -3,5 +3,4 @@ dist/
 build/
 .env
 .shadow-auditor/
-GEMINI.md
 shadow-prompt.md
