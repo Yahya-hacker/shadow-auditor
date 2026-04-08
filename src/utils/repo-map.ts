@@ -94,6 +94,7 @@ function getLanguage(filePath: string): null | unknown {
  * Extracts the structural skeleton from a single node.
  * For functions/methods, we return only the signature line (no body).
  */
+// eslint-disable-next-line complexity
 function extractSignature(node: Parser.SyntaxNode, sourceCode: string): string {
   // For import statements, return the full text
   if (node.type === 'import_statement') {

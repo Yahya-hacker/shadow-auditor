@@ -3,12 +3,17 @@ import * as path from 'node:path';
 
 import type { ShadowConfig } from '../utils/config.js';
 import type { MCPRawInvoker } from './mcp/types.js';
+import type { MissionObjective, MissionPhase, TransitionReason } from './orchestrator/mission-state.js';
+import type { TransitionContext } from './orchestrator/transitions.js';
+import type { SecurityReport } from './output/report-schema.js';
 
 import { createChromeDevtoolsAdapter } from './mcp/adapters/chrome-devtools.js';
 import { createKaliLinuxAdapter } from './mcp/adapters/kali-linux.js';
 import { MCPManager } from './mcp/manager.js';
+import { vulnerabilityCanonicalId } from './memory/entity-normalizer.js';
 import { resolveRuntimeSettings, type RuntimeSettings } from './model-capabilities.js';
 import { getModel } from './model-router.js';
+import { MissionEngine } from './orchestrator/mission-engine.js';
 import { validateAndRepairReport } from './output/report-validator.js';
 import { generateSarifReport } from './output/sarif.js';
 import { createPathGuard } from './policy/path-guard.js';
@@ -98,6 +103,7 @@ export class AgentSession {
   private initialized: Promise<void>;
   private mcpManager: MCPManager | null = null;
   private messages: ModelMessage[] = [];
+  private missionEngine: MissionEngine | null = null;
   private model: LanguageModel;
   private runtime: RuntimeSettings;
   private runtimeWarnings: string[] = [];
@@ -157,6 +163,7 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       role: 'user',
       timestamp,
     });
+    const missionActionId = await this.startMissionCycle(userMessage);
 
     const streamResult = await streamWithContinuation({
       maxContinuations: this.config.continuation?.maxContinuations ?? 2,
@@ -175,6 +182,7 @@ Use your tools to inspect implementation details, verify assumptions, and produc
 
     await this.artifacts.writeReportMarkdown(streamResult.text);
 
+    let validatedReport: SecurityReport = { findings: [] };
     try {
       const validation = await validateAndRepairReport({
         maxRetries: this.config.reportValidation?.maxRepairRetries ?? 2,
@@ -206,6 +214,7 @@ Return corrected JSON now.`;
         responseText: streamResult.text,
       });
 
+      validatedReport = validation.report;
       await this.artifacts.writeReportJson(validation.report);
       if (validation.report.findings.length > 0) {
         await this.artifacts.writeReportSarif(generateSarifReport(validation.report));
@@ -216,11 +225,81 @@ Return corrected JSON now.`;
       this.runtimeWarnings.push(`Report validation fallback applied: ${(error as Error).message}`);
     }
 
+    await this.completeMissionCycle(missionActionId, validatedReport, streamResult.text.length);
+
     await this.artifacts.updateMeta({
       warnings: [...this.runtimeWarnings],
     });
 
     return streamResult.text;
+  }
+
+  private async completeMissionCycle(
+    actionId: null | string,
+    report: SecurityReport,
+    tokensUsed: number,
+  ): Promise<void> {
+    if (!this.missionEngine) {
+      return;
+    }
+
+    await this.transitionMission('VERIFY', 'action_executed', {
+      completedActionId: actionId ?? undefined,
+      tokensUsed,
+    });
+
+    await this.ingestReportFindings(report);
+
+    await this.transitionMission(
+      'REPORT',
+      report.findings.length > 0 ? 'verification_passed' : 'verification_failed',
+      {},
+    );
+    await this.missionEngine.saveCheckpoint();
+    await this.missionEngine.getGraph().saveSnapshot();
+    await this.transitionMission('OBSERVE', 'evidence_collected', {});
+  }
+
+  private async ingestReportFindings(report: SecurityReport): Promise<void> {
+    if (!this.missionEngine || report.findings.length === 0) {
+      return;
+    }
+
+    const graph = this.missionEngine.getGraph();
+    const now = new Date().toISOString();
+
+    for (const finding of report.findings) {
+      const vulnerabilityId = vulnerabilityCanonicalId(
+        finding.cwe,
+        undefined,
+        undefined,
+        finding.title,
+      );
+
+      graph.addEntity({
+        canonicalId: vulnerabilityId,
+        confidence: Math.min(1, finding.cvss_v31_score / 10),
+        createdAt: now,
+        entityType: 'vulnerability',
+        label: finding.title,
+        properties: {
+          cvssV31Score: finding.cvss_v31_score,
+          cvssV31Vector: finding.cvss_v31_vector,
+          cwe: finding.cwe,
+          title: finding.title,
+          verified: true,
+        },
+        updatedAt: now,
+      });
+
+      this.missionEngine.addHypothesis({
+        confidence: Math.min(1, Math.max(0.3, finding.cvss_v31_score / 10)),
+        description: `${finding.title} (${finding.cwe})`,
+        evidenceIds: [],
+        status: 'verified',
+        type: 'finding',
+      });
+    }
   }
 
   private async initialize(): Promise<void> {
@@ -261,9 +340,11 @@ Return corrected JSON now.`;
       targetPath: resolvedTargetPath,
       warnings: [...this.runtimeWarnings],
     });
+    await this.initializeMissionRuntime(resolvedTargetPath);
 
     await this.artifacts.recordMessage({
       content: {
+        mission: this.missionEngine?.getState() ?? null,
         model: this.config.model,
         provider: this.config.provider,
         runtime: this.runtime,
@@ -302,6 +383,43 @@ Return corrected JSON now.`;
     await manager.initialize();
     this.mcpManager = manager;
     return manager.buildAgentTools();
+  }
+
+  private async initializeMissionRuntime(resolvedTargetPath: string): Promise<void> {
+    if (!this.artifacts) {
+      return;
+    }
+
+    try {
+      const runDirectory = this.artifacts.getRunDirectory();
+      const runId = path.basename(runDirectory);
+      const objective: MissionObjective = {
+        constraints: [],
+        description: `Perform autonomous security analysis for ${resolvedTargetPath}`,
+        objectiveId: 'objective01',
+        priority: 'high',
+        scope: {
+          excludePaths: [],
+          includePaths: [resolvedTargetPath],
+          targetTypes: ['repository'],
+        },
+        status: 'in_progress',
+      };
+
+      this.missionEngine = new MissionEngine({
+        maxTokens: this.runtime.maxOutputTokens * Math.max(1, this.runtime.maxToolSteps),
+        maxToolCalls: this.runtime.maxToolSteps,
+        runId,
+        storagePath: runDirectory,
+      });
+
+      await this.missionEngine.initialize([objective]);
+    } catch (error) {
+      this.missionEngine = null;
+      this.runtimeWarnings.push(
+        `Mission engine initialization failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   private isMcpEnabled(): boolean {
@@ -351,6 +469,63 @@ Return corrected JSON now.`;
           toolName: toolResult.toolName,
         });
       }
+    }
+  }
+
+  private async startMissionCycle(userMessage: string): Promise<null | string> {
+    if (!this.missionEngine) {
+      return null;
+    }
+
+    const hypothesis = this.missionEngine.addHypothesis({
+      confidence: 0.35,
+      description: userMessage.slice(0, 1000),
+      evidenceIds: [],
+      status: 'investigating',
+      type: 'user-request',
+    });
+
+    await this.transitionMission('ORIENT', 'evidence_collected', {
+      hypothesesUpdated: [hypothesis],
+    });
+    await this.transitionMission('DECIDE', 'hypotheses_formed', {});
+
+    const action = this.missionEngine.queueAction({
+      estimatedTokens: Math.min(4096, this.runtime.maxOutputTokens),
+      parameters: {
+        promptPreview: userMessage.slice(0, 240),
+      },
+      priority: 1,
+      rationale: 'Drive the next OODA ACT phase from the latest user request.',
+      toolName: 'llm_orchestrator',
+    });
+
+    await this.transitionMission('ACT', 'action_selected', {
+      newActions: [action],
+    });
+
+    return action.actionId;
+  }
+
+  private async transitionMission(
+    targetPhase: MissionPhase,
+    reason: TransitionReason,
+    context: TransitionContext,
+  ): Promise<void> {
+    if (!this.missionEngine) {
+      return;
+    }
+
+    const currentState = this.missionEngine.getState();
+    if (currentState.currentPhase === targetPhase) {
+      return;
+    }
+
+    const result = await this.missionEngine.transition(targetPhase, reason, context);
+    if (!result.ok) {
+      this.runtimeWarnings.push(
+        `Mission transition ${currentState.currentPhase}→${targetPhase} blocked: ${result.error}`,
+      );
     }
   }
 }
