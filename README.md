@@ -191,6 +191,29 @@ Shadow Auditor is a cybersecurity tool. Use only on codebases and systems you ar
 
 ## Vision
 
-Shadow Auditor is not just a CLI scanner—it is the foundation of a **complete multi-agent cybersecurity operating system**.
+Shadow Auditor is a next-generation **application security auditing CLI** built for teams that need high-signal results across real-world codebases—without compromising on safety, reproducibility, or operational fit.
 
-Version 1 starts with SAST. The next iterations expand into performance, UX/UI, active pentest operations, DAST, and coordinated multi-agent execution across multiple AI providers.
+It combines an autonomous, **SAST-first workflow** with strict evidence requirements and policy-controlled tool execution, so every finding is not just plausible—it is **defensible**.
+
+### What makes it different
+
+**Evidence-backed findings, by design**  
+Shadow Auditor is built around traceability. Every finding carries concrete code references, a clear reasoning path, and actionable remediation guidance. The goal is to eliminate noise and give security engineers output they can act on immediately—and stand behind in an audit or review.
+
+**Human-in-the-loop safety and policy controls**  
+Autonomous analysis is only valuable when it stays within defined boundaries. Shadow Auditor gates risky actions through explicit policies and operator confirmation, making it suitable for professional environments where auditability, least-privilege behavior, and responsible usage are non-negotiable.
+
+**Structured outputs built for CI pipelines**  
+Every run produces persistent artifacts under `.shadow-auditor/runs/`: structured findings in `report.json`, a `report.sarif` file for integration with GitHub Advanced Security and other SARIF-compatible platforms, and a full `report.md` for human review. Deterministic finding identifiers and deduplication make results stable and comparable across commits.
+
+**Context management that scales to real repositories**  
+Large codebases exceed any single context window. The roadmap targets hybrid retrieval—combining lexical search, semantic embeddings, and a typed knowledge graph of entities, flows, and evidence—so the agent retains relevant context across long sessions and can connect discoveries made early with signals found later.
+
+**A multi-agent architecture built for complex systems**  
+The forward direction is a coordinated agent mesh: specialized roles for recon, dataflow analysis, exploit-chain validation, remediation, and independent verification—operating in parallel and synchronizing through shared evidence. Each agent writes to a common blackboard; a verifier role enforces anti-hallucination gates before any finding is promoted to the report. This is not an experimental idea—it is the design target, and current architecture decisions reflect it.
+
+### The goal
+
+Shadow Auditor aims to be the tool security engineers and developers reach for when results genuinely matter: a rigorous, governance-friendly, CI-integrated system that scales from a single repository to a full engineering organization—with reproducible, auditable findings at every step.
+
+> Shadow Auditor is a cybersecurity tool. Use only on codebases and systems you are authorized to assess.
