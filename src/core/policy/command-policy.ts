@@ -14,6 +14,17 @@ export interface CommandPolicyDecision {
 const DEFAULT_ALLOWED_PATTERNS = [
   /^\s*git\s+(status|diff|log)(\s|$)/i,
   /^\s*npm\s+(test|run\s+(test|lint|build)|run-script\s+(test|lint|build)|run\s+lint|run\s+build)(\s|$)/i,
+  // Read-only Unix analysis tools safe for security auditing (may be piped together)
+  /^\s*(grep|egrep|fgrep|rg)\b/i,
+  /^\s*find\s+/i,
+  /^\s*(cat|head|tail|wc|file|stat)\s+/i,
+  /^\s*(ls|ls\s+-\S+)\b/i,
+  /^\s*(echo|printf)\b/i,
+  /^\s*sed\b/i,
+  /^\s*awk\b/i,
+  /^\s*jq\b/i,
+  /^\s*(sort|uniq|cut|tr|diff|comm)\b/i,
+  /^\s*tree\b/i,
 ];
 
 const PNPM_YARN_ALLOWED_PATTERNS = [

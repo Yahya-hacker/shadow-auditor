@@ -1,5 +1,6 @@
 import {
   type FinishReason,
+  hasToolCall,
   type LanguageModel,
   type ModelMessage,
   stepCountIs,
@@ -10,12 +11,26 @@ import {
 
 export const CONTINUATION_PROMPT = 'Continue exactly where you left off. Do not repeat content.';
 
+/**
+ * Returns a stopWhen predicate array for use in streamText.
+ * Stops the tool loop when either:
+ *   1. The step budget is exhausted (stepCountIs), OR
+ *   2. The agent explicitly calls the `finish_task` tool (hasToolCall)
+ *
+ * This implements the "stopWhen: finish_task" agentic capability from the
+ * problem statement, enabling the agent to self-terminate when goals are met.
+ */
+export function buildStopConditions(maxToolSteps: number) {
+  return [stepCountIs(maxToolSteps), hasToolCall('finish_task')];
+}
+
 export interface StreamWithContinuationOptions<TOOLS extends ToolSet> {
   maxContinuations?: number;
   maxOutputTokens: number;
   maxToolSteps: number;
   messages: ModelMessage[];
   model: LanguageModel;
+  onActivity?: (activity: StreamActivity) => void;
   onChunk: (chunk: string) => void;
   systemPrompt: string;
   tools: TOOLS;
@@ -28,6 +43,13 @@ export interface StreamWithContinuationResult<TOOLS extends ToolSet> {
   rawFinishReason: string | undefined;
   steps: Array<StepResult<TOOLS>>;
   text: string;
+}
+
+export interface StreamActivity {
+  kind: 'tool_call' | 'tool_result';
+  summary: string;
+  toolCallId: string;
+  toolName: string;
 }
 
 function overlapLength(base: string, addition: string): number {
@@ -122,12 +144,41 @@ function convertStepToMessages<TOOLS extends ToolSet>(step: StepResult<TOOLS>): 
   return messages;
 }
 
+export function extractStepActivities<TOOLS extends ToolSet>(
+  steps: Array<StepResult<TOOLS>>,
+): StreamActivity[] {
+  const activities: StreamActivity[] = [];
+
+  for (const step of steps) {
+    for (const toolCall of step.toolCalls) {
+      activities.push({
+        kind: 'tool_call',
+        summary: `Calling ${toolCall.toolName}`,
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName,
+      });
+    }
+
+    for (const toolResult of step.toolResults) {
+      activities.push({
+        kind: 'tool_result',
+        summary: `Completed ${toolResult.toolName}`,
+        toolCallId: toolResult.toolCallId,
+        toolName: toolResult.toolName,
+      });
+    }
+  }
+
+  return activities;
+}
+
 export async function streamWithContinuation<TOOLS extends ToolSet>({
   maxContinuations = 2,
   maxOutputTokens,
   maxToolSteps,
   messages,
   model,
+  onActivity,
   onChunk,
   systemPrompt,
   tools,
@@ -144,7 +195,7 @@ export async function streamWithContinuation<TOOLS extends ToolSet>({
       maxOutputTokens,
       messages: workingMessages,
       model,
-      stopWhen: stepCountIs(maxToolSteps),
+      stopWhen: buildStopConditions(maxToolSteps),
       system: systemPrompt,
       tools,
     });
@@ -165,6 +216,11 @@ export async function streamWithContinuation<TOOLS extends ToolSet>({
     ]);
 
     allSteps.push(...steps);
+    const activities = extractStepActivities(steps);
+    for (const activity of activities) {
+      onActivity?.(activity);
+    }
+
     if (steps.length === 0 && currentChunkText) {
       workingMessages.push({
         content: currentChunkText,

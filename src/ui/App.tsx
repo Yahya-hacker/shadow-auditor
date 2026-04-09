@@ -4,9 +4,9 @@ import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
-import { AgentSession } from '../core/agent.js';
+import { AgentSession, type AgentStreamEvent } from '../core/agent.js';
 import { AsciiMotionCli } from '../utils/ascii-motion-cli.js';
 import { loadConfig, saveConfig, ShadowConfig } from '../utils/config.js';
 import { generateRepoMap } from '../utils/repo-map.js';
@@ -30,6 +30,52 @@ type Message = {
   text: string;
 };
 
+type ActivityEventLine = {
+  id: string;
+  text: string;
+};
+
+const MAX_ACTIVITY_EVENTS = 40;
+
+function formatActivityLine(event: AgentStreamEvent): string {
+  const timestamp = new Date(event.timestamp).toLocaleTimeString();
+  const toolSuffix = event.toolName ? ` [${event.toolName}]` : '';
+
+  switch (event.kind) {
+    case 'tool_call': {
+      return `${timestamp} ▶ ${event.message}${toolSuffix}`;
+    }
+
+    case 'tool_result': {
+      return `${timestamp} ✓ ${event.message}${toolSuffix}`;
+    }
+
+    default: {
+      return `${timestamp} • ${event.message}${toolSuffix}`;
+    }
+  }
+}
+
+const ActivityStreamPanel = ({
+  activityEvents,
+  isProcessing,
+}: {
+  activityEvents: ActivityEventLine[];
+  isProcessing: boolean;
+}) => (
+  <Box borderColor="blue" borderStyle="round" flexDirection="column" marginBottom={1} paddingX={1}>
+    <Text bold color="blue">Live Activity Stream</Text>
+    {activityEvents.length === 0 && isProcessing && (
+      <Text color="gray">Waiting for first tool or status event...</Text>
+    )}
+    {activityEvents.slice(-8).map((event) => (
+      <Text color="gray" key={event.id}>
+        {event.text}
+      </Text>
+    ))}
+  </Box>
+);
+
 const providerOptions = [
   { label: 'Anthropic (Claude)', value: 'anthropic' },
   { label: 'OpenAI (GPT-4o, o1, o3)', value: 'openai' },
@@ -43,6 +89,7 @@ const providerOptions = [
 // ... Target Selection Component (to be implemented)
 // ... Chat Shell Component (to be implemented)
 
+// eslint-disable-next-line complexity
 const App = ({ expertUnsafe, forceReconfigure }: { expertUnsafe: boolean; forceReconfigure: boolean }) => {
   const [appState, setAppState] = useState<AppState>('booting');
   const [config, setConfig] = useState<null | ShadowConfig>(null);
@@ -62,7 +109,9 @@ const App = ({ expertUnsafe, forceReconfigure }: { expertUnsafe: boolean; forceR
   const [activeMessage, setActiveMessage] = useState<Message | null>(null);
   const [input, setInput] = useState<string>('');
   const [agentSession, setAgentSession] = useState<AgentSession | null>(null);
+  const [activityEvents, setActivityEvents] = useState<ActivityEventLine[]>([]);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const activityEventCounter = useRef(0);
 
   useEffect(() => {
     // Config Load Effect
@@ -198,15 +247,30 @@ const App = ({ expertUnsafe, forceReconfigure }: { expertUnsafe: boolean; forceR
     }
 
     setIsProcessing(true);
+    setActivityEvents([]);
     const agentMsgId = `a-${newMsgId}`;
     setActiveMessage({ id: agentMsgId, role: 'agent', text: '' });
 
     try {
       let finalResponse = '';
-      await agentSession.sendMessage(command, (chunk: string) => {
-        finalResponse += chunk;
-        setActiveMessage({ id: agentMsgId, role: 'agent', text: finalResponse });
-      });
+      await agentSession.sendMessage(
+        command,
+        (chunk: string) => {
+          finalResponse += chunk;
+          setActiveMessage({ id: agentMsgId, role: 'agent', text: finalResponse });
+        },
+        (event: AgentStreamEvent) => {
+          const line = formatActivityLine(event);
+          activityEventCounter.current += 1;
+          setActivityEvents((prev) => [
+            ...prev,
+            {
+              id: `activity-${activityEventCounter.current}`,
+              text: line,
+            },
+          ].slice(-MAX_ACTIVITY_EVENTS));
+        },
+      );
       setMessages(prev => [...prev, { id: agentMsgId, role: 'agent', text: finalResponse }]);
       setActiveMessage(null);
     } catch (error) {
@@ -377,11 +441,15 @@ const App = ({ expertUnsafe, forceReconfigure }: { expertUnsafe: boolean; forceR
 
           {/* Input Area */}
           <Box flexDirection="column" marginTop={1}>
+            {(isProcessing || activityEvents.length > 0) && (
+              <ActivityStreamPanel activityEvents={activityEvents} isProcessing={isProcessing} />
+            )}
             {activeMessage && (
                <Box flexDirection="column" marginBottom={1}>
-                 <Text color="cyan">● {activeMessage.text}</Text>
-               </Box>
-            )}
+                 <Text color="cyan">● Streaming response</Text>
+                 <Text color="cyan">{activeMessage.text}</Text>
+                </Box>
+             )}
             <Box>
               <Text color="green">{targetPath} [✓] </Text>
             </Box>

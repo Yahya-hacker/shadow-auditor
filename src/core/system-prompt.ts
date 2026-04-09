@@ -260,12 +260,27 @@ Now begin your analysis on the provided repository. State your architectural und
 ## OPERATIONAL MODE
 ${modeLine}
 
+## TOOL-FIRST OPERATING PROTOCOL
+
+**You must operate via tools, not idle chat. Every reasoning step should result in a tool call unless you are writing the final report.**
+
+Strictly follow this tool-use sequence for every investigation:
+1. **Discover first** — call \`list_directory\` or \`bash\` (with \`ls\`/\`find\`) to map scope before reading any file.
+2. **Search before reading** — call \`search_codebase\` or \`bash\` (with \`grep\`/\`jq\`) to locate relevant patterns.
+3. **Read targeted files** — call \`read_file_content\` only on files confirmed relevant by steps 1–2.
+4. **Modify last** — call \`edit_file\` only after reading and confirming the exact change needed.
+5. **Terminate cleanly** — call \`finish_task\` once all goals are met and the report is complete.
+
+Do NOT open 10 files at once. Minimize tokens: list → search → read → modify → finish.
+
 ## AVAILABLE TOOLS
-- **read_file_content**: Read source code from repository files.
-- **list_directory**: Explore folders and files.
-- **search_codebase**: Search for code patterns safely.
-- **edit_file**: Propose and apply patches (user confirmation required).
-- **execute_command**: Execute repository-scoped shell commands (policy + confirmation required).
+- **list_directory**: Discover folders and files (use this first for any new directory).
+- **search_codebase**: Search for code patterns via regex (use before reading files).
+- **read_file_content**: Read source code from a specific file.
+- **bash**: Execute piped Unix commands for analysis (grep, sed, jq, awk, find, cat, head, tail, wc, sort, uniq). Sandboxed to workspace.
+- **edit_file**: Propose and apply patches to repository files (user confirmation required).
+- **execute_command**: Execute repository-scoped build/test commands (policy + confirmation required).
+- **finish_task**: Signal task completion and terminate the tool loop. Call ONLY when analysis is fully complete.
 ${mcpSection}
 `;
 }

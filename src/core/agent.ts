@@ -18,16 +18,26 @@ import { validateAndRepairReport } from './output/report-validator.js';
 import { generateSarifReport } from './output/sarif.js';
 import { createPathGuard } from './policy/path-guard.js';
 import { RunArtifacts } from './run-artifacts.js';
-import { streamWithContinuation } from './session.js';
+import { type StreamActivity, streamWithContinuation } from './session.js';
 import { buildSystemPrompt } from './system-prompt.js';
+import { createBashTool } from './tools/bash.js';
 import { createEditFileTool } from './tools/edit-file.js';
 import { createExecuteCommandTool } from './tools/execute-command.js';
+import { createFinishTaskTool } from './tools/finish-task.js';
 import { createListDirectoryTool } from './tools/list-directory.js';
 import { createReadFileTool } from './tools/read-file.js';
 import { createSearchCodebaseTool } from './tools/search-codebase.js';
 
 export interface AgentSessionOptions {
   expertUnsafe?: boolean;
+}
+
+export interface AgentStreamEvent {
+  kind: 'status' | StreamActivity['kind'];
+  message: string;
+  timestamp: string;
+  toolCallId?: string;
+  toolName?: string;
 }
 
 const REPORT_REPAIR_SYSTEM_PROMPT = `You are a strict JSON repair engine.
@@ -147,11 +157,22 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     this.initialized = this.initialize();
   }
 
-  async sendMessage(userMessage: string, onChunk: (text: string) => void): Promise<string> {
+  async sendMessage(
+    userMessage: string,
+    onChunk: (text: string) => void,
+    onEvent?: (event: AgentStreamEvent) => void,
+  ): Promise<string> {
     await this.initialized;
     if (!this.artifacts) {
       throw new Error('Run artifacts are not initialized.');
     }
+
+    const emitEvent = (event: Omit<AgentStreamEvent, 'timestamp'>) => {
+      onEvent?.({
+        ...event,
+        timestamp: new Date().toISOString(),
+      });
+    };
 
     const timestamp = new Date().toISOString();
     this.messages.push({
@@ -163,7 +184,9 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       role: 'user',
       timestamp,
     });
+    emitEvent({ kind: 'status', message: 'Planning analysis mission' });
     const missionActionId = await this.startMissionCycle(userMessage);
+    emitEvent({ kind: 'status', message: 'Streaming model output and tool activity' });
 
     const streamResult = await streamWithContinuation({
       maxContinuations: this.config.continuation?.maxContinuations ?? 2,
@@ -171,6 +194,14 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       maxToolSteps: this.runtime.maxToolSteps,
       messages: this.messages,
       model: this.model,
+      onActivity(activity) {
+        emitEvent({
+          kind: activity.kind,
+          message: activity.summary,
+          toolCallId: activity.toolCallId,
+          toolName: activity.toolName,
+        });
+      },
       onChunk,
       systemPrompt: this.systemPrompt,
       tools: this.tools as ToolSet,
@@ -179,6 +210,7 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     this.messages.push(...streamResult.messagesDelta);
     await this.persistMessages(streamResult.messagesDelta);
     await this.persistToolEvents(streamResult.steps);
+    emitEvent({ kind: 'status', message: 'Validating and writing report artifacts' });
 
     await this.artifacts.writeReportMarkdown(streamResult.text);
 
@@ -230,6 +262,7 @@ Return corrected JSON now.`;
     await this.artifacts.updateMeta({
       warnings: [...this.runtimeWarnings],
     });
+    emitEvent({ kind: 'status', message: 'Analysis complete' });
 
     return streamResult.text;
   }
@@ -309,17 +342,24 @@ Return corrected JSON now.`;
     const mcpEnabled = this.isMcpEnabled();
     const mcpTools = await this.initializeMcpTools(resolvedTargetPath, mcpEnabled);
 
+    const commandPolicyConfig = {
+      additionalAllowedCommandPatterns: this.config.commandPolicy?.additionalAllowedCommandPatterns,
+      additionalDeniedPatterns: this.config.commandPolicy?.additionalDeniedPatterns,
+      allowPnpmYarn: this.config.commandPolicy?.allowPnpmYarn ?? true,
+      expertUnsafe: this.expertUnsafe,
+    };
+
     this.tools = {
-      edit_file: createEditFileTool(pathGuard),
-      execute_command: createExecuteCommandTool({
-        commandPolicy: {
-          additionalAllowedCommandPatterns: this.config.commandPolicy?.additionalAllowedCommandPatterns,
-          additionalDeniedPatterns: this.config.commandPolicy?.additionalDeniedPatterns,
-          allowPnpmYarn: this.config.commandPolicy?.allowPnpmYarn ?? true,
-          expertUnsafe: this.expertUnsafe,
-        },
+      bash: createBashTool({
+        commandPolicy: commandPolicyConfig,
         workingDirectory: resolvedTargetPath,
       }),
+      edit_file: createEditFileTool(pathGuard),
+      execute_command: createExecuteCommandTool({
+        commandPolicy: commandPolicyConfig,
+        workingDirectory: resolvedTargetPath,
+      }),
+      finish_task: createFinishTaskTool(),
       list_directory: createListDirectoryTool(pathGuard),
       read_file_content: createReadFileTool(pathGuard),
       search_codebase: createSearchCodebaseTool(pathGuard),
