@@ -92,6 +92,41 @@ You can also force setup:
 shadow-auditor --reconfigure
 ```
 
+### Audit Modes
+
+Control the depth, tool budget, and report style of each audit:
+
+```bash
+shadow-auditor --mode triage        # Fast pass — highest-confidence findings only
+shadow-auditor --mode deep-sast     # Full SAST analysis with verification chains (default)
+shadow-auditor --mode full-report   # deep-sast + enriched remediation + executive summary
+shadow-auditor --mode patch-only    # Produce code patches/fixes, minimal narrative
+```
+
+Legacy aliases `balanced`, `deep`, and `quick` are still accepted for backward compatibility.
+
+### CI Mode
+
+For automated pipelines:
+
+```bash
+shadow-auditor --ci --fail-on high   # Exit 1 if High or Critical findings exist
+shadow-auditor --ci --fail-on medium # Exit 1 if Medium, High, or Critical findings exist
+shadow-auditor --ci --fail-on none   # Always exit 0 (report-only CI)
+```
+
+`--fail-on` accepts: `critical`, `high`, `medium`, `low`, `none`. Default is `high`.
+
+### Incremental / Diff Scan Mode
+
+Scope the analysis to only files changed since a git ref:
+
+```bash
+shadow-auditor --diff                    # Changed files since HEAD~1
+shadow-auditor --diff --since HEAD~5     # Changed files since 5 commits back
+shadow-auditor --diff --since main       # Changed files since branch 'main'
+```
+
 ## Interactive Shell
 
 Prompt:
@@ -139,8 +174,26 @@ Generated files:
 - `messages.jsonl`
 - `tool-events.jsonl`
 - `report.md`
-- `report.json` (validated structured findings)
-- `report.sarif` (generated when findings exist)
+- `report.json` (validated, deduplicated structured findings with stable `vuln_id` values)
+- `report.sarif` (generated when findings exist; deterministic and GitHub Code Scanning compatible)
+
+### Stable Vulnerability IDs
+
+Every finding gets a deterministic `vuln_id` of the form `SHADOW-<CWE>-<HEX8>`, derived from:
+
+- Normalized title and CWE
+- Primary file path (when available)
+- Key evidence line numbers
+
+The same finding in the same repo+commit always produces the same `vuln_id`.
+
+### Finding Deduplication
+
+Multiple occurrences of the same root-cause vulnerability (same CWE + title) are automatically grouped into a single finding with merged `file_paths`. SARIF output stays clean and non-duplicated.
+
+### CVSS Consistency Checks
+
+The internal CVSS scorer validates v3.1 vectors and can flag mismatches between reported scores and computed scores. See `src/core/output/cvss-scorer.ts` for programmatic use.
 
 ## Security Workflow Model
 

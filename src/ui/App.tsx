@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import React, { useEffect, useRef, useState } from 'react';
 
 import { AgentSession, type AgentStreamEvent } from '../core/agent.js';
+import { buildDiffScopeHint, getChangedFiles } from '../core/tools/git-diff.js';
 import { AsciiMotionCli } from '../utils/ascii-motion-cli.js';
 import { loadConfig, saveConfig, ShadowConfig } from '../utils/config.js';
 import { generateRepoMap } from '../utils/repo-map.js';
@@ -89,8 +90,24 @@ const providerOptions = [
 // ... Target Selection Component (to be implemented)
 // ... Chat Shell Component (to be implemented)
 
-// eslint-disable-next-line complexity
-const App = ({ expertUnsafe, forceReconfigure }: { expertUnsafe: boolean; forceReconfigure: boolean }) => {
+const App = ({
+  ciEnabled,
+  diffEnabled,
+  expertUnsafe,
+  failOn,
+  forceReconfigure,
+  mode,
+  since,
+}: {
+  ciEnabled?: boolean;
+  diffEnabled?: boolean;
+  expertUnsafe: boolean;
+  failOn?: string;
+  forceReconfigure: boolean;
+  mode?: string;
+  since?: string;
+  // eslint-disable-next-line complexity
+}) => {
   const [appState, setAppState] = useState<AppState>('booting');
   const [config, setConfig] = useState<null | ShadowConfig>(null);
   const [targetPath, setTargetPath] = useState<string>('');
@@ -183,7 +200,28 @@ const App = ({ expertUnsafe, forceReconfigure }: { expertUnsafe: boolean; forceR
         try {
           const map = await generateRepoMap(targetPath);
 
-          const session = new AgentSession(config, map, targetPath, { expertUnsafe });
+          // Build effective config with CLI flag overrides
+          const effectiveConfig: ShadowConfig = {
+            ...config,
+            ...(mode ? { auditMode: mode as ShadowConfig['auditMode'] } : {}),
+            ...(ciEnabled ? { ci: { enabled: true, failOn: (failOn ?? 'high') as 'critical' | 'high' | 'low' | 'medium' | 'none' } } : {}),
+            ...(diffEnabled ? { diff: { baseRef: since ?? 'HEAD~1', enabled: true } } : {}),
+          };
+
+          // Build diff scope hint for incremental mode
+          let diffScopeHint: string | undefined;
+          if (diffEnabled) {
+            const changedFiles = await getChangedFiles({
+              baseRef: since ?? 'HEAD~1',
+              cwd: targetPath,
+            });
+            diffScopeHint = buildDiffScopeHint(changedFiles) || undefined;
+          }
+
+          const session = new AgentSession(effectiveConfig, map, targetPath, {
+            diffScopeHint,
+            expertUnsafe,
+          });
           setAgentSession(session);
 
           setAppState('shell');
@@ -199,7 +237,7 @@ const App = ({ expertUnsafe, forceReconfigure }: { expertUnsafe: boolean; forceR
 
       initSession();
     }
-  }, [appState, targetPath, config, expertUnsafe]);
+  }, [appState, targetPath, config, expertUnsafe, mode, ciEnabled, failOn, diffEnabled, since]);
 
   const handlePathSubmit = async (p: string) => {
     try {

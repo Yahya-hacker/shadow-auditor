@@ -5,7 +5,14 @@ import type { ShadowConfig } from '../utils/config.js';
 
 import { SCHEMA_VERSION } from './schema/base.js';
 
-export type AuditMode = 'balanced' | 'deep' | 'quick';
+export type AuditMode =
+  | 'balanced'       // Legacy alias (maps to deep-sast behaviour internally)
+  | 'deep'           // Legacy alias (maps to deep-sast behaviour internally)
+  | 'deep-sast'      // Full analysis, more retrieval and verification
+  | 'full-report'    // deep-sast + report enrichment and formatting
+  | 'patch-only'     // Only produce patches/fixes + minimal narrative
+  | 'quick'          // Legacy alias (maps to triage behaviour internally)
+  | 'triage';        // Fast, fewer tools, minimal retrieval
 
 // =============================================================================
 // Budget Tracking Schemas
@@ -255,15 +262,69 @@ export function effectiveMaxToolSteps(
   return Math.min(requested, modelCapabilities.maxToolSteps);
 }
 
+/**
+ * Returns token and step budget multipliers for a given audit mode.
+ *
+ * - triage / quick: minimal retrieval, fastest scan
+ * - balanced:       pragmatic depth
+ * - deep / deep-sast: full analysis
+ * - full-report:    deep-sast + report enrichment (slightly more tokens)
+ * - patch-only:     only patches/fixes, no lengthy narrative
+ */
+export function auditModeBudgetMultiplier(mode: AuditMode): { steps: number; tokens: number } {
+  switch (mode) {
+    case 'balanced': {
+      return { steps: 0.8, tokens: 0.7 };
+    }
+
+    case 'deep':
+    case 'deep-sast': {
+      return { steps: 1, tokens: 1 };
+    }
+
+    case 'full-report': {
+      return { steps: 1, tokens: 1.2 };
+    }
+
+    case 'patch-only': {
+      return { steps: 0.6, tokens: 0.5 };
+    }
+
+    case 'quick':
+    case 'triage': {
+      return { steps: 0.5, tokens: 0.4 };
+    }
+
+    default: {
+      return { steps: 1, tokens: 1 };
+    }
+  }
+}
+
 export function resolveRuntimeSettings(
   config: Pick<ShadowConfig, 'maxOutputTokens' | 'maxToolSteps' | 'model' | 'provider'>,
   onWarning?: (message: string) => void,
+  auditMode?: AuditMode,
 ): RuntimeSettings {
   const capabilities = resolveModelCapabilities(config);
+  const baseTokens = effectiveMaxOutputTokens(config, onWarning);
+  const baseSteps  = effectiveMaxToolSteps(config);
+
+  if (!auditMode) {
+    // No explicit mode: use raw model defaults (backward-compatible behaviour)
+    return {
+      capabilities,
+      maxOutputTokens: baseTokens,
+      maxToolSteps: baseSteps,
+    };
+  }
+
+  const multiplier = auditModeBudgetMultiplier(auditMode);
+
   return {
     capabilities,
-    maxOutputTokens: effectiveMaxOutputTokens(config, onWarning),
-    maxToolSteps: effectiveMaxToolSteps(config),
+    maxOutputTokens: Math.max(1, Math.round(baseTokens * multiplier.tokens)),
+    maxToolSteps:    Math.max(1, Math.round(baseSteps  * multiplier.steps)),
   };
 }
 

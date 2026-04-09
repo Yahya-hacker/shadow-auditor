@@ -7,7 +7,13 @@ import * as path from 'node:path';
  */
 export interface ShadowConfig {
   apiKey: string;
-  auditMode?: 'balanced' | 'deep' | 'quick';
+  auditMode?: 'balanced' | 'deep' | 'deep-sast' | 'full-report' | 'patch-only' | 'quick' | 'triage';
+  /** CI mode: produce deterministic machine outputs, exit non-zero on threshold */
+  ci?: {
+    enabled?: boolean;
+    /** Minimum severity that causes a non-zero exit. Default: "high". */
+    failOn?: 'critical' | 'high' | 'low' | 'medium' | 'none';
+  };
   commandPolicy?: {
     additionalAllowedCommandPatterns?: string[];
     additionalDeniedPatterns?: string[];
@@ -17,6 +23,11 @@ export interface ShadowConfig {
     maxContinuations?: number;
   };
   customBaseUrl?: string;
+  /** Incremental diff mode: scope analysis to files changed since this ref */
+  diff?: {
+    baseRef?: string;
+    enabled?: boolean;
+  };
   expertUnsafe?: boolean;
   maxOutputTokens?: number;
   maxToolSteps?: number;
