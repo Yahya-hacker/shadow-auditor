@@ -4,7 +4,7 @@ import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 import { AgentSession, type AgentStreamEvent } from '../core/agent.js';
 import { AsciiMotionCli } from '../utils/ascii-motion-cli.js';
@@ -111,6 +111,7 @@ const App = ({ expertUnsafe, forceReconfigure }: { expertUnsafe: boolean; forceR
   const [agentSession, setAgentSession] = useState<AgentSession | null>(null);
   const [activityEvents, setActivityEvents] = useState<ActivityEventLine[]>([]);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const activityEventCounter = useRef(0);
 
   useEffect(() => {
     // Config Load Effect
@@ -260,7 +261,14 @@ const App = ({ expertUnsafe, forceReconfigure }: { expertUnsafe: boolean; forceR
         },
         (event: AgentStreamEvent) => {
           const line = formatActivityLine(event);
-          setActivityEvents((prev) => [...prev, { id: `${Date.now()}-${Math.random()}`, text: line }].slice(-MAX_ACTIVITY_EVENTS));
+          activityEventCounter.current += 1;
+          setActivityEvents((prev) => [
+            ...prev,
+            {
+              id: `activity-${activityEventCounter.current}`,
+              text: line,
+            },
+          ].slice(-MAX_ACTIVITY_EVENTS));
         },
       );
       setMessages(prev => [...prev, { id: agentMsgId, role: 'agent', text: finalResponse }]);
