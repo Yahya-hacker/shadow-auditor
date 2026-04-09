@@ -20,8 +20,10 @@ import { createPathGuard } from './policy/path-guard.js';
 import { RunArtifacts } from './run-artifacts.js';
 import { streamWithContinuation } from './session.js';
 import { buildSystemPrompt } from './system-prompt.js';
+import { createBashTool } from './tools/bash.js';
 import { createEditFileTool } from './tools/edit-file.js';
 import { createExecuteCommandTool } from './tools/execute-command.js';
+import { createFinishTaskTool } from './tools/finish-task.js';
 import { createListDirectoryTool } from './tools/list-directory.js';
 import { createReadFileTool } from './tools/read-file.js';
 import { createSearchCodebaseTool } from './tools/search-codebase.js';
@@ -309,17 +311,24 @@ Return corrected JSON now.`;
     const mcpEnabled = this.isMcpEnabled();
     const mcpTools = await this.initializeMcpTools(resolvedTargetPath, mcpEnabled);
 
+    const commandPolicyConfig = {
+      additionalAllowedCommandPatterns: this.config.commandPolicy?.additionalAllowedCommandPatterns,
+      additionalDeniedPatterns: this.config.commandPolicy?.additionalDeniedPatterns,
+      allowPnpmYarn: this.config.commandPolicy?.allowPnpmYarn ?? true,
+      expertUnsafe: this.expertUnsafe,
+    };
+
     this.tools = {
-      edit_file: createEditFileTool(pathGuard),
-      execute_command: createExecuteCommandTool({
-        commandPolicy: {
-          additionalAllowedCommandPatterns: this.config.commandPolicy?.additionalAllowedCommandPatterns,
-          additionalDeniedPatterns: this.config.commandPolicy?.additionalDeniedPatterns,
-          allowPnpmYarn: this.config.commandPolicy?.allowPnpmYarn ?? true,
-          expertUnsafe: this.expertUnsafe,
-        },
+      bash: createBashTool({
+        commandPolicy: commandPolicyConfig,
         workingDirectory: resolvedTargetPath,
       }),
+      edit_file: createEditFileTool(pathGuard),
+      execute_command: createExecuteCommandTool({
+        commandPolicy: commandPolicyConfig,
+        workingDirectory: resolvedTargetPath,
+      }),
+      finish_task: createFinishTaskTool(),
       list_directory: createListDirectoryTool(pathGuard),
       read_file_content: createReadFileTool(pathGuard),
       search_codebase: createSearchCodebaseTool(pathGuard),

@@ -1,5 +1,6 @@
 import {
   type FinishReason,
+  hasToolCall,
   type LanguageModel,
   type ModelMessage,
   stepCountIs,
@@ -9,6 +10,19 @@ import {
 } from 'ai';
 
 export const CONTINUATION_PROMPT = 'Continue exactly where you left off. Do not repeat content.';
+
+/**
+ * Returns a stopWhen predicate array for use in streamText.
+ * Stops the tool loop when either:
+ *   1. The step budget is exhausted (stepCountIs), OR
+ *   2. The agent explicitly calls the `finish_task` tool (hasToolCall)
+ *
+ * This implements the "stopWhen: finish_task" agentic capability from the
+ * problem statement, enabling the agent to self-terminate when goals are met.
+ */
+export function buildStopConditions(maxToolSteps: number) {
+  return [stepCountIs(maxToolSteps), hasToolCall('finish_task')];
+}
 
 export interface StreamWithContinuationOptions<TOOLS extends ToolSet> {
   maxContinuations?: number;
@@ -144,7 +158,7 @@ export async function streamWithContinuation<TOOLS extends ToolSet>({
       maxOutputTokens,
       messages: workingMessages,
       model,
-      stopWhen: stepCountIs(maxToolSteps),
+      stopWhen: buildStopConditions(maxToolSteps),
       system: systemPrompt,
       tools,
     });

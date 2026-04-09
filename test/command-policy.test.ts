@@ -20,7 +20,8 @@ describe('command policy', () => {
   });
 
   it('allows broader command surface in expert mode with warning', () => {
-    const decision = evaluateCommandPolicy('echo "hello"', { expertUnsafe: true });
+    // Use a custom script (not covered by any standard allowlist entry) to verify expert-unsafe broadening
+    const decision = evaluateCommandPolicy('./scripts/custom-audit.sh --all', { expertUnsafe: true });
     expect(decision.allowed).to.equal(true);
     expect(decision.warning).to.include('EXPERT-UNSAFE');
   });
