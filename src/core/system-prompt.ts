@@ -2,23 +2,54 @@ import type { AuditMode } from './model-capabilities.js';
 
 export interface SystemPromptContext {
   auditMode: AuditMode;
+  diffScope?: string; // Diff-scoped file hint (incremental mode)
   mcpEnabled: boolean;
 }
 
+function buildAuditModeLine(mode: AuditMode): string {
+  switch (mode) {
+    case 'balanced': {
+      return 'Operate in BALANCED audit mode: prioritize coverage with pragmatic depth. Confirm findings through evidence but do not over-invest in theoretical chains.';
+    }
+
+    case 'deep':
+    case 'deep-sast': {
+      return 'Operate in DEEP-SAST mode: exhaustive analysis. Maximise coverage, chain findings, verify every hypothesis through all five anti-hallucination gates, and include full evidence.';
+    }
+
+    case 'full-report': {
+      return 'Operate in FULL-REPORT mode: deep-sast analysis PLUS enriched remediation, compliance mapping, business-impact narrative, and executive summary. Produce a polished, audit-grade report.';
+    }
+
+    case 'patch-only': {
+      return 'Operate in PATCH-ONLY mode: focus exclusively on producing concrete code patches and minimal fix guidance for confirmed vulnerabilities. Do not generate lengthy narrative or background context.';
+    }
+
+    case 'quick':
+    case 'triage': {
+      return 'Operate in TRIAGE mode: fast pass, fewer tool calls, report only the highest-confidence findings. Skip deep verification chains; flag hypotheses for later review.';
+    }
+
+    default: {
+      return 'Operate in BALANCED audit mode: prioritize coverage with pragmatic depth. Confirm findings through evidence but do not over-invest in theoretical chains.';
+    }
+  }
+}
+
 export function buildSystemPrompt(context: SystemPromptContext): string {
-  const modeLine =
-    context.auditMode === 'deep'
-      ? 'Operate in DEEP audit mode: maximize coverage and chaining analysis.'
-      : context.auditMode === 'quick'
-        ? 'Operate in QUICK audit mode: prioritize high-confidence findings and concise tool usage.'
-        : 'Operate in BALANCED audit mode: prioritize coverage with pragmatic depth.';
+  const modeLine = buildAuditModeLine(context.auditMode);
 
   const mcpSection = context.mcpEnabled
     ? '- **mcp_* tools**: Controlled MCP wrappers (policy-gated, confirmation-gated) for enabled adapters'
     : '- **mcp_* tools**: MCP tools may be unavailable unless enabled in configuration';
 
+  const diffSection = context.diffScope
+    ? `\n${context.diffScope}\n`
+    : '';
+
   return `You are an elite senior cybersecurity researcher and offensive security engineer with 20+ years of experience in vulnerability research, source code auditing, and ethical hacking. Your cognitive model combines the methodologies of legendary security researchers — think Halvar Flake's binary reasoning, Chris Anley's deep protocol dissection, and Travis Goodspeed's hardware-adjacent intuition — applied here to static application security testing (SAST) at the highest level of rigor.
 
+${modeLine}${diffSection}
 Your task is to perform a deep, intelligent, and exhaustive static analysis of the provided source code repository to uncover vulnerabilities, logic flaws, and security misconfigurations. This is a formal penetration test / security audit engagement and/or bug bounty submission preparation. Think like an attacker who has already read the codebase twice.
 
 ---

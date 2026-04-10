@@ -14,6 +14,8 @@ import { vulnerabilityCanonicalId } from './memory/entity-normalizer.js';
 import { resolveRuntimeSettings, type RuntimeSettings } from './model-capabilities.js';
 import { getModel } from './model-router.js';
 import { MissionEngine } from './orchestrator/mission-engine.js';
+import { computeCiExitCode, type FailOnSeverity, formatCiSummary } from './output/ci-exit.js';
+import { deduplicateFindings } from './output/dedup.js';
 import { validateAndRepairReport } from './output/report-validator.js';
 import { generateSarifReport } from './output/sarif.js';
 import { createPathGuard } from './policy/path-guard.js';
@@ -29,6 +31,8 @@ import { createReadFileTool } from './tools/read-file.js';
 import { createSearchCodebaseTool } from './tools/search-codebase.js';
 
 export interface AgentSessionOptions {
+  /** Diff scope hint from incremental mode (pre-built string) */
+  diffScopeHint?: string;
   expertUnsafe?: boolean;
 }
 
@@ -109,6 +113,7 @@ function toContentString(content: ModelMessage['content']): string {
 
 export class AgentSession {
   private artifacts: null | RunArtifacts = null;
+  private diffScopeHint: string;
   private expertUnsafe: boolean;
   private initialized: Promise<void>;
   private mcpManager: MCPManager | null = null;
@@ -128,10 +133,15 @@ export class AgentSession {
   ) {
     this.model = getModel(config);
     this.expertUnsafe = options.expertUnsafe ?? config.expertUnsafe ?? false;
-    this.runtime = resolveRuntimeSettings(config, (warning) => {
-      this.runtimeWarnings.push(warning);
-      console.warn(warning);
-    });
+    this.diffScopeHint = options.diffScopeHint ?? '';
+    this.runtime = resolveRuntimeSettings(
+      config,
+      (warning) => {
+        this.runtimeWarnings.push(warning);
+        console.warn(warning);
+      },
+      config.auditMode,
+    );
 
     const resolvedTargetPath = path.resolve(targetPath);
     this.messages = [
@@ -247,10 +257,29 @@ Return corrected JSON now.`;
       });
 
       validatedReport = validation.report;
-      await this.artifacts.writeReportJson(validation.report);
-      if (validation.report.findings.length > 0) {
-        await this.artifacts.writeReportSarif(generateSarifReport(validation.report));
+
+      // Apply finding deduplication before writing artifacts
+      const dedupedReport: SecurityReport = {
+        findings: deduplicateFindings(validation.report.findings),
+      };
+
+      await this.artifacts.writeReportJson(dedupedReport);
+      if (dedupedReport.findings.length > 0) {
+        await this.artifacts.writeReportSarif(generateSarifReport(dedupedReport));
       }
+
+      // CI mode: emit summary and trigger exit if threshold is met
+      if (this.config.ci?.enabled) {
+        const failOn = (this.config.ci.failOn ?? 'high') as FailOnSeverity;
+        const ciResult = computeCiExitCode({ failOn, findings: dedupedReport.findings });
+        const summary = formatCiSummary(ciResult, failOn);
+        emitEvent({ kind: 'status', message: summary });
+        if (ciResult.code !== 0) {
+          process.exitCode = ciResult.code;
+        }
+      }
+
+      validatedReport = dedupedReport;
     } catch (error) {
       const fallbackReport = { findings: [] as [] };
       await this.artifacts.writeReportJson(fallbackReport);
@@ -368,6 +397,7 @@ Return corrected JSON now.`;
 
     this.systemPrompt = buildSystemPrompt({
       auditMode: this.config.auditMode ?? this.runtime.capabilities.preferredAuditMode,
+      diffScope: this.diffScopeHint || undefined,
       mcpEnabled: Object.keys(mcpTools).length > 0,
     });
 
