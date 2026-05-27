@@ -32,6 +32,7 @@ export const entityTypeSchema = z.enum([
   'technology',
   'credential',
   'data_type',
+  'chunk',
 ]);
 export type EntityType = z.infer<typeof entityTypeSchema>;
 
@@ -160,6 +161,7 @@ export const edgeTypeSchema = z.enum([
   'depends_on',      // entity depends on another
   'validates',       // tool run validates entity
   'hypothesizes',    // tool run hypothesizes entity
+  'embeds',          // chunk embeds entity (semantic index linkage)
 ]);
 export type EdgeType = z.infer<typeof edgeTypeSchema>;
 

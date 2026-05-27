@@ -29,6 +29,19 @@ export interface ShadowConfig {
     enabled?: boolean;
   };
   expertUnsafe?: boolean;
+  /** Semantic indexing configuration for hybrid code retrieval */
+  indexing?: {
+    /** Chunking strategy: 'function' (default), 'class', or 'file' */
+    chunkStrategy?: 'class' | 'file' | 'function';
+    /** Embedding model name (default: 'nomic-embed-text' for Ollama, 'text-embedding-3-small' for OpenAI) */
+    embeddingModel?: string;
+    /** Embedding provider: 'ollama' (default, local) or 'openai' (cloud) */
+    embeddingProvider?: 'ollama' | 'openai';
+    /** Enable semantic indexing (default: true when embedding provider is available) */
+    enabled?: boolean;
+    /** Maximum characters per code chunk (default: 4000) */
+    maxChunkChars?: number;
+  };
   maxOutputTokens?: number;
   maxToolSteps?: number;
   mcp?: {
@@ -41,6 +54,12 @@ export interface ShadowConfig {
   provider: string;
   reportValidation?: {
     maxRepairRetries?: number;
+  };
+  swarm?: {
+    enabled?: boolean;
+    maxWorkers?: number;
+    roles?: string[];
+    workerBudgetRatio?: number;
   };
 }
 

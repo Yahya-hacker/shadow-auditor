@@ -7,10 +7,19 @@ import type { MissionObjective, MissionPhase, TransitionReason } from './orchest
 import type { TransitionContext } from './orchestrator/transitions.js';
 import type { SecurityReport } from './output/report-schema.js';
 
+import { SwarmCoordinator } from './hivemind/swarm-coordinator.js';
 import { createChromeDevtoolsAdapter } from './mcp/adapters/chrome-devtools.js';
 import { createKaliLinuxAdapter } from './mcp/adapters/kali-linux.js';
 import { MCPManager } from './mcp/manager.js';
 import { vulnerabilityCanonicalId } from './memory/entity-normalizer.js';
+import { HybridRetriever } from './memory/hybrid-retriever.js';
+import {
+  type EmbeddingProvider,
+  NullEmbeddingProvider,
+  OllamaEmbeddingProvider,
+  OpenAIEmbeddingProvider,
+  SemanticIndex,
+} from './memory/semantic-index.js';
 import { resolveRuntimeSettings, type RuntimeSettings } from './model-capabilities.js';
 import { getModel } from './model-router.js';
 import { MissionEngine } from './orchestrator/mission-engine.js';
@@ -23,6 +32,7 @@ import { RunArtifacts } from './run-artifacts.js';
 import { type StreamActivity, streamWithContinuation } from './session.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { createBashTool } from './tools/bash.js';
+import { createContextRetrievalTool } from './tools/context-retrieval.js';
 import { createEditFileTool } from './tools/edit-file.js';
 import { createExecuteCommandTool } from './tools/execute-command.js';
 import { createFinishTaskTool } from './tools/finish-task.js';
@@ -122,6 +132,7 @@ export class AgentSession {
   private model: LanguageModel;
   private runtime: RuntimeSettings;
   private runtimeWarnings: string[] = [];
+  private semanticIndex: null | SemanticIndex = null;
   private systemPrompt = '';
   private tools: ToolSet = {};
 
@@ -155,11 +166,15 @@ It contains structural signatures (imports, declarations, type surfaces), not im
 ${repoMap}
 \`\`\`
 
+You also have access to a \`context_retrieval\` tool that provides semantic, lexical, and graph-based code search.
+Use \`context_retrieval\` to find specific code patterns, vulnerability-related functions, or data flow paths on-demand
+rather than reading entire files. This is more efficient for large codebases.
+
 Use your tools to inspect implementation details, verify assumptions, and produce precise security findings.`,
         role: 'user',
       },
       {
-        content: `Repository map ingested. Ready for autonomous security analysis with controlled tooling and machine-readable reporting.`,
+        content: `Repository map ingested. Semantic code retrieval is available via context_retrieval. Ready for autonomous security analysis with controlled tooling and machine-readable reporting.`,
         role: 'assistant',
       },
     ];
@@ -194,6 +209,106 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       role: 'user',
       timestamp,
     });
+
+    if (this.config.swarm?.enabled) {
+      emitEvent({ kind: 'status', message: 'Planning Swarm analysis mission' });
+      const missionActionId = await this.startMissionCycle(userMessage);
+      emitEvent({ kind: 'status', message: 'Spawning and coordinating Swarm Intelligence workers' });
+      
+      const runDirectory = this.artifacts.getRunDirectory();
+      const coordinator = new SwarmCoordinator({
+        allTools: this.tools,
+        auditMode: this.config.auditMode ?? this.runtime.capabilities.preferredAuditMode,
+        config: this.config,
+        diffScopeHint: this.diffScopeHint,
+        model: this.model,
+        runId: path.basename(runDirectory),
+        storagePath: runDirectory,
+      });
+
+      const swarmResultText = await coordinator.executeMission(userMessage, (role, act) => {
+        emitEvent({
+          kind: act.kind as 'tool_call' | 'tool_result',
+          message: `[${role.toUpperCase()}] ${act.message}`,
+          toolName: act.toolName,
+        });
+      });
+
+      emitEvent({ kind: 'status', message: 'Validating and writing report artifacts' });
+      await this.artifacts.writeReportMarkdown(swarmResultText);
+
+      let validatedReport: SecurityReport = { findings: [] };
+      try {
+        const validation = await validateAndRepairReport({
+          maxRetries: this.config.reportValidation?.maxRepairRetries ?? 2,
+          repair: async ({ attempt, lastCandidate, validationError }) => {
+            const prompt = `Original response:
+${swarmResultText}
+
+Last invalid candidate:
+${lastCandidate ?? '<none>'}
+
+Validation error:
+${validationError}
+
+Repair attempt:
+${attempt}
+
+Return corrected JSON now.`;
+
+            const repaired = await generateText({
+              maxOutputTokens: Math.min(this.runtime.maxOutputTokens, 4096),
+              model: this.model,
+              prompt,
+              system: REPORT_REPAIR_SYSTEM_PROMPT,
+              temperature: 0,
+            });
+
+            return repaired.text;
+          },
+          responseText: swarmResultText,
+        });
+
+        validatedReport = validation.report;
+
+        // Apply finding deduplication before writing artifacts
+        const dedupedReport: SecurityReport = {
+          findings: deduplicateFindings(validation.report.findings),
+        };
+
+        await this.artifacts.writeReportJson(dedupedReport);
+        if (dedupedReport.findings.length > 0) {
+          await this.artifacts.writeReportSarif(generateSarifReport(dedupedReport));
+        }
+
+        // CI mode: emit summary and trigger exit if threshold is met
+        if (this.config.ci?.enabled) {
+          const failOn = (this.config.ci.failOn ?? 'high') as FailOnSeverity;
+          const ciResult = computeCiExitCode({ failOn, findings: dedupedReport.findings });
+          const summary = formatCiSummary(ciResult, failOn);
+          emitEvent({ kind: 'status', message: summary });
+          if (ciResult.code !== 0) {
+            process.exitCode = ciResult.code;
+          }
+        }
+
+        validatedReport = dedupedReport;
+      } catch (error) {
+        const fallbackReport = { findings: [] as [] };
+        await this.artifacts.writeReportJson(fallbackReport);
+        this.runtimeWarnings.push(`Report validation fallback applied: ${(error as Error).message}`);
+      }
+
+      await this.completeMissionCycle(missionActionId, validatedReport, swarmResultText.length);
+
+      await this.artifacts.updateMeta({
+        warnings: [...this.runtimeWarnings],
+      });
+      emitEvent({ kind: 'status', message: 'Analysis complete' });
+
+      return swarmResultText;
+    }
+
     emitEvent({ kind: 'status', message: 'Planning analysis mission' });
     const missionActionId = await this.startMissionCycle(userMessage);
     emitEvent({ kind: 'status', message: 'Streaming model output and tool activity' });
@@ -322,6 +437,32 @@ Return corrected JSON now.`;
     await this.transitionMission('OBSERVE', 'evidence_collected', {});
   }
 
+  private createEmbeddingProvider(): EmbeddingProvider {
+    const providerType = this.config.indexing?.embeddingProvider ?? 'ollama';
+    const model = this.config.indexing?.embeddingModel;
+
+    switch (providerType) {
+      case 'openai': {
+        if (!this.config.apiKey) {
+          console.warn('[SemanticIndex] OpenAI embeddings require an API key. Falling back to null provider.');
+          return new NullEmbeddingProvider();
+        }
+
+        return new OpenAIEmbeddingProvider({
+          apiKey: this.config.apiKey,
+          model: model ?? 'text-embedding-3-small',
+        });
+      }
+
+      case 'ollama':
+      default: {
+        return new OllamaEmbeddingProvider({
+          model: model ?? 'nomic-embed-text',
+        });
+      }
+    }
+  }
+
   private async ingestReportFindings(report: SecurityReport): Promise<void> {
     if (!this.missionEngine || report.findings.length === 0) {
       return;
@@ -378,6 +519,21 @@ Return corrected JSON now.`;
       expertUnsafe: this.expertUnsafe,
     };
 
+    // Initialize artifacts and mission runtime first (needed for semantic index graph integration)
+    this.artifacts = await RunArtifacts.create(resolvedTargetPath, {
+      maxOutputTokens: this.runtime.maxOutputTokens,
+      maxToolSteps: this.runtime.maxToolSteps,
+      mcpEnabled: Object.keys(mcpTools).length > 0,
+      model: this.config.model,
+      provider: this.config.provider,
+      targetPath: resolvedTargetPath,
+      warnings: [...this.runtimeWarnings],
+    });
+    await this.initializeMissionRuntime(resolvedTargetPath);
+
+    // Initialize semantic indexing after MissionEngine (needs KnowledgeGraph for HybridRetriever)
+    const contextRetrievalTools = await this.initializeSemanticIndex(resolvedTargetPath);
+
     this.tools = {
       bash: createBashTool({
         commandPolicy: commandPolicyConfig,
@@ -392,6 +548,7 @@ Return corrected JSON now.`;
       list_directory: createListDirectoryTool(pathGuard),
       read_file_content: createReadFileTool(pathGuard),
       search_codebase: createSearchCodebaseTool(pathGuard),
+      ...contextRetrievalTools,
       ...mcpTools,
     };
 
@@ -401,19 +558,9 @@ Return corrected JSON now.`;
       mcpEnabled: Object.keys(mcpTools).length > 0,
     });
 
-    this.artifacts = await RunArtifacts.create(resolvedTargetPath, {
-      maxOutputTokens: this.runtime.maxOutputTokens,
-      maxToolSteps: this.runtime.maxToolSteps,
-      mcpEnabled: Object.keys(mcpTools).length > 0,
-      model: this.config.model,
-      provider: this.config.provider,
-      targetPath: resolvedTargetPath,
-      warnings: [...this.runtimeWarnings],
-    });
-    await this.initializeMissionRuntime(resolvedTargetPath);
-
     await this.artifacts.recordMessage({
       content: {
+        indexing: this.semanticIndex ? this.semanticIndex.stats() : null,
         mission: this.missionEngine?.getState() ?? null,
         model: this.config.model,
         provider: this.config.provider,
@@ -489,6 +636,85 @@ Return corrected JSON now.`;
       this.runtimeWarnings.push(
         `Mission engine initialization failed: ${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+  }
+
+  private async initializeSemanticIndex(resolvedTargetPath: string): Promise<ToolSet> {
+    const indexingConfig = this.config.indexing;
+
+    // Skip semantic indexing if explicitly disabled
+    if (indexingConfig?.enabled === false) {
+      return {};
+    }
+
+    try {
+      // Create embedding provider based on configuration
+      const provider = this.createEmbeddingProvider();
+
+      // Create semantic index
+      const storagePath = this.artifacts
+        ? path.join(this.artifacts.getRunDirectory(), 'semantic-index')
+        : path.join(resolvedTargetPath, '.shadow-auditor', 'semantic-index');
+
+      this.semanticIndex = new SemanticIndex({
+        maxChunkChars: indexingConfig?.maxChunkChars ?? 4000,
+        provider,
+        rootPath: resolvedTargetPath,
+        storagePath,
+      });
+
+      await this.semanticIndex.initialize();
+
+      // Index the repository
+      const { chunksIndexed, filesIndexed } = await this.semanticIndex.indexRepository(
+        (progress) => {
+          if (progress.filesIndexed % 50 === 0 || progress.filesIndexed === progress.totalFiles) {
+            console.log(
+              `[SemanticIndex] Indexed ${progress.filesIndexed}/${progress.totalFiles} files (${progress.currentFile})`,
+            );
+          }
+        },
+      );
+
+      console.log(
+        `[SemanticIndex] Indexing complete: ${filesIndexed} files, ${chunksIndexed} chunks`,
+      );
+
+      // Build HybridRetriever if MissionEngine graph is available
+      if (this.missionEngine) {
+        const graph = this.missionEngine.getGraph();
+        const retrieval = this.missionEngine.getRetrieval();
+
+        const hybridRetriever = new HybridRetriever(
+          graph,
+          retrieval,
+          this.semanticIndex,
+          { rootPath: resolvedTargetPath },
+        );
+
+        // Attach hybrid retriever to the retrieval service
+        retrieval.setHybridRetriever(hybridRetriever);
+
+        // Create context retrieval tool
+        return {
+          context_retrieval: createContextRetrievalTool({
+            retriever: hybridRetriever,
+            rootPath: resolvedTargetPath,
+          }),
+        };
+      }
+
+      // Fallback: create a minimal hybrid retriever without graph
+      // (MissionEngine may not be initialized yet)
+      return {};
+    } catch (error) {
+      this.runtimeWarnings.push(
+        `Semantic indexing failed (falling back to repo-map only): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      this.semanticIndex = null;
+      return {};
     }
   }
 

@@ -19,6 +19,7 @@ import {
   type EvidenceClaim,
   evidenceClaimSchema,
   type EvidenceClaimStatus,
+  type Task,
 } from './hivemind-schema.js';
 import { TaskGraph } from './task-graph.js';
 
@@ -28,16 +29,25 @@ export interface BlackboardOptions {
   storagePath: string;
 }
 
+export type ClaimListener = (claim: EvidenceClaim) => void;
+export type ConflictListener = (conflict: ConflictMarker) => void;
+export type TaskListener = (task: Task) => void;
+
 /**
  * Shared blackboard for multi-agent collaboration.
  */
 export class Blackboard {
   private agents: Map<string, AgentRegistration> = new Map();
   private claims: Map<string, EvidenceClaim> = new Map();
+  private claimSubmittedListeners: Set<ClaimListener> = new Set();
+  private claimTypeListeners: Map<string, Set<ClaimListener>> = new Map();
+  private claimVerifiedListeners: Set<ClaimListener> = new Set();
+  private conflictCreatedListeners: Set<ConflictListener> = new Set();
   private conflicts: Map<string, ConflictMarker> = new Map();
-  private readonly heartbeatTimeout: number;
+private readonly heartbeatTimeout: number;
   private readonly runId: string;
   private readonly snapshotPath: string;
+  private taskCompletedListeners: Set<TaskListener> = new Set();
   private readonly taskGraph: TaskGraph;
 
   private constructor(options: BlackboardOptions) {
@@ -55,6 +65,45 @@ export class Blackboard {
     const blackboard = new Blackboard(options);
     await blackboard.loadSnapshot();
     return blackboard;
+  }
+
+  /**
+   * Atomic claim and verify operation for cross-agent evidence flow.
+   */
+  claimAndVerify(
+    taskId: string,
+    claimId: string,
+    verifyingAgentId: string,
+  ): Result<{ claim: EvidenceClaim; task: Task; }, string> {
+    const claimRes = this.verifyClaim(claimId, verifyingAgentId);
+    if (!claimRes.ok) {
+      return err(claimRes.error);
+    }
+
+    const taskRes = this.taskGraph.claimTask(taskId, verifyingAgentId);
+    if (!taskRes.ok) {
+      return err(taskRes.error);
+    }
+
+    return ok({ claim: claimRes.value, task: taskRes.value });
+  }
+
+  // ==========================================================================
+  // Agent Management
+  // ==========================================================================
+
+  /**
+   * Complete a task and notify listeners.
+   */
+  completeTask(taskId: string, result?: unknown): Result<Task, string> {
+    const res = this.taskGraph.completeTask(taskId, result);
+    if (res.ok) {
+      for (const listener of this.taskCompletedListeners) {
+        listener(res.value);
+      }
+    }
+
+    return res;
   }
 
   /**
@@ -87,10 +136,6 @@ export class Blackboard {
     return ok(updated);
   }
 
-  // ==========================================================================
-  // Agent Management
-  // ==========================================================================
-
   /**
    * Create a conflict marker.
    */
@@ -114,6 +159,12 @@ export class Blackboard {
     };
 
     this.conflicts.set(conflictId, conflict);
+
+    // Notify listeners
+    for (const listener of this.conflictCreatedListeners) {
+      listener(conflict);
+    }
+
     return conflict;
   }
 
@@ -149,10 +200,6 @@ export class Blackboard {
     return [...this.claims.values()].filter((c) => c.entityId === entityId);
   }
 
-  // ==========================================================================
-  // Evidence Claims
-  // ==========================================================================
-
   /**
    * Get open conflicts.
    */
@@ -170,7 +217,7 @@ export class Blackboard {
   /**
    * Update agent heartbeat.
    */
-  heartbeat(agentId: string, status?: 'active' | 'busy' | 'idle'): Result<AgentRegistration, string> {
+  heartbeat(agentId: string, status?: 'active' | 'busy' | 'idle' | 'offline'): Result<AgentRegistration, string> {
     const agent = this.agents.get(agentId);
     if (!agent) {
       return err(`Agent not found: ${agentId}`);
@@ -186,6 +233,30 @@ export class Blackboard {
     return ok(updated);
   }
 
+  // ==========================================================================
+  // Evidence Claims
+  // ==========================================================================
+
+  onClaimSubmitted(callback: ClaimListener): () => void {
+    this.claimSubmittedListeners.add(callback);
+    return () => this.claimSubmittedListeners.delete(callback);
+  }
+
+  onClaimVerified(callback: ClaimListener): () => void {
+    this.claimVerifiedListeners.add(callback);
+    return () => this.claimVerifiedListeners.delete(callback);
+  }
+
+  onConflictCreated(callback: ConflictListener): () => void {
+    this.conflictCreatedListeners.add(callback);
+    return () => this.conflictCreatedListeners.delete(callback);
+  }
+
+  onTaskCompleted(callback: TaskListener): () => void {
+    this.taskCompletedListeners.add(callback);
+    return () => this.taskCompletedListeners.delete(callback);
+  }
+
   /**
    * Mark inactive agents as offline.
    */
@@ -198,6 +269,10 @@ export class Blackboard {
       }
     }
   }
+
+  // ==========================================================================
+  // Conflict Management
+  // ==========================================================================
 
   /**
    * Register an agent.
@@ -223,10 +298,6 @@ export class Blackboard {
     this.agents.set(agentId, registration);
     return ok(registration);
   }
-
-  // ==========================================================================
-  // Conflict Management
-  // ==========================================================================
 
   /**
    * Resolve a conflict.
@@ -271,6 +342,10 @@ export class Blackboard {
     await fs.writeFile(this.snapshotPath, JSON.stringify(state, null, 2), 'utf8');
   }
 
+  // ==========================================================================
+  // Persistence
+  // ==========================================================================
+
   /**
    * Submit an evidence claim.
    */
@@ -308,15 +383,42 @@ export class Blackboard {
 
     this.claims.set(claimId, claim);
 
+    // Notify listeners
+    for (const listener of this.claimSubmittedListeners) {
+      listener(claim);
+    }
+
+    const typeListeners = this.claimTypeListeners.get(claimType);
+    if (typeListeners) {
+      for (const listener of typeListeners) {
+        listener(claim);
+      }
+    }
+
     // Check for conflicts with existing claims
     this.checkForClaimConflicts(claim);
 
     return ok(claim);
   }
 
-  // ==========================================================================
-  // Persistence
-  // ==========================================================================
+  subscribeToClaimType(claimType: string, callback: ClaimListener): () => void {
+    let listeners = this.claimTypeListeners.get(claimType);
+    if (!listeners) {
+      listeners = new Set();
+      this.claimTypeListeners.set(claimType, listeners);
+    }
+
+    listeners.add(callback);
+    return () => {
+      const current = this.claimTypeListeners.get(claimType);
+      if (current) {
+        current.delete(callback);
+        if (current.size === 0) {
+          this.claimTypeListeners.delete(claimType);
+        }
+      }
+    };
+  }
 
   /**
    * Verify a claim.
@@ -338,6 +440,12 @@ export class Blackboard {
     };
 
     this.claims.set(claimId, updated);
+
+    // Notify listeners
+    for (const listener of this.claimVerifiedListeners) {
+      listener(updated);
+    }
+
     return ok(updated);
   }
 

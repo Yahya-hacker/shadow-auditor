@@ -2,6 +2,7 @@
  * Retrieval APIs - Lexical, semantic, and graph-based querying.
  */
 
+import type { HybridResult, HybridRetriever, HybridSearchOptions } from './hybrid-retriever.js';
 import type { KnowledgeGraph, TraversalOptions } from './knowledge-graph.js';
 import type { BaseEntity, EntityType, GraphEdge } from './memory-schema.js';
 
@@ -21,6 +22,8 @@ export interface PathResult {
  * Retrieval service for knowledge graph queries.
  */
 export class Retrieval {
+  private hybridRetriever: HybridRetriever | null = null;
+
   constructor(private readonly graph: KnowledgeGraph) {}
 
   /**
@@ -160,6 +163,30 @@ export class Retrieval {
   }
 
   /**
+   * Execute a hybrid search across semantic, lexical, and graph strategies.
+   * Falls back to graph-only search if HybridRetriever is not attached.
+   */
+  async hybridSearch(
+    query: string,
+    options: HybridSearchOptions = {},
+  ): Promise<HybridResult[]> {
+    if (!this.hybridRetriever) {
+      // Fallback: use graph-only search and wrap results
+      const graphResults = this.searchByLabel(query, { limit: options.maxResults });
+      return graphResults.map((r) => ({
+        entity: r.entity,
+        filePath: '',
+        fusedScore: r.score,
+        matchDescription: `Graph match: ${r.entity.label} (${r.entity.entityType})`,
+        provenance: [{ rank: 0, score: r.score, strategy: 'graph' as const }],
+        text: JSON.stringify(r.entity.properties, null, 2),
+      }));
+    }
+
+    return this.hybridRetriever.search(query, options);
+  }
+
+  /**
    * Search entities by label with fuzzy matching.
    */
   searchByLabel(query: string, options: { entityType?: EntityType; limit?: number } = {}): SearchResult[] {
@@ -192,6 +219,14 @@ export class Retrieval {
     scored.sort((a, b) => b.score - a.score);
 
     return scored.slice(0, options.limit ?? 20);
+  }
+
+  /**
+   * Attach a HybridRetriever for multi-strategy search.
+   * Called after semantic index initialization completes.
+   */
+  setHybridRetriever(retriever: HybridRetriever): void {
+    this.hybridRetriever = retriever;
   }
 
   /**

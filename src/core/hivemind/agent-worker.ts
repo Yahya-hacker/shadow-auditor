@@ -1,0 +1,123 @@
+/**
+ * Agent Worker - Autonomous specialized worker with private OODA loop.
+ */
+
+import { type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
+
+import { streamWithContinuation } from '../session.js';
+import { type Blackboard } from './blackboard.js';
+import { type AgentRole, type Task } from './hivemind-schema.js';
+import { buildWorkerSystemPrompt } from './worker-prompts.js';
+import { createRoleToolSet } from './worker-toolsets.js';
+
+export interface AgentWorkerOptions {
+  agentId: string;
+  allTools: ToolSet;
+  auditMode?: string;
+  blackboard: Blackboard;
+  diffScopeHint?: string;
+  maxOutputTokens?: number;
+  maxToolSteps?: number;
+  model: LanguageModel;
+  role: AgentRole;
+}
+
+/**
+ * An autonomous agent worker representing a specialized role in the multi-agent swarm.
+ */
+export class AgentWorker {
+  public readonly agentId: string;
+  public readonly role: AgentRole;
+  private readonly auditMode: string;
+  private readonly blackboard: Blackboard;
+  private readonly diffScopeHint: string;
+  private isTerminated = false;
+  private readonly maxOutputTokens: number;
+  private readonly maxToolSteps: number;
+  private readonly messages: ModelMessage[] = [];
+  private readonly model: LanguageModel;
+  private readonly systemPrompt: string;
+  private readonly tools: ToolSet;
+
+  constructor(options: AgentWorkerOptions) {
+    this.agentId = options.agentId;
+    this.role = options.role;
+    this.model = options.model;
+    this.blackboard = options.blackboard;
+    this.tools = createRoleToolSet(options.role, options.allTools);
+    this.maxOutputTokens = options.maxOutputTokens ?? 4096;
+    this.maxToolSteps = options.maxToolSteps ?? 10;
+    this.auditMode = options.auditMode ?? 'sast';
+    this.diffScopeHint = options.diffScopeHint ?? '';
+    
+    this.systemPrompt = buildWorkerSystemPrompt(options.role, {
+      auditMode: this.auditMode,
+      diffScope: this.diffScopeHint,
+    });
+  }
+
+  /**
+   * Run the worker OODA micro-loop on a claimed task.
+   */
+  async executeTask(
+    task: Task,
+    onActivity?: (activity: { kind: string; message: string; toolName?: string }) => void,
+  ): Promise<string> {
+    if (this.isTerminated) {
+      throw new Error(`Worker ${this.agentId} is terminated.`);
+    }
+
+    // Heartbeat to Blackboard
+    this.blackboard.heartbeat(this.agentId, 'busy');
+
+    const userPrompt = `### TASK TO EXECUTE:
+Task ID: ${task.taskId}
+Type: ${task.taskType}
+Priority: ${task.priority}
+Description: ${task.description}
+Parameters: ${JSON.stringify(task.parameters, null, 2)}
+
+Collaborate with the swarm. Inspect the blackboard if necessary, perform your task using your tools, and submit any relevant evidence/findings to the Blackboard. When you are fully done, call finish_task.`;
+
+    this.messages.push({
+      content: userPrompt,
+      role: 'user',
+    });
+
+    // Execute via streamWithContinuation
+    const streamResult = await streamWithContinuation({
+      maxOutputTokens: this.maxOutputTokens,
+      maxToolSteps: this.maxToolSteps,
+      messages: this.messages,
+      model: this.model,
+      onActivity: (activity) => {
+        onActivity?.({
+          kind: activity.kind,
+          message: activity.summary,
+          toolName: activity.toolName,
+        });
+        
+        // Periodic heartbeat during tool calls
+        this.blackboard.heartbeat(this.agentId, 'busy');
+      },
+      onChunk() {},
+      systemPrompt: this.systemPrompt,
+      tools: this.tools,
+    });
+
+    this.messages.push(...streamResult.messagesDelta);
+
+    // Heartbeat back to idle
+    this.blackboard.heartbeat(this.agentId, 'idle');
+
+    return streamResult.text;
+  }
+
+  /**
+   * Terminate the worker.
+   */
+  terminate(): void {
+    this.isTerminated = true;
+    this.blackboard.heartbeat(this.agentId, 'offline');
+  }
+}
