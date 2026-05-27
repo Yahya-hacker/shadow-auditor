@@ -36,7 +36,7 @@ describe('SwarmCoordinator', () => {
         swarm: {
           roles: ['recon', 'taint-tracer', 'exploit-analyst', 'verifier', 'reporter'],
         },
-      },
+      } as any,
       model: {} as any,
       runId: 'test-swarm-run',
       storagePath: storageDir,

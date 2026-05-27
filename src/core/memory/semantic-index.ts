@@ -101,23 +101,31 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
 
   async embed(texts: string[]): Promise<number[][]> {
     const results: number[][] = [];
+    const batchSize = 10;
 
-    for (const text of texts) {
-      const response = await fetch(`${this.baseUrl}/api/embed`, {
-        body: JSON.stringify({
-          input: text,
-          model: this.model,
-        }),
-        headers: { 'content-type': 'application/json' },
-        method: 'POST',
+    for (let i = 0; i < texts.length; i += batchSize) {
+      const batch = texts.slice(i, i + batchSize);
+
+      const batchPromises = batch.map(async (text) => {
+        const response = await fetch(`${this.baseUrl}/api/embed`, {
+          body: JSON.stringify({
+            input: text,
+            model: this.model,
+          }),
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+        });
+
+        if (!response.ok) {
+          throw new Error(`Ollama embed error (${response.status}): ${response.statusText}`);
+        }
+
+        const data = (await response.json()) as { embeddings: number[][] };
+        return data.embeddings[0];
       });
 
-      if (!response.ok) {
-        throw new Error(`Ollama embed error (${response.status}): ${response.statusText}`);
-      }
-
-      const data = (await response.json()) as { embeddings: number[][] };
-      results.push(data.embeddings[0]);
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
     }
 
     return results;

@@ -30,7 +30,9 @@ export class AgentWorker {
   public readonly role: AgentRole;
   private readonly auditMode: string;
   private readonly blackboard: Blackboard;
+  private readonly cleanupCallbacks: (() => void)[] = [];
   private readonly diffScopeHint: string;
+  private heartbeatInterval?: ReturnType<typeof setInterval>;
   private isTerminated = false;
   private readonly maxOutputTokens: number;
   private readonly maxToolSteps: number;
@@ -54,6 +56,23 @@ export class AgentWorker {
       auditMode: this.auditMode,
       diffScope: this.diffScopeHint,
     });
+
+    // Start periodic heartbeat to prevent timeouts during long tool runs
+    this.heartbeatInterval = setInterval(() => {
+      if (!this.isTerminated) {
+        const agent = this.blackboard.getActiveAgents().find((a) => a.agentId === this.agentId);
+        if (agent && agent.status !== 'offline') {
+          this.blackboard.heartbeat(this.agentId, agent.status);
+        }
+      }
+    }, 30_000);
+  }
+
+  /**
+   * Register a cleanup callback (e.g., unsubscribing from blackboard pub/sub).
+   */
+  addCleanupCallback(callback: () => void): void {
+    this.cleanupCallbacks.push(callback);
   }
 
   /**
@@ -118,6 +137,20 @@ Collaborate with the swarm. Inspect the blackboard if necessary, perform your ta
    */
   terminate(): void {
     this.isTerminated = true;
+
+    // Run all cleanup callbacks to prevent memory leaks
+    for (const cleanup of this.cleanupCallbacks) {
+      try {
+        cleanup();
+      } catch (error) {
+        console.error(`Error in cleanup callback for worker ${this.agentId}:`, error);
+      }
+    }
+
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
+
     this.blackboard.heartbeat(this.agentId, 'offline');
   }
 }
