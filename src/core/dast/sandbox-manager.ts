@@ -8,10 +8,25 @@
  */
 
 import { exec } from 'node:child_process';
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
 import { type SandboxExecResult } from './dast-schema.js';
 import { MirageOAST } from './mirage-oast.js';
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // =============================================================================
 // Types
@@ -64,6 +79,7 @@ export class SandboxManager {
    * Create the Docker network and start the Mirage sidecar.
    */
   async create(): Promise<void> {
+
     // 1. Create the internal Docker network
     await this.dockerExec(`docker network create ${this.networkName}`);
 
@@ -72,6 +88,7 @@ export class SandboxManager {
 
     // 3. Create the target container (not started yet)
     const absTargetPath = path.resolve(this.options.targetPath);
+    const projectHash = crypto.createHash('sha256').update(absTargetPath).digest('hex').slice(0, 12);
     const mirageContainer = this.mirage.getContainerName();
 
     const createCmd = [
@@ -89,12 +106,30 @@ export class SandboxManager {
       '--cpus', this.options.cpuLimit,
       // Mount target as read-write (for test execution)
       '-v', `${absTargetPath}:/app:rw`,
+    ];
+
+    if (await fileExists(path.join(absTargetPath, 'package.json'))) {
+      createCmd.push('-v', `shadow-node-modules-${projectHash}:/app/node_modules`);
+    } else if (
+      await fileExists(path.join(absTargetPath, 'pyproject.toml')) ||
+      await fileExists(path.join(absTargetPath, 'setup.py')) ||
+      await fileExists(path.join(absTargetPath, 'pytest.ini')) ||
+      await fileExists(path.join(absTargetPath, 'requirements.txt'))
+    ) {
+      createCmd.push('-v', `shadow-python-venv-${projectHash}:/app/.venv`);
+    } else if (await fileExists(path.join(absTargetPath, 'go.mod'))) {
+      createCmd.push('-v', `shadow-go-cache-${projectHash}:/go/pkg/mod`);
+    } else if (await fileExists(path.join(absTargetPath, 'Cargo.toml'))) {
+      createCmd.push('-v', `shadow-cargo-target-${projectHash}:/app/target`);
+    }
+
+    createCmd.push(
       '-w', '/app',
       this.options.baseImage,
       'sleep', 'infinity',
-    ].join(' ');
+    );
 
-    const result = await this.dockerExec(createCmd);
+    const result = await this.dockerExec(createCmd.join(' '));
     if (result.exitCode !== 0) {
       throw new Error(`Failed to create sandbox container: ${result.stderr}`);
     }
@@ -108,6 +143,7 @@ export class SandboxManager {
    * Deploy the target application inside the sandbox.
    */
   async deploy(): Promise<string> {
+
     if (!this.running) {
       throw new Error('Sandbox not created. Call create() first.');
     }
@@ -116,7 +152,20 @@ export class SandboxManager {
       return 'No start command configured';
     }
 
-    const result = await this.exec(this.options.startCommand);
+    let deployCmd = this.options.startCommand;
+    const absTargetPath = path.resolve(this.options.targetPath);
+
+    if (await fileExists(path.join(absTargetPath, 'package.json'))) {
+      deployCmd = `npm install && ${this.options.startCommand}`;
+    } else if (
+      await fileExists(path.join(absTargetPath, 'pyproject.toml')) ||
+      await fileExists(path.join(absTargetPath, 'setup.py')) ||
+      await fileExists(path.join(absTargetPath, 'requirements.txt'))
+    ) {
+      deployCmd = `(if [ -f requirements.txt ]; then pip install -r requirements.txt; fi) && ${this.options.startCommand}`;
+    }
+
+    const result = await this.exec(deployCmd);
 
     // If health check URL is configured, wait for it
     if (this.options.healthCheckUrl) {

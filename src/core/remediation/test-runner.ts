@@ -370,16 +370,57 @@ export class TestRunner {
     if (this.useDocker) {
       // Twin-Container CI: run inside ephemeral Docker container
       const absRoot = path.resolve(this.projectRoot);
-      return [
+      const projectHash = crypto.createHash('sha256').update(absRoot).digest('hex').slice(0, 12);
+
+      const dockerArgs = [
         'docker', 'run', '--rm',
         '-v', `${absRoot}:/app:rw`,
+      ];
+
+      let runCmd = this.testCommand;
+      const fw = this.framework.name;
+
+      switch (fw) {
+      case 'cargo': {
+        dockerArgs.push('-v', `shadow-cargo-target-${projectHash}:/app/target`);
+      
+      break;
+      }
+
+      case 'go': {
+        dockerArgs.push('-v', `shadow-go-cache-${projectHash}:/go/pkg/mod`);
+      
+      break;
+      }
+
+      case 'npm': {
+        dockerArgs.push('-v', `shadow-node-modules-${projectHash}:/app/node_modules`);
+        // Install dependencies inside container to build correct native bindings
+        runCmd = `npm install && ${this.testCommand}`;
+      
+      break;
+      }
+
+      case 'pytest': {
+        dockerArgs.push('-v', `shadow-python-venv-${projectHash}:/app/.venv`);
+        // Install requirements inside container if requirements.txt is present
+        runCmd = `(if [ -f requirements.txt ]; then pip install -r requirements.txt; fi) && ${this.testCommand}`;
+      
+      break;
+      }
+      // No default
+      }
+
+      dockerArgs.push(
         '-w', '/app',
         '--env', 'CI=true',
         '--memory', '512m',
         '--cpus', '1',
         this.containerImage,
-        'sh', '-c', this.testCommand,
-      ].join(' ');
+        'sh', '-c', runCmd,
+      );
+
+      return dockerArgs.join(' ');
     }
 
     return this.testCommand;
