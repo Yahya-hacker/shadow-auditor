@@ -19,6 +19,7 @@ import {
   type EvidenceClaim,
   evidenceClaimSchema,
   type EvidenceClaimStatus,
+  type ModelTier,
   type Task,
 } from './hivemind-schema.js';
 import { TaskGraph } from './task-graph.js';
@@ -187,6 +188,13 @@ private readonly heartbeatTimeout: number;
   }
 
   /**
+   * Get claims filtered by minimum trust score.
+   */
+  getClaimsByMinTrust(minTrustScore: number): EvidenceClaim[] {
+    return [...this.claims.values()].filter((c) => c.trustScore >= minTrustScore);
+  }
+
+  /**
    * Get claims by status.
    */
   getClaimsByStatus(status: EvidenceClaimStatus): EvidenceClaim[] {
@@ -206,6 +214,32 @@ private readonly heartbeatTimeout: number;
   getOpenConflicts(): ConflictMarker[] {
     return [...this.conflicts.values()].filter((c) => c.status === 'open' || c.status === 'resolving');
   }
+
+  /**
+   * Get claims with skepticism annotations for cross-tier consumption.
+   *
+   * When a premium-tier agent reads claims from a lower-tier agent,
+   * claims with trustScore < 0.8 are annotated with a warning prefix
+   * in their data so the consuming agent treats them as unverified hints.
+   */
+  getSkepticismFilteredClaims(consumerTier: ModelTier): Array<EvidenceClaim & { skepticismNote?: string }> {
+    const trustThreshold = consumerTier === 'premium' ? 0.8 : 0.5;
+
+    return [...this.claims.values()].map((claim) => {
+      if (claim.trustScore < trustThreshold) {
+        return {
+          ...claim,
+          skepticismNote: `[UNVERIFIED HINT — trustScore: ${claim.trustScore}, tier: ${claim.modelTier}] Verify with tools before relying on this data.`,
+        };
+      }
+
+      return { ...claim };
+    });
+  }
+
+  // ==========================================================================
+  // Evidence Claims
+  // ==========================================================================
 
   /**
    * Get the task graph.
@@ -233,10 +267,6 @@ private readonly heartbeatTimeout: number;
     return ok(updated);
   }
 
-  // ==========================================================================
-  // Evidence Claims
-  // ==========================================================================
-
   onClaimSubmitted(callback: ClaimListener): () => void {
     this.claimSubmittedListeners.add(callback);
     return () => this.claimSubmittedListeners.delete(callback);
@@ -251,6 +281,10 @@ private readonly heartbeatTimeout: number;
     this.conflictCreatedListeners.add(callback);
     return () => this.conflictCreatedListeners.delete(callback);
   }
+
+  // ==========================================================================
+  // Conflict Management
+  // ==========================================================================
 
   onTaskCompleted(callback: TaskListener): () => void {
     this.taskCompletedListeners.add(callback);
@@ -269,10 +303,6 @@ private readonly heartbeatTimeout: number;
       }
     }
   }
-
-  // ==========================================================================
-  // Conflict Management
-  // ==========================================================================
 
   /**
    * Register an agent.
@@ -298,6 +328,10 @@ private readonly heartbeatTimeout: number;
     this.agents.set(agentId, registration);
     return ok(registration);
   }
+
+  // ==========================================================================
+  // Persistence
+  // ==========================================================================
 
   /**
    * Resolve a conflict.
@@ -342,10 +376,6 @@ private readonly heartbeatTimeout: number;
     await fs.writeFile(this.snapshotPath, JSON.stringify(state, null, 2), 'utf8');
   }
 
-  // ==========================================================================
-  // Persistence
-  // ==========================================================================
-
   /**
    * Submit an evidence claim.
    */
@@ -353,7 +383,7 @@ private readonly heartbeatTimeout: number;
     agentId: string,
     claimType: string,
     data: Record<string, unknown>,
-    options: { confidence?: number; entityId?: string } = {},
+    options: { confidence?: number; entityId?: string; modelTier?: ModelTier; trustScore?: number } = {},
   ): Result<EvidenceClaim, string> {
     const agent = this.agents.get(agentId);
     if (!agent) {
@@ -372,7 +402,9 @@ private readonly heartbeatTimeout: number;
       createdAt: now,
       data,
       entityId: options.entityId,
+      modelTier: options.modelTier ?? 'standard',
       status: 'proposed',
+      trustScore: options.trustScore ?? 0.7,
       verifiedBy: [],
     };
 
@@ -400,6 +432,10 @@ private readonly heartbeatTimeout: number;
 
     return ok(claim);
   }
+
+  // ==========================================================================
+  // Trust-Aware Claim Queries
+  // ==========================================================================
 
   subscribeToClaimType(claimType: string, callback: ClaimListener): () => void {
     let listeners = this.claimTypeListeners.get(claimType);

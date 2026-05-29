@@ -76,6 +76,13 @@ export const taskSchema = z.object({
 export type Task = z.infer<typeof taskSchema>;
 
 // ============================================================================
+// Model Tier Schema (for epistemic trust scoring)
+// ============================================================================
+
+export const modelTierSchema = z.enum(['premium', 'standard', 'local']);
+export type ModelTier = z.infer<typeof modelTierSchema>;
+
+// ============================================================================
 // Evidence Claim Schema
 // ============================================================================
 
@@ -90,6 +97,10 @@ export type EvidenceClaimStatus = z.infer<typeof evidenceClaimStatusSchema>;
 
 /**
  * An evidence claim from an agent.
+ *
+ * The `trustScore` and `modelTier` fields enable epistemic trust scoring:
+ * claims from weaker models carry lower trust and are flagged as unverified
+ * hints when consumed by stronger models.
  */
 export const evidenceClaimSchema = z.object({
   agentId: shortIdSchema,
@@ -100,7 +111,9 @@ export const evidenceClaimSchema = z.object({
   createdAt: timestampSchema,
   data: z.record(z.unknown()),
   entityId: canonicalIdSchema.optional(),
+  modelTier: modelTierSchema.default('standard'),
   status: evidenceClaimStatusSchema,
+  trustScore: confidenceSchema.default(0.7),
   verifiedBy: z.array(shortIdSchema).default([]),
 });
 export type EvidenceClaim = z.infer<typeof evidenceClaimSchema>;

@@ -8,6 +8,11 @@ import { type ShadowConfig } from '../../utils/config.js';
 import { AgentWorker } from './agent-worker.js';
 import { Blackboard } from './blackboard.js';
 import { type AgentRole } from './hivemind-schema.js';
+import {
+  resolveWorkerModel,
+  resolveWorkerTier,
+  type SwarmModelOverrides,
+} from './swarm-model-router.js';
 
 export interface SwarmCoordinatorOptions {
   allTools: ToolSet;
@@ -144,6 +149,16 @@ export class SwarmCoordinator {
       if (!regRes.ok) throw new Error(regRes.error);
       const agentId = regRes.value.agentId;
 
+      // Resolve per-role model and epistemic trust tier
+      const overrides = this.config.swarm?.modelOverrides as SwarmModelOverrides | undefined;
+      const workerModel = resolveWorkerModel(role, this.model, overrides);
+      const { modelTier, trustScore } = resolveWorkerTier(
+        role,
+        this.config.provider,
+        this.config.model,
+        overrides,
+      );
+
       const worker = new AgentWorker({
         agentId,
         allTools: this.allTools,
@@ -152,8 +167,10 @@ export class SwarmCoordinator {
         diffScopeHint: this.diffScopeHint,
         maxOutputTokens: 4096,
         maxToolSteps: 10,
-        model: this.model,
+        model: workerModel,
+        modelTier,
         role,
+        trustScore,
       });
 
       this.workers.set(agentId, worker);

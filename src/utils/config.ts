@@ -23,6 +23,14 @@ export interface ShadowConfig {
     maxContinuations?: number;
   };
   customBaseUrl?: string;
+  dast?: {
+    baseImage?: string;
+    cpuLimit?: string;
+    enabled?: boolean;
+    healthCheckUrl?: string;
+    memoryLimit?: string;
+    startCommand?: string;
+  };
   /** Incremental diff mode: scope analysis to files changed since this ref */
   diff?: {
     baseRef?: string;
@@ -52,12 +60,20 @@ export interface ShadowConfig {
   };
   model: string;
   provider: string;
+  remediation?: {
+    autoRevert?: boolean;
+    containerImage?: string;
+    enabled?: boolean;
+    testCommand?: string;
+    testTimeoutMs?: number;
+  };
   reportValidation?: {
     maxRepairRetries?: number;
   };
   swarm?: {
     enabled?: boolean;
     maxWorkers?: number;
+    modelOverrides?: Record<string, { apiKey?: string; model: string; provider: string }>;
     roles?: string[];
     workerBudgetRatio?: number;
   };

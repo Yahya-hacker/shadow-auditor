@@ -2,16 +2,17 @@
  * Worker Prompts - Role-specific system prompts for swarm workers.
  */
 
-import { type AgentRole } from './hivemind-schema.js';
+import { type AgentRole, type ModelTier } from './hivemind-schema.js';
 
 /**
  * Builds a highly tailored system prompt for a specialized agent worker role.
  */
 export function buildWorkerSystemPrompt(
   role: AgentRole,
-  options: { auditMode?: string; diffScope?: string } = {},
+  options: { auditMode?: string; diffScope?: string; modelTier?: ModelTier } = {},
 ): string {
   const auditMode = options.auditMode ?? 'sast';
+  const modelTier = options.modelTier ?? 'standard';
 
   const basePrompt = `You are a highly specialized autonomous cybersecurity agent operating in a decentralized Swarm intelligence.
 Your role is: ${role.toUpperCase()}
@@ -41,10 +42,12 @@ Always focus on evidence-based security auditing. Strictly avoid guessing, hand-
       rolePrompt = `
 ### PATCH ENGINEER WORKER MISSION:
 1. Review verified security findings on the Blackboard.
-2. Formulate highly precise, secure, and idiomatic code fixes/patches.
-3. Use the 'edit_file' tool to apply patches safely.
-4. Run project test suites or compiling tools using the 'bash' tool to verify the fix doesn't break existing tests or fail compilation.
-5. If the patch resolves the vulnerability and passes all checks, create and submit a 'patch_proposal' claim. If not, revert your changes.
+2. Formulate highly precise, secure, and idiomatic code fixes/patches as unified diffs.
+3. BEFORE patching, call 'get_baseline_status' to understand which tests were already failing.
+4. You MUST use 'apply_and_test_patch' for every fix. Tests run inside an isolated twin container — never on the host.
+5. A patch is valid if it introduces ZERO new test failures compared to the baseline. Pre-existing failures are tolerated.
+6. If the test fingerprint degrades, the patch is automatically reverted — analyze the failure output, revise your patch, and retry.
+7. If the patch passes, submit a 'patch_proposal' claim to the Blackboard with the diff content and test results.
 `;
       break;
     }
@@ -65,9 +68,18 @@ Always focus on evidence-based security auditing. Strictly avoid guessing, hand-
       rolePrompt = `
 ### REPORTER WORKER MISSION:
 1. Gather all 'consensus' and 'verified' claims from the Blackboard.
-2. Format all findings into high-quality security reports, including SARIF structures and elegant Markdown summaries.
-3. Calculate aggregate statistics of the mission (findings by severity, files audited, consensus rate).
-4. When all findings are fully summarized and recorded, call the 'finish_task' tool to conclude the mission.
+2. You MUST output a structured JSON object with the following keys for EACH finding:
+   - "title": string (vulnerability title)
+   - "summary": string (2-3 sentence description)
+   - "cweId": string (e.g., "CWE-79")
+   - "severityLabel": string (Critical/High/Medium/Low/Info)
+   - "impactDescription": string (business impact)
+   - "reproductionSteps": string[] (numbered steps as an array)
+   - "remediationSummary": string (fix suggestion)
+3. Do NOT write Markdown. Do NOT embellish or editorialize.
+4. The template engine will render the final report. Sandbox execution logs are injected automatically.
+5. Calculate aggregate statistics (findings by severity, files audited, consensus rate).
+6. When complete, call 'finish_task' with the JSON array of findings.
 `;
       break;
     }
@@ -95,6 +107,16 @@ Always focus on evidence-based security auditing. Strictly avoid guessing, hand-
    - Genuine security implications (exclude non-exploitable debug paths).
 4. Verify or Contest claims using the 'verifyClaim' or 'contestClaim' Blackboard operations.
 5. Link findings to verified code entities in the Knowledge Graph.
+
+### DAST VALIDATION (when sandbox is available):
+6. For SSRF, Blind RCE, DNS exfiltration, and command injection findings:
+   - Generate a PoC payload containing an OAST callback URL: \`http://oast-{unique-token}.shadow.local\`
+   - Execute the payload via 'sandbox_exec' against the target application
+   - Call 'check_oast_logs' to verify whether the target made the callback request
+   - A confirmed OAST callback constitutes CRYPTOGRAPHIC PROOF of exploitability
+7. For reflected XSS, SQL injection, and other response-based vulns:
+   - Craft a minimal PoC payload and send it via 'sandbox_exec' (curl/wget)
+   - Parse the response to confirm the payload was reflected/executed
 `;
       break;
     }
@@ -108,7 +130,18 @@ Coordinate parallel worker execution, merge individual knowledge discoveries, an
     }
   }
 
-  return `${basePrompt}\n${rolePrompt}\n### EXECUTIVE PROTOCOLS:
+  // Build skepticism filter for premium-tier agents
+  let skepticismDirective = '';
+  if (modelTier === 'premium') {
+    skepticismDirective = `
+### EPISTEMIC TRUST PROTOCOL:
+- Claims from agents with trustScore < 0.8 are labeled [UNVERIFIED HINT].
+- Treat them as investigative leads — NEVER as confirmed facts.
+- Use your tools to independently verify all low-trust claims before incorporating them into your analysis.
+- Only claims with trustScore >= 0.8 may be treated as reliable evidence.`;
+  }
+
+  return `${basePrompt}\n${rolePrompt}\n${skepticismDirective}\n### EXECUTIVE PROTOCOLS:
 - Work strictly within your assigned role boundaries and toolsets.
 - Always check the Blackboard for existing discoveries to avoid redundant work.
 - Output clean, structured analysis. Format code examples neatly.`;

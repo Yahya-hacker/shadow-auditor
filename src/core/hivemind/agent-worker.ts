@@ -6,7 +6,7 @@ import { type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 
 import { streamWithContinuation } from '../session.js';
 import { type Blackboard } from './blackboard.js';
-import { type AgentRole, type Task } from './hivemind-schema.js';
+import { type AgentRole, type ModelTier, type Task } from './hivemind-schema.js';
 import { buildWorkerSystemPrompt } from './worker-prompts.js';
 import { createRoleToolSet } from './worker-toolsets.js';
 
@@ -19,7 +19,9 @@ export interface AgentWorkerOptions {
   maxOutputTokens?: number;
   maxToolSteps?: number;
   model: LanguageModel;
+  modelTier?: ModelTier;
   role: AgentRole;
+  trustScore?: number;
 }
 
 /**
@@ -27,7 +29,9 @@ export interface AgentWorkerOptions {
  */
 export class AgentWorker {
   public readonly agentId: string;
+  public readonly modelTier: ModelTier;
   public readonly role: AgentRole;
+  public readonly trustScore: number;
   private readonly auditMode: string;
   private readonly blackboard: Blackboard;
   private readonly cleanupCallbacks: (() => void)[] = [];
@@ -51,10 +55,13 @@ export class AgentWorker {
     this.maxToolSteps = options.maxToolSteps ?? 10;
     this.auditMode = options.auditMode ?? 'sast';
     this.diffScopeHint = options.diffScopeHint ?? '';
+    this.modelTier = options.modelTier ?? 'standard';
+    this.trustScore = options.trustScore ?? 0.7;
     
     this.systemPrompt = buildWorkerSystemPrompt(options.role, {
       auditMode: this.auditMode,
       diffScope: this.diffScopeHint,
+      modelTier: this.modelTier,
     });
 
     // Start periodic heartbeat to prevent timeouts during long tool runs
