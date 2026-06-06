@@ -7,9 +7,11 @@ import * as path from 'node:path';
 import React, { useEffect, useRef, useState } from 'react';
 
 import { AgentSession, type AgentStreamEvent } from '../core/agent.js';
+import { enforceLicenseGate, type LicenseGateResult } from '../core/policy/license-guard.js';
 import { buildDiffScopeHint, getChangedFiles } from '../core/tools/git-diff.js';
 import { AsciiMotionCli } from '../utils/ascii-motion-cli.js';
-import { loadConfig, saveConfig, ShadowConfig } from '../utils/config.js';
+import { loadConfig, registerSecretStoreAdapter, saveConfig, ShadowConfig } from '../utils/config.js';
+import { KeychainAdapter } from '../utils/keychain.js';
 import { generateRepoMap } from '../utils/repo-map.js';
 import { getModelPlaceholder } from '../utils/setup.js';
 
@@ -17,9 +19,11 @@ import { getModelPlaceholder } from '../utils/setup.js';
 type AppState =
   | 'booting'
   | 'initializing'
+  | 'license-blocked'
   | 'setup'
   | 'setup-apikey'
   | 'setup-baseurl'
+  | 'setup-license'
   | 'setup-model'
   | 'setup-provider'
   | 'shell'
@@ -86,9 +90,48 @@ const providerOptions = [
   { label: 'Custom (OpenAI-Compatible)', value: 'custom' },
 ];
 
-// ... Setup Wizard Component (to be implemented)
-// ... Target Selection Component (to be implemented)
-// ... Chat Shell Component (to be implemented)
+// =============================================================================
+// License Paywall Component
+// =============================================================================
+
+const LicensePaywall = ({ gateResult, onRetry }: { gateResult: LicenseGateResult; onRetry: () => void }) => (
+  <Box flexDirection="column" padding={1}>
+    <Box borderColor="yellow" borderStyle="round" flexDirection="column" paddingX={2} paddingY={1}>
+      <Text bold color="yellow">⚡ PRO FEATURE</Text>
+      <Box marginTop={1}>
+        <Text>
+          The feature <Text bold color="cyan">{gateResult.feature}</Text> requires a{' '}
+          <Text bold color="magenta">{gateResult.requiredTier?.toUpperCase()}</Text> license.
+        </Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text color="gray">
+          Your current tier: <Text bold>{gateResult.currentTier?.toUpperCase() ?? 'FREE'}</Text>
+        </Text>
+      </Box>
+    </Box>
+
+    <Box flexDirection="column" marginTop={1} paddingX={1}>
+      <Text bold color="green">🔑 Upgrade to unlock:</Text>
+      <Text color="gray">  • Deep SAST analysis with full taint tracing</Text>
+      <Text color="gray">  • Comprehensive PDF/Markdown security reports</Text>
+      <Text color="gray">  • CI/CD integration with exit codes</Text>
+      <Text color="gray">  • Priority support</Text>
+    </Box>
+
+    <Box marginTop={1} paddingX={1}>
+      <Text>
+        👉 <Text bold color="cyan" underline>{gateResult.upgradeUrl}</Text>
+      </Text>
+    </Box>
+
+    <Box marginTop={1} paddingX={1}>
+      <Text color="gray" dimColor>
+        Already purchased? Run <Text bold>shadow-auditor --reconfigure</Text> to enter your license key.
+      </Text>
+    </Box>
+  </Box>
+);
 
 const App = ({
   ciEnabled,
@@ -111,6 +154,7 @@ const App = ({
   const [appState, setAppState] = useState<AppState>('booting');
   const [config, setConfig] = useState<null | ShadowConfig>(null);
   const [targetPath, setTargetPath] = useState<string>('');
+  const [licenseGateResult, setLicenseGateResult] = useState<LicenseGateResult | null>(null);
 
   // Setup Wizard State
   const [setupData, setSetupData] = useState<Partial<ShadowConfig>>({});
@@ -129,6 +173,7 @@ const App = ({
   const [activityEvents, setActivityEvents] = useState<ActivityEventLine[]>([]);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const activityEventCounter = useRef(0);
+  const keychainRegistered = useRef(false);
 
   useEffect(() => {
     // Config Load Effect
@@ -182,10 +227,27 @@ const App = ({
     await saveConfig(finalConfig);
     setConfig(finalConfig);
     setSetupInput('');
+    setAppState('setup-license');
+  };
+
+  const handleLicenseKeyInput = async (value: string) => {
+    if (value.trim()) {
+      const updatedConfig = { ...config!, licenseKey: value.trim() };
+      await saveConfig(updatedConfig);
+      setConfig(updatedConfig);
+    }
+
+    setSetupInput('');
     setAppState('targetSelection');
   };
 
   useEffect(() => {
+    // Register KeychainAdapter once at boot
+    if (!keychainRegistered.current) {
+      keychainRegistered.current = true;
+      registerSecretStoreAdapter(new KeychainAdapter());
+    }
+
     if (appState === 'booting') {
       // The animation has ~1 frame taking 83.3ms, we loop false
       // Give it 1.5s then jump to next state
@@ -198,8 +260,6 @@ const App = ({
     if (appState === 'initializing' && targetPath && config) {
       const initSession = async () => {
         try {
-          const map = await generateRepoMap(targetPath);
-
           // Build effective config with CLI flag overrides
           const effectiveConfig: ShadowConfig = {
             ...config,
@@ -207,6 +267,16 @@ const App = ({
             ...(ciEnabled ? { ci: { enabled: true, failOn: (failOn ?? 'high') as 'critical' | 'high' | 'low' | 'medium' | 'none' } } : {}),
             ...(diffEnabled ? { diff: { baseRef: since ?? 'HEAD~1', enabled: true } } : {}),
           };
+
+          // License gate check
+          const gateResult = await enforceLicenseGate(effectiveConfig);
+          if (!gateResult.allowed) {
+            setLicenseGateResult(gateResult);
+            setAppState('license-blocked');
+            return;
+          }
+
+          const map = await generateRepoMap(targetPath);
 
           // Build diff scope hint for incremental mode
           let diffScopeHint: string | undefined;
@@ -408,6 +478,31 @@ const App = ({
             />
           </Box>
         </Box>
+      )}
+      {appState === 'setup-license' && (
+        <Box flexDirection="column" padding={1}>
+          <Box marginBottom={1}>
+            <Text bold color="cyan">🔓 SHADOW AUDITOR :: Configuration Wizard</Text>
+          </Box>
+          <Box marginBottom={1}>
+            <Text>Enter your license key <Text color="gray">(press Enter to skip — free tier)</Text>:</Text>
+          </Box>
+          <Box>
+            <Text color="gray">❯ </Text>
+            <TextInput
+              onChange={setSetupInput}
+              onSubmit={handleLicenseKeyInput}
+              placeholder="SA-XXXX-XXXX-XXXX-XXXX"
+              value={setupInput}
+            />
+          </Box>
+          <Box marginTop={1}>
+            <Text color="gray" dimColor>Get a license at: https://polar.sh/Yahya-hacker/shadow-auditor</Text>
+          </Box>
+        </Box>
+      )}
+      {appState === 'license-blocked' && licenseGateResult && (
+        <LicensePaywall gateResult={licenseGateResult} onRetry={() => setAppState('setup-license')} />
       )}
       {appState === 'targetSelection' && (
         <Box flexDirection="column">

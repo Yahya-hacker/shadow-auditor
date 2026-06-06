@@ -1,0 +1,32 @@
+# Shadow Auditor — NPM Publish Ignore List
+# Only ./bin, ./dist, oclif.manifest.json, package.json, README.md ship.
+
+# Source code (compiled output is in ./dist)
+src/
+test/
+
+# Config and tooling
+tsconfig.json
+.prettierrc.json
+.eslintrc*
+eslint.config.*
+.shadow-auditor.json
+.shadow-auditor-license.json
+
+# Development artifacts
+.github/
+.vscode/
+.idea/
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+
+# Documentation source (README.md auto-included by npm)
+docs/
+
+# Misc
+.gitignore
+.npmrc
+.env*
+*.map

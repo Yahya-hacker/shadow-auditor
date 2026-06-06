@@ -50,6 +50,7 @@ export interface ShadowConfig {
     /** Maximum characters per code chunk (default: 4000) */
     maxChunkChars?: number;
   };
+  licenseKey?: string;
   maxOutputTokens?: number;
   maxToolSteps?: number;
   mcp?: {

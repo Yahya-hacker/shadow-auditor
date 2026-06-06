@@ -89,7 +89,7 @@ export type ModelTier = z.infer<typeof modelTierSchema>;
 export const evidenceClaimStatusSchema = z.enum([
   'proposed',     // Proposed but not verified
   'verified',     // Verified by another agent
-  'contested',    // Contested by another agent
+  'contested',    // IF it works then itContested by another agent
   'rejected',     // Rejected after review
   'consensus',    // Consensus reached
 ]);
