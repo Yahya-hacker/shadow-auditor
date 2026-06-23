@@ -64,6 +64,7 @@ export interface ReportBuilderOptions {
 export class ReportBuilder {
   private filesAnalyzed = 0;
   private filesTotal = 0;
+  private readonly findingIds = new Set<string>();
   private readonly findings: EnhancedFinding[] = [];
   private readonly options: Required<ReportBuilderOptions>;
   private readonly rejectedFindings: Array<{
@@ -135,11 +136,12 @@ export class ReportBuilder {
     }
     
     // Check for duplicates
-    const existing = this.findings.find((f) => f.vulnId === validFinding.vulnId);
-    if (existing) {
+    if (this.findingIds.has(validFinding.vulnId)) {
       this.rejectedFindings.push({ finding, reason: 'Duplicate vulnId' });
       return { added: false, reason: 'Duplicate finding' };
     }
+
+    this.findingIds.add(validFinding.vulnId);
     
     this.findings.push(validFinding);
     return { added: true };
