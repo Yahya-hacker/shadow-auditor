@@ -11,11 +11,31 @@ import {
 import { generateEnhancedSarifReport } from '../src/core/output/sarif.js';
 
 type SarifResult = {
+  fixes?: Array<{
+    artifactChanges: Array<{
+      artifactLocation: { uri: string };
+      replacements: Array<{
+        deletedRegion: {
+          endColumn?: number;
+          endLine?: number;
+          startColumn?: number;
+          startLine: number;
+        };
+        insertedContent: { text: string };
+      }>;
+    }>;
+    description: { text: string };
+  }>;
   level: string;
   locations: Array<{
     physicalLocation: {
       artifactLocation: { uri: string };
-      region?: { startLine?: number };
+      region?: {
+        endColumn?: number;
+        endLine?: number;
+        startColumn?: number;
+        startLine?: number;
+      };
     };
   }>;
   ruleId: string;
@@ -279,6 +299,28 @@ describe('enhanced reporting pipeline', () => {
       const run = toSarif(generateEnhancedSarifReport(createValidEnhancedReport())).runs[0];
       expect(run.tool.driver.rules).to.have.lengthOf(1);
       expect(run.tool.driver.rules[0].id).to.equal('VULN-001');
+    });
+
+    it('includes proper fixes with replacements when codeExample is provided', () => {
+      const report = createValidEnhancedReport();
+      report.findings[0].remediation.codeExample = 'fixed_code()';
+      report.findings[0].remediation.summary = 'Apply fix';
+
+      const sarif = toSarif(generateEnhancedSarifReport(report));
+      const result = sarif.runs[0].results[0];
+
+      expect(result.fixes).to.have.lengthOf(1);
+      const fix = result.fixes![0];
+      expect(fix.description.text).to.equal('Apply fix');
+      expect(fix.artifactChanges).to.have.lengthOf(1);
+
+      const change = fix.artifactChanges[0];
+      expect(change.artifactLocation.uri).to.equal('src/db.ts');
+      expect(change.replacements).to.have.lengthOf(1);
+
+      const replacement = change.replacements[0];
+      expect(replacement.insertedContent.text).to.equal('fixed_code()');
+      expect(replacement.deletedRegion.startLine).to.equal(42);
     });
   });
 });

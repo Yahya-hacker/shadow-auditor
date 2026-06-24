@@ -231,12 +231,28 @@ export function generateEnhancedSarifReport(report: EnhancedReport): Record<stri
     }
 
     // Add fixes if code example provided
-    if (finding.remediation.codeExample) {
+    const primaryLocation = finding.locations[0];
+    if (finding.remediation.codeExample && primaryLocation?.startLine) {
       result.fixes = [{
+        artifactChanges: [{
+          artifactLocation: {
+            uri: toPosixPath(primaryLocation.filePath),
+          },
+          replacements: [{
+            deletedRegion: {
+              endColumn: primaryLocation.endColumn,
+              endLine: primaryLocation.endLine ?? primaryLocation.startLine,
+              startColumn: primaryLocation.startColumn,
+              startLine: primaryLocation.startLine,
+            },
+            insertedContent: {
+              text: finding.remediation.codeExample,
+            },
+          }],
+        }],
         description: {
           text: finding.remediation.summary,
         },
-        // Note: SARIF fixes require specific replacements, simplified here
       }];
     }
 
