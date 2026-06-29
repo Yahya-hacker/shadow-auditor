@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../.copilot/pkg/universal/1.0.18"
+		}
+	],
+	"settings": {}
+}

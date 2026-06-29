@@ -1,0 +1,167 @@
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+/**
+ * Configuration interface for Shadow Auditor
+ */
+export interface ShadowConfig {
+  apiKey: string;
+  auditMode?: 'balanced' | 'deep' | 'deep-sast' | 'full-report' | 'patch-only' | 'quick' | 'triage';
+  /** CI mode: produce deterministic machine outputs, exit non-zero on threshold */
+  ci?: {
+    enabled?: boolean;
+    /** Minimum severity that causes a non-zero exit. Default: "high". */
+    failOn?: 'critical' | 'high' | 'low' | 'medium' | 'none';
+  };
+  commandPolicy?: {
+    additionalAllowedCommandPatterns?: string[];
+    additionalDeniedPatterns?: string[];
+    allowPnpmYarn?: boolean;
+  };
+  continuation?: {
+    maxContinuations?: number;
+  };
+  customBaseUrl?: string;
+  dast?: {
+    baseImage?: string;
+    cpuLimit?: string;
+    enabled?: boolean;
+    healthCheckUrl?: string;
+    memoryLimit?: string;
+    startCommand?: string;
+  };
+  /** Incremental diff mode: scope analysis to files changed since this ref */
+  diff?: {
+    baseRef?: string;
+    enabled?: boolean;
+  };
+  expertUnsafe?: boolean;
+  /** Semantic indexing configuration for hybrid code retrieval */
+  indexing?: {
+    /** Chunking strategy: 'function' (default), 'class', or 'file' */
+    chunkStrategy?: 'class' | 'file' | 'function';
+    /** Embedding model name (default: 'nomic-embed-text' for Ollama, 'text-embedding-3-small' for OpenAI) */
+    embeddingModel?: string;
+    /** Embedding provider: 'ollama' (default, local) or 'openai' (cloud) */
+    embeddingProvider?: 'ollama' | 'openai';
+    /** Enable semantic indexing (default: true when embedding provider is available) */
+    enabled?: boolean;
+    /** Maximum characters per code chunk (default: 4000) */
+    maxChunkChars?: number;
+  };
+  licenseKey?: string;
+  maxOutputTokens?: number;
+  maxToolSteps?: number;
+  mcp?: {
+    adapters?: Array<'chrome-devtools' | 'kali-linux'>;
+    chromeDevtoolsEndpoint?: string;
+    enabled?: boolean;
+    kaliLinuxEndpoint?: string;
+  };
+  model: string;
+  provider: string;
+  remediation?: {
+    autoRevert?: boolean;
+    containerImage?: string;
+    enabled?: boolean;
+    testCommand?: string;
+    testTimeoutMs?: number;
+  };
+  reportValidation?: {
+    maxRepairRetries?: number;
+  };
+  swarm?: {
+    enabled?: boolean;
+    maxWorkers?: number;
+    modelOverrides?: Record<string, { apiKey?: string; model: string; provider: string }>;
+    roles?: string[];
+    workerBudgetRatio?: number;
+  };
+}
+
+const CONFIG_FILENAME = '.shadow-auditor.json';
+let plaintextApiKeyWarningShown = false;
+
+/**
+ * Extension point for future secure keychain integration.
+ * Current behavior remains JSON-file based for backward compatibility.
+ */
+export interface SecretStoreAdapter {
+  getApiKey(provider: string): Promise<null | string>;
+  setApiKey?(provider: string, apiKey: string): Promise<void>;
+}
+
+let secretStoreAdapter: null | SecretStoreAdapter = null;
+
+export function registerSecretStoreAdapter(adapter: SecretStoreAdapter): void {
+  secretStoreAdapter = adapter;
+}
+
+/**
+ * Resolves the absolute path to the global config file
+ */
+function getConfigPath(): string {
+  return path.join(os.homedir(), CONFIG_FILENAME);
+}
+
+/**
+ * Loads the Shadow Auditor configuration from ~/.shadow-auditor.json
+ * Returns null if the file doesn't exist or is invalid
+ */
+export async function loadConfig(): Promise<null | ShadowConfig> {
+  const configPath = getConfigPath();
+
+  try {
+    const raw = await fs.readFile(configPath, 'utf8');
+    const parsed = JSON.parse(raw) as ShadowConfig;
+
+    // Validate essential fields
+    if (!parsed.provider || !parsed.model) {
+      return null;
+    }
+
+    // API key is required for non-Ollama providers
+    if (parsed.provider !== 'ollama' && !parsed.apiKey && secretStoreAdapter) {
+      const secureApiKey = await secretStoreAdapter.getApiKey(parsed.provider);
+      if (secureApiKey) {
+        parsed.apiKey = secureApiKey;
+      }
+    }
+
+    if (parsed.provider !== 'ollama' && !parsed.apiKey) {
+      return null;
+    }
+
+    if (parsed.provider !== 'ollama' && parsed.apiKey && !plaintextApiKeyWarningShown) {
+      plaintextApiKeyWarningShown = true;
+      console.warn(
+        `[SHADOW-AUDITOR][WARN] API key is stored in plaintext at ${configPath}. ` +
+          'Consider using environment variables or registerSecretStoreAdapter(...) for keychain integration.',
+      );
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Saves the Shadow Auditor configuration to ~/.shadow-auditor.json
+ */
+export async function saveConfig(configData: ShadowConfig): Promise<void> {
+  const configPath = getConfigPath();
+
+  if (configData.provider !== 'ollama' && configData.apiKey && secretStoreAdapter?.setApiKey) {
+    await secretStoreAdapter.setApiKey(configData.provider, configData.apiKey);
+
+    const { apiKey: _apiKey, ...configWithoutApiKey } = configData;
+    const json = JSON.stringify(configWithoutApiKey, null, 2);
+    await fs.writeFile(configPath, json, 'utf-8');
+    return;
+  }
+
+  const json = JSON.stringify(configData, null, 2);
+  await fs.writeFile(configPath, json, 'utf-8');
+}
