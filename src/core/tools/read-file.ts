@@ -1,11 +1,10 @@
-import { tool } from 'ai';
 import * as fs from 'node:fs/promises';
 import { z } from 'zod';
 
 import { type PathGuard, PathGuardError } from '../policy/path-guard.js';
 
 export function createReadFileTool(pathGuard: PathGuard) {
-  return tool({
+  return {
     description:
       'Reads full source code from a repository file using hardened path guards. Use this for implementation-level security analysis.',
     async execute({ filePath }: { filePath: string }) {
@@ -25,5 +24,5 @@ export function createReadFileTool(pathGuard: PathGuard) {
     inputSchema: z.object({
       filePath: z.string().describe('Relative file path from the repository root.'),
     }),
-  });
+  };
 }

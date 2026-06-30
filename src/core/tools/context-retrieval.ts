@@ -7,7 +7,6 @@
  * most relevant code for the agent's current analysis task.
  */
 
-import { tool } from 'ai';
 import * as path from 'node:path';
 import { z } from 'zod';
 
@@ -21,7 +20,7 @@ export interface ContextRetrievalToolOptions {
 export function createContextRetrievalTool(options: ContextRetrievalToolOptions) {
   const { retriever, rootPath } = options;
 
-  return tool({
+  return {
     description:
       'Searches the codebase using hybrid retrieval (semantic similarity, keyword matching, and knowledge graph traversal). ' +
       'Use this to find code relevant to your current analysis task without reading entire files. ' +
@@ -111,5 +110,5 @@ export function createContextRetrievalTool(options: ContextRetrievalToolOptions)
           '"graph" for knowledge graph traversal. Default: hybrid (all strategies combined via RRF).',
         ),
     }),
-  });
+  };
 }

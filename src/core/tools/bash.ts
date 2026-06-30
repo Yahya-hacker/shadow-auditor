@@ -1,4 +1,3 @@
-import { tool } from 'ai';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
@@ -20,7 +19,7 @@ export interface BashToolOptions {
  * sandboxed to the workspace, and audit-logged via the tool-events pipeline.
  */
 export function createBashTool(options: BashToolOptions) {
-  return tool({
+  return {
     description:
       'Execute Unix shell commands for repository inspection and security analysis. ' +
       'Supports piping with read-only analysis tools: grep, sed, jq, awk, find, cat, head, tail, wc, sort, uniq, cut, tr, diff, file, stat. ' +
@@ -102,5 +101,5 @@ export function createBashTool(options: BashToolOptions) {
         .optional()
         .describe('Timeout in seconds (default: 30, max: 120).'),
     }),
-  });
+  };
 }

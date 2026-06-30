@@ -1,4 +1,3 @@
-import { tool } from 'ai';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { z } from 'zod';
@@ -50,7 +49,7 @@ function normalizeExtensionFilter(extension?: string): string | undefined {
 }
 
 export function createSearchCodebaseTool(pathGuard: PathGuard) {
-  return tool({
+  return {
     description:
       'Searches code for regex patterns with text-file filtering and symlink-safe traversal. Excludes node_modules and .git.',
     async execute({ fileExtension, regexPattern }: { fileExtension?: string; regexPattern: string }) {
@@ -140,5 +139,5 @@ export function createSearchCodebaseTool(pathGuard: PathGuard) {
         .max(200)
         .describe(String.raw`Regex pattern to search for (example: "eval\\s*\\(").`),
     }),
-  });
+  };
 }

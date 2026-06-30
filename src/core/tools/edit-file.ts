@@ -1,4 +1,3 @@
-import { tool } from 'ai';
 import * as fs from 'node:fs/promises';
 import { z } from 'zod';
 
@@ -6,7 +5,7 @@ import { confirmFileEdit } from '../../utils/human-in-loop.js';
 import { type PathGuard, PathGuardError } from '../policy/path-guard.js';
 
 export function createEditFileTool(pathGuard: PathGuard) {
-  return tool({
+  return {
     description:
       'Proposes and applies a patch to a file. Requires user confirmation before writing changes.',
     async execute({
@@ -46,5 +45,5 @@ export function createEditFileTool(pathGuard: PathGuard) {
       replacementCode: z.string().describe('Replacement code to write into the file.'),
       targetCode: z.string().describe('Exact code snippet to replace.'),
     }),
-  });
+  };
 }

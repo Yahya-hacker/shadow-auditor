@@ -1,4 +1,536 @@
-import { generateText, type LanguageModel, type ModelMessage, type StepResult, type ToolSet } from 'ai';
+import type { LanguageModel, ModelMessage, StepResult, ToolSet } from 'ai';
+import { HumanMessage } from "@langchain/core/messages";
+import { compileWorkflow } from "./graph/workflow.js";
+import * as path from 'node:path';
+
+import type { ShadowConfig } from '../utils/config.js';
+import type { MCPRawInvoker } from './mcp/types.js';
+import type { MissionObjective, MissionPhase, TransitionReason } from './orchestrator/mission-state.js';
+import type { TransitionContext } from './orchestrator/transitions.js';
+import type { SecurityReport } from './output/report-schema.js';
+
+import { SwarmCoordinator } from './hivemind/swarm-coordinator.js';
+import { createChromeDevtoolsAdapter } from './mcp/adapters/chrome-devtools.js';
+import { createKaliLinuxAdapter } from './mcp/adapters/kali-linux.js';
+import { MCPManager } from './mcp/manager.js';
+import { vulnerabilityCanonicalId } from './memory/entity-normalizer.js';
+import { HybridRetriever } from './memory/hybrid-retriever.js';
+import {
+  type EmbeddingProvider,
+  NullEmbeddingProvider,
+  OllamaEmbeddingProvider,
+  OpenAIEmbeddingProvider,
+  SemanticIndex,
+} from './memory/semantic-index.js';
+import { resolveRuntimeSettings, type RuntimeSettings } from './model-capabilities.js';
+import { getModel } from './model-router.js';
+import { MissionEngine } from './orchestrator/mission-engine.js';
+import { computeCiExitCode, type FailOnSeverity, formatCiSummary } from './output/ci-exit.js';
+import { deduplicateFindings } from './output/dedup.js';
+import { validateAndRepairReport } from './output/report-validator.js';
+import { generateSarifReport } from './output/sarif.js';
+import { createPathGuard } from './policy/path-guard.js';
+import { RunArtifacts } from './run-artifacts.js';
+import { type StreamActivity, streamWithContinuation } from './session.js';
+import { buildSystemPrompt } from './system-prompt.js';
+import { createBashTool } from './tools/bash.js';
+import { createContextRetrievalTool } from './tools/context-retrieval.js';
+import { createEditFileTool } from './tools/edit-file.js';
+import { createExecuteCommandTool } from './tools/execute-command.js';
+import { createFinishTaskTool } from './tools/finish-task.js';
+import { createListDirectoryTool } from './tools/list-directory.js';
+import { createReadFileTool } from './tools/read-file.js';
+import { createSearchCodebaseTool } from './tools/search-codebase.js';
+
+export interface AgentSessionOptions {
+  /** Diff scope hint from incremental mode (pre-built string) */
+  diffScopeHint?: string;
+  expertUnsafe?: boolean;
+}
+
+export interface AgentStreamEvent {
+  kind: 'status' | StreamActivity['kind'];
+  message: string;
+  timestamp: string;
+  toolCallId?: string;
+  toolName?: string;
+}
+
+const REPORT_REPAIR_SYSTEM_PROMPT = `You are a strict JSON repair engine.
+Return only valid JSON for this schema:
+{
+  "findings": [
+    {
+      "vuln_id": "string",
+      "title": "string",
+      "severity_label": "Critical|High|Medium|Low|Info",
+      "cvss_v31_score": 0.0,
+      "cvss_v31_vector": "CVSS:3.1/...",
+      "cvss_v40_score": null,
+      "cwe": "CWE-000",
+      "file_paths": ["path/to/file"]
+    }
+  ]
+}
+If no findings, return {"findings":[]}.
+Do not include markdown fences or extra text.`;
+
+function normalizeRole(role: string): 'assistant' | 'system' | 'tool' | 'user' {
+  if (role === 'assistant' || role === 'tool' || role === 'user') {
+    return role;
+  }
+
+  return 'system';
+}
+
+function maybeCreateHttpInvoker(endpoint?: string): MCPRawInvoker | undefined {
+  const normalizedEndpoint = endpoint?.trim();
+  if (!normalizedEndpoint) {
+    return undefined;
+  }
+
+  return async (operation: string, input: Record<string, unknown>) => {
+    const response = await fetch(normalizedEndpoint, {
+      body: JSON.stringify({ input, operation }),
+      headers: {
+        'content-type': 'application/json',
+      },
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      throw new Error(`MCP endpoint error (${response.status}): ${response.statusText}`);
+    }
+
+    const rawBody = await response.text();
+    if (!rawBody) {
+      return '';
+    }
+
+    try {
+      return JSON.parse(rawBody) as unknown;
+    } catch {
+      return rawBody;
+    }
+  };
+}
+
+function toContentString(content: ModelMessage['content']): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  return JSON.stringify(content);
+}
+
+export class AgentSession {
+  private artifacts: null | RunArtifacts = null;
+  private diffScopeHint: string;
+  private expertUnsafe: boolean;
+  private initialized: Promise<void>;
+  private mcpManager: MCPManager | null = null;
+  private messages: ModelMessage[] = [];
+  private missionEngine: MissionEngine | null = null;
+  private model: LanguageModel;
+  private runtime: RuntimeSettings;
+  private runtimeWarnings: string[] = [];
+  private semanticIndex: null | SemanticIndex = null;
+  private systemPrompt = '';
+  private tools: ToolSet = {};
+
+  constructor(
+    private readonly config: ShadowConfig,
+    private readonly repoMap: string,
+    private readonly targetPath: string,
+    options: AgentSessionOptions = {},
+  ) {
+    this.model = getModel(config);
+    this.expertUnsafe = options.expertUnsafe ?? config.expertUnsafe ?? false;
+    this.diffScopeHint = options.diffScopeHint ?? '';
+    this.runtime = resolveRuntimeSettings(
+      config,
+      (warning: string) => {
+        this.runtimeWarnings.push(warning);
+        console.warn(warning);
+      },
+      config.auditMode,
+    );
+
+    const resolvedTargetPath = path.resolve(targetPath);
+    this.messages = [
+      {
+        content: `## REPOSITORY ARCHITECTURE MAP
+
+The following is a compressed architectural map of the target codebase at \`${resolvedTargetPath}\`.
+It contains structural signatures (imports, declarations, type surfaces), not implementation bodies.
+
+\`\`\`
+${repoMap}
+\`\`\`
+
+You also have access to a \`context_retrieval\` tool that provides semantic, lexical, and graph-based code search.
+Use \`context_retrieval\` to find specific code patterns, vulnerability-related functions, or data flow paths on-demand
+rather than reading entire files. This is more efficient for large codebases.
+
+Use your tools to inspect implementation details, verify assumptions, and produce precise security findings.`,
+        role: 'user',
+      },
+      {
+        content: `Repository map ingested. Semantic code retrieval is available via context_retrieval. Ready for autonomous security analysis with controlled tooling and machine-readable reporting.`,
+        role: 'assistant',
+      },
+    ];
+
+    this.initialized = this.initialize();
+  }
+
+  async sendMessage(
+    userMessage: string,
+    onChunk: (text: string) => void,
+    onEvent?: (event: AgentStreamEvent) => void,
+  ): Promise<string> {
+    await this.initialized;
+    if (!this.artifacts) {
+      throw new Error('Run artifacts are not initialized.');
+    }
+
+    const emitEvent = (event: Omit<AgentStreamEvent, 'timestamp'>) => {
+      onEvent?.({
+        ...event,
+        timestamp: new Date().toISOString(),
+      });
+    };
+
+    emitEvent({
+      kind: 'status',
+      message: 'Processing mission sequence...',
+    });
+
+    try {
+      // Compile our multi-agent workflow
+      // We pass the raw tools array constructed in initialize()
+      const toolsArray = Object.entries(this.tools).map(([name, tool]) => ({ name, tool }));
+      const workflow = compileWorkflow(toolsArray);
+
+      // We maintain short term state inside the LangGraph checkpointer by passing a thread_id
+      const config = { configurable: { thread_id: "mission_1" }, version: "v2" as const };
+
+      const inputs = {
+        messages: [new HumanMessage({ content: userMessage })]
+      };
+
+      let fullResponse = "";
+
+      // Stream events from the LangGraph execution
+      const stream = await workflow.streamEvents(inputs, config);
+
+      for await (const event of stream) {
+        // Map LangGraph events to UI streams
+        if (event.event === "on_chat_model_stream" && event.data?.chunk?.content) {
+            let content = event.data.chunk.content;
+            if (typeof content === 'string') {
+              onChunk(content);
+              fullResponse += content;
+            }
+        } else if (event.event === "on_tool_start") {
+            emitEvent({
+                kind: 'tool_call',
+                message: `Executing tool: ${event.name}`,
+                toolCallId: event.run_id,
+                toolName: event.name
+            });
+        } else if (event.event === "on_tool_end") {
+            emitEvent({
+                kind: 'tool_result',
+                message: `Completed tool: ${event.name}`,
+                toolCallId: event.run_id,
+                toolName: event.name
+            });
+        }
+      }
+
+      await this.persistMessages([{ role: 'user', content: userMessage }]);
+      await this.persistMessages([{ role: 'assistant', content: fullResponse }]);
+
+      return fullResponse;
+    } catch (error) {
+      this.runtimeWarnings.push(`Workflow execution failed: ${error instanceof Error ? error.message : String(error)}`);
+      emitEvent({
+        kind: 'status',
+        message: 'Workflow execution aborted due to error.',
+      });
+      return "[Workflow Failed]";
+    }
+  }
+
+import type { LanguageModel, ModelMessage, StepResult, ToolSet } from 'ai';
+import { HumanMessage } from "@langchain/core/messages";
+import { compileWorkflow } from "./graph/workflow.js";
+import * as path from 'node:path';
+
+import type { ShadowConfig } from '../utils/config.js';
+import type { MCPRawInvoker } from './mcp/types.js';
+import type { MissionObjective, MissionPhase, TransitionReason } from './orchestrator/mission-state.js';
+import type { TransitionContext } from './orchestrator/transitions.js';
+import type { SecurityReport } from './output/report-schema.js';
+
+import { SwarmCoordinator } from './hivemind/swarm-coordinator.js';
+import { createChromeDevtoolsAdapter } from './mcp/adapters/chrome-devtools.js';
+import { createKaliLinuxAdapter } from './mcp/adapters/kali-linux.js';
+import { MCPManager } from './mcp/manager.js';
+import { vulnerabilityCanonicalId } from './memory/entity-normalizer.js';
+import { HybridRetriever } from './memory/hybrid-retriever.js';
+import {
+  type EmbeddingProvider,
+  NullEmbeddingProvider,
+  OllamaEmbeddingProvider,
+  OpenAIEmbeddingProvider,
+  SemanticIndex,
+} from './memory/semantic-index.js';
+import { resolveRuntimeSettings, type RuntimeSettings } from './model-capabilities.js';
+import { getModel } from './model-router.js';
+import { MissionEngine } from './orchestrator/mission-engine.js';
+import { computeCiExitCode, type FailOnSeverity, formatCiSummary } from './output/ci-exit.js';
+import { deduplicateFindings } from './output/dedup.js';
+import { validateAndRepairReport } from './output/report-validator.js';
+import { generateSarifReport } from './output/sarif.js';
+import { createPathGuard } from './policy/path-guard.js';
+import { RunArtifacts } from './run-artifacts.js';
+import { type StreamActivity, streamWithContinuation } from './session.js';
+import { buildSystemPrompt } from './system-prompt.js';
+import { createBashTool } from './tools/bash.js';
+import { createContextRetrievalTool } from './tools/context-retrieval.js';
+import { createEditFileTool } from './tools/edit-file.js';
+import { createExecuteCommandTool } from './tools/execute-command.js';
+import { createFinishTaskTool } from './tools/finish-task.js';
+import { createListDirectoryTool } from './tools/list-directory.js';
+import { createReadFileTool } from './tools/read-file.js';
+import { createSearchCodebaseTool } from './tools/search-codebase.js';
+
+export interface AgentSessionOptions {
+  /** Diff scope hint from incremental mode (pre-built string) */
+  diffScopeHint?: string;
+  expertUnsafe?: boolean;
+}
+
+export interface AgentStreamEvent {
+  kind: 'status' | StreamActivity['kind'];
+  message: string;
+  timestamp: string;
+  toolCallId?: string;
+  toolName?: string;
+}
+
+const REPORT_REPAIR_SYSTEM_PROMPT = `You are a strict JSON repair engine.
+Return only valid JSON for this schema:
+{
+  "findings": [
+    {
+      "vuln_id": "string",
+      "title": "string",
+      "severity_label": "Critical|High|Medium|Low|Info",
+      "cvss_v31_score": 0.0,
+      "cvss_v31_vector": "CVSS:3.1/...",
+      "cvss_v40_score": null,
+      "cwe": "CWE-000",
+      "file_paths": ["path/to/file"]
+    }
+  ]
+}
+If no findings, return {"findings":[]}.
+Do not include markdown fences or extra text.`;
+
+function normalizeRole(role: string): 'assistant' | 'system' | 'tool' | 'user' {
+  if (role === 'assistant' || role === 'tool' || role === 'user') {
+    return role;
+  }
+
+  return 'system';
+}
+
+function maybeCreateHttpInvoker(endpoint?: string): MCPRawInvoker | undefined {
+  const normalizedEndpoint = endpoint?.trim();
+  if (!normalizedEndpoint) {
+    return undefined;
+  }
+
+  return async (operation: string, input: Record<string, unknown>) => {
+    const response = await fetch(normalizedEndpoint, {
+      body: JSON.stringify({ input, operation }),
+      headers: {
+        'content-type': 'application/json',
+      },
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      throw new Error(`MCP endpoint error (${response.status}): ${response.statusText}`);
+    }
+
+    const rawBody = await response.text();
+    if (!rawBody) {
+      return '';
+    }
+
+    try {
+      return JSON.parse(rawBody) as unknown;
+    } catch {
+      return rawBody;
+    }
+  };
+}
+
+function toContentString(content: ModelMessage['content']): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  return JSON.stringify(content);
+}
+
+export class AgentSession {
+  private artifacts: null | RunArtifacts = null;
+  private diffScopeHint: string;
+  private expertUnsafe: boolean;
+  private initialized: Promise<void>;
+  private mcpManager: MCPManager | null = null;
+  private messages: ModelMessage[] = [];
+  private missionEngine: MissionEngine | null = null;
+  private model: LanguageModel;
+  private runtime: RuntimeSettings;
+  private runtimeWarnings: string[] = [];
+  private semanticIndex: null | SemanticIndex = null;
+  private systemPrompt = '';
+  private tools: ToolSet = {};
+
+  constructor(
+    private readonly config: ShadowConfig,
+    private readonly repoMap: string,
+    private readonly targetPath: string,
+    options: AgentSessionOptions = {},
+  ) {
+    this.model = getModel(config);
+    this.expertUnsafe = options.expertUnsafe ?? config.expertUnsafe ?? false;
+    this.diffScopeHint = options.diffScopeHint ?? '';
+    this.runtime = resolveRuntimeSettings(
+      config,
+      (warning: string) => {
+        this.runtimeWarnings.push(warning);
+        console.warn(warning);
+      },
+      config.auditMode,
+    );
+
+    const resolvedTargetPath = path.resolve(targetPath);
+    this.messages = [
+      {
+        content: `## REPOSITORY ARCHITECTURE MAP
+
+The following is a compressed architectural map of the target codebase at \`${resolvedTargetPath}\`.
+It contains structural signatures (imports, declarations, type surfaces), not implementation bodies.
+
+\`\`\`
+${repoMap}
+\`\`\`
+
+You also have access to a \`context_retrieval\` tool that provides semantic, lexical, and graph-based code search.
+Use \`context_retrieval\` to find specific code patterns, vulnerability-related functions, or data flow paths on-demand
+rather than reading entire files. This is more efficient for large codebases.
+
+Use your tools to inspect implementation details, verify assumptions, and produce precise security findings.`,
+        role: 'user',
+      },
+      {
+        content: `Repository map ingested. Semantic code retrieval is available via context_retrieval. Ready for autonomous security analysis with controlled tooling and machine-readable reporting.`,
+        role: 'assistant',
+      },
+    ];
+
+    this.initialized = this.initialize();
+  }
+
+  async sendMessage(
+    userMessage: string,
+    onChunk: (text: string) => void,
+    onEvent?: (event: AgentStreamEvent) => void,
+  ): Promise<string> {
+    await this.initialized;
+    if (!this.artifacts) {
+      throw new Error('Run artifacts are not initialized.');
+    }
+
+    const emitEvent = (event: Omit<AgentStreamEvent, 'timestamp'>) => {
+      onEvent?.({
+        ...event,
+        timestamp: new Date().toISOString(),
+      });
+    };
+
+    emitEvent({
+      kind: 'status',
+      message: 'Processing mission sequence...',
+    });
+
+    try {
+      // Compile our multi-agent workflow
+      // We pass the raw tools array constructed in initialize()
+      const toolsArray = Object.entries(this.tools).map(([name, tool]) => ({ name, tool }));
+      const workflow = compileWorkflow(toolsArray);
+
+      // We maintain short term state inside the LangGraph checkpointer by passing a thread_id
+      const config = { configurable: { thread_id: "mission_1" }, version: "v2" as const };
+
+      const inputs = {
+        messages: [new HumanMessage({ content: userMessage })]
+      };
+
+      let fullResponse = "";
+
+      // Stream events from the LangGraph execution
+      const stream = await workflow.streamEvents(inputs, config);
+
+      for await (const event of stream) {
+        // Map LangGraph events to UI streams
+        if (event.event === "on_chat_model_stream" && event.data?.chunk?.content) {
+            let content = event.data.chunk.content;
+            if (typeof content === 'string') {
+              onChunk(content);
+              fullResponse += content;
+            }
+        } else if (event.event === "on_tool_start") {
+            emitEvent({
+                kind: 'tool_call',
+                message: `Executing tool: ${event.name}`,
+                toolCallId: event.run_id,
+                toolName: event.name
+            });
+        } else if (event.event === "on_tool_end") {
+            emitEvent({
+                kind: 'tool_result',
+                message: `Completed tool: ${event.name}`,
+                toolCallId: event.run_id,
+                toolName: event.name
+            });
+        }
+      }
+
+      await this.persistMessages([{ role: 'user', content: userMessage }]);
+      await this.persistMessages([{ role: 'assistant', content: fullResponse }]);
+
+      return fullResponse;
+    } catch (error) {
+      this.runtimeWarnings.push(`Workflow execution failed: ${error instanceof Error ? error.message : String(error)}`);
+      emitEvent({
+        kind: 'status',
+        message: 'Workflow execution aborted due to error.',
+      });
+      return "[Workflow Failed]";
+    }
+  }
+
+  import type { LanguageModel, ModelMessage, StepResult, ToolSet } from 'ai';
+import { HumanMessage } from "@langchain/core/messages";
+import { compileWorkflow } from "./graph/workflow.js";
 import * as path from 'node:path';
 
 import type { ShadowConfig } from '../utils/config.js';

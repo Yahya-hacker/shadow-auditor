@@ -1,4 +1,3 @@
-import { tool } from 'ai';
 import { z } from 'zod';
 
 /**
@@ -13,7 +12,7 @@ import { z } from 'zod';
  *   stopWhen: [stepCountIs(maxToolSteps), hasToolCall('finish_task')]
  */
 export function createFinishTaskTool() {
-  return tool({
+  return {
     description:
       'Signal that the current analysis task is fully complete. ' +
       'Call this ONLY after all findings have been recorded, the report is generated, and there is nothing more to investigate. ' +
@@ -26,5 +25,5 @@ export function createFinishTaskTool() {
         .min(1, 'Summary cannot be empty.')
         .describe('Concise summary of what was accomplished, or output data.'),
     }),
-  });
+  };
 }

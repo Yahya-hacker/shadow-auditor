@@ -1,11 +1,10 @@
-import { tool } from 'ai';
 import * as fs from 'node:fs/promises';
 import { z } from 'zod';
 
 import { type PathGuard, PathGuardError } from '../policy/path-guard.js';
 
 export function createListDirectoryTool(pathGuard: PathGuard) {
-  return tool({
+  return {
     description:
       'Lists directory contents using symlink-safe path resolution. Use this to discover files and repository layout.',
     async execute({ path: dirPath }: { path: string }) {
@@ -39,5 +38,5 @@ export function createListDirectoryTool(pathGuard: PathGuard) {
     inputSchema: z.object({
       path: z.string().describe('Relative directory path from repository root (use "." for root).'),
     }),
-  });
+  };
 }
