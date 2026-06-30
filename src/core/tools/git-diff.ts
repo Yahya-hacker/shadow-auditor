@@ -76,7 +76,7 @@ export async function getChangedFiles(options: ChangedFilesOptions = {}): Promis
     const filtered = allFiles.filter((f) => {
       const ext = path.extname(f).toLowerCase();
       return exts.includes(ext);
-    });
+    };
 
     return {
       files: filtered,

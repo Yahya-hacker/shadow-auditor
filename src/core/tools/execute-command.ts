@@ -1,4 +1,3 @@
-import { tool } from 'ai';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
@@ -14,7 +13,7 @@ export interface ExecuteCommandToolOptions {
 }
 
 export function createExecuteCommandTool(options: ExecuteCommandToolOptions) {
-  return tool({
+  return {
     description:
       'Executes a repository command. Enforces policy checks before user confirmation, then returns stdout/stderr.',
     async execute({ command }: { command: string }) {
@@ -66,5 +65,5 @@ export function createExecuteCommandTool(options: ExecuteCommandToolOptions) {
     inputSchema: z.object({
       command: z.string().describe('Shell command to execute.'),
     }),
-  });
+  };
 }
