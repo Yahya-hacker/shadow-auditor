@@ -1,18 +1,25 @@
 /**
  * Swarm Coordinator - Parallel multi-agent task and execution manager.
+ *
+ * The coordinator now drives execution through a LangGraph supervisor graph
+ * backed by PersistentCheckpointSaver. The imperative while(true) loop has been
+ * replaced by checkpointed graph nodes, so orchestration state survives process
+ * restarts.
  */
 
 import { type LanguageModel, type ToolSet } from 'ai';
 
 import { type ShadowConfig } from '../../utils/config.js';
+import { PersistentCheckpointSaver } from '../orchestrator/checkpoint-saver.js';
 import { AgentWorker } from './agent-worker.js';
 import { Blackboard } from './blackboard.js';
-import { type AgentRole } from './hivemind-schema.js';
+import { type AgentRole, type BlackboardState } from './hivemind-schema.js';
 import {
   resolveWorkerModel,
   resolveWorkerTier,
   type SwarmModelOverrides,
 } from './swarm-model-router.js';
+import { buildSwarmSupervisor, type SwarmCoordinatorRuntime } from './swarm-supervisor.js';
 
 export interface SwarmCoordinatorOptions {
   allTools: ToolSet;
@@ -29,16 +36,21 @@ export interface SwarmCoordinatorOptions {
 /**
  * Manages swarm orchestration, task dependency decomposition, parallel execution, and consensus flow.
  */
-export class SwarmCoordinator {
-  private readonly allTools: ToolSet;
-  private readonly auditMode: string;
-  private blackboard: Blackboard | null;
-  private readonly config: ShadowConfig;
-  private readonly diffScopeHint: string;
-  private readonly model: LanguageModel;
-  private readonly runId: string;
-  private readonly storagePath: string;
-  private readonly workers: Map<string, AgentWorker> = new Map();
+export class SwarmCoordinator implements SwarmCoordinatorRuntime {
+  public readonly allTools: ToolSet;
+  public readonly auditMode: string;
+  public readonly config: ShadowConfig;
+  public readonly diffScopeHint: string;
+  public readonly model: LanguageModel;
+  onActivity?: (
+    workerRole: AgentRole,
+    activity: { kind: string; message: string; toolName?: string },
+  ) => void;
+  public readonly runId: string;
+public readonly storagePath: string;
+  private blackboard: Blackboard | null = null;
+  private userMessage = '';
+private readonly workers: Map<string, AgentWorker> = new Map();
 
   constructor(options: SwarmCoordinatorOptions) {
     this.config = options.config;
@@ -51,6 +63,28 @@ export class SwarmCoordinator {
     this.blackboard = options.blackboard ?? null;
   }
 
+  createWorker(options: {
+    agentId: string;
+    model: LanguageModel;
+    modelTier: ReturnType<typeof resolveWorkerTier>['modelTier'];
+    role: AgentRole;
+    trustScore: number;
+  }): AgentWorker {
+    return new AgentWorker({
+      agentId: options.agentId,
+      allTools: this.allTools,
+      auditMode: this.auditMode,
+      blackboard: this.getBlackboard(),
+      diffScopeHint: this.diffScopeHint,
+      maxOutputTokens: 4096,
+      maxToolSteps: 10,
+      model: options.model,
+      modelTier: options.modelTier,
+      role: options.role,
+      trustScore: options.trustScore,
+    });
+  }
+
   async executeMission(
     userMessage: string,
     onActivity?: (
@@ -58,6 +92,9 @@ export class SwarmCoordinator {
       activity: { kind: string; message: string; toolName?: string },
     ) => void,
   ): Promise<string> {
+    this.userMessage = userMessage;
+    this.onActivity = onActivity;
+
     // 1. Initialize Blackboard (reuse existing if provided for cross-mission persistence)
     if (!this.blackboard) {
       this.blackboard = await Blackboard.create({
@@ -68,207 +105,77 @@ export class SwarmCoordinator {
     }
 
     const blackboard = this.blackboard;
-    const taskGraph = blackboard.getTaskGraph();
 
-    // 2. Decompose user mission into Tasks
-    const reconRes = taskGraph.createTask({
-      description: 'Discover entry points and codebase structure',
-      parameters: { userMessage },
-      priority: 'high',
-      requiredRole: 'recon',
-      taskType: 'recon',
+    // 2. Build the checkpointed LangGraph supervisor.
+    const checkpointer = new PersistentCheckpointSaver({ storagePath: this.storagePath });
+    await checkpointer.initialize();
+
+    const supervisor = buildSwarmSupervisor({
+      blackboard,
+      checkpointer,
+      coordinator: this,
     });
-    if (!reconRes.ok) throw new Error(reconRes.error);
-    const reconTaskId = reconRes.value.taskId;
 
-    const taintRes = taskGraph.createTask({
-      dependencies: [reconTaskId],
-      description: 'Trace data flow from input sources to sinks',
-      parameters: {},
-      priority: 'high',
-      requiredRole: 'taint-tracer',
-      taskType: 'taint',
-    });
-    if (!taintRes.ok) throw new Error(taintRes.error);
-    const taintTaskId = taintRes.value.taskId;
+    // 3. Run the graph. Resuming from a checkpoint is automatic when the same
+    //    thread_id/run_id is reused.
+    const finalState = await supervisor.invoke(
+      {},
+      { configurable: { thread_id: this.runId } },
+    );
 
-    const exploitRes = taskGraph.createTask({
-      dependencies: [taintTaskId],
-      description: 'Analyze potential vulnerability candidates and classify CWEs',
-      parameters: {},
-      priority: 'high',
-      requiredRole: 'exploit-analyst',
-      taskType: 'exploit',
-    });
-    if (!exploitRes.ok) throw new Error(exploitRes.error);
-    const exploitTaskId = exploitRes.value.taskId;
-
-    const verifyRes = taskGraph.createTask({
-      dependencies: [exploitTaskId],
-      description: 'Verify candidate findings using code evidence gates',
-      parameters: {},
-      priority: 'high',
-      requiredRole: 'verifier',
-      taskType: 'verify',
-    });
-    if (!verifyRes.ok) throw new Error(verifyRes.error);
-    const verifyTaskId = verifyRes.value.taskId;
-
-    const finalReporterDeps = [verifyTaskId];
-
-    const patchEnabled = this.config.swarm?.roles?.includes('patch-engineer') ?? false;
-    let patchTaskId = '';
-    if (patchEnabled) {
-      const patchRes = taskGraph.createTask({
-        dependencies: [verifyTaskId],
-        description: 'Generate code patches and verify them against tests',
-        parameters: {},
-        priority: 'medium',
-        requiredRole: 'patch-engineer',
-        taskType: 'patch',
-      });
-      if (patchRes.ok) {
-        patchTaskId = patchRes.value.taskId;
-        finalReporterDeps.push(patchTaskId);
-      }
-    }
-
-    const reportRes = taskGraph.createTask({
-      dependencies: finalReporterDeps,
-      description: 'Compile security analysis report',
-      parameters: {},
-      priority: 'high',
-      requiredRole: 'reporter',
-      taskType: 'report',
-    });
-    if (!reportRes.ok) throw new Error(reportRes.error);
-    const reportTaskId = reportRes.value.taskId;
-
-    // 3. Spawn workers
-    const rolesToSpawn: AgentRole[] = ['recon', 'taint-tracer', 'exploit-analyst', 'verifier', 'reporter'];
-    if (patchEnabled) {
-      rolesToSpawn.push('patch-engineer');
-    }
-
-    for (const role of rolesToSpawn) {
-      const regRes = blackboard.registerAgent(role, ['typescript', 'security']);
-      if (!regRes.ok) throw new Error(regRes.error);
-      const agentId = regRes.value.agentId;
-
-      // Resolve per-role model and epistemic trust tier
-      const overrides = this.config.swarm?.modelOverrides as SwarmModelOverrides | undefined;
-      const workerModel = resolveWorkerModel(role, this.model, overrides);
-      const { modelTier, trustScore } = resolveWorkerTier(
-        role,
-        this.config.provider,
-        this.config.model,
-        overrides,
-      );
-
-      const worker = new AgentWorker({
-        agentId,
-        allTools: this.allTools,
-        auditMode: this.auditMode,
-        blackboard,
-        diffScopeHint: this.diffScopeHint,
-        maxOutputTokens: 4096,
-        maxToolSteps: 10,
-        model: workerModel,
-        modelTier,
-        role,
-        trustScore,
-      });
-
-      this.workers.set(agentId, worker);
-    }
-
-    // 4. Run Execution Loop
-    let reporterOutput = '';
-    const activeTasks: Map<string, Promise<void>> = new Map();
-
-    while (true) {
-      const allTasks = taskGraph.getAllTasks();
-
-      const isFinished = allTasks.every(
-        (t) => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled',
-      );
-      if (isFinished) {
-        break;
-      }
-
-      // Check for any blocked tasks that became unblocked
-      const claimable = taskGraph.getClaimableTasks();
-      for (const task of claimable) {
-        if (!task.requiredRole) continue;
-        if (activeTasks.has(task.taskId)) continue;
-
-        // Find an idle agent worker with the matching role
-        const idleWorker = [...this.workers.values()].find(
-          (w) =>
-            w.role === task.requiredRole &&
-            blackboard.getActiveAgents().find((a) => a.agentId === w.agentId)?.status === 'idle',
-        );
-
-        if (idleWorker) {
-          // Claim the task
-          const claimRes = taskGraph.claimTask(task.taskId, idleWorker.agentId);
-          if (claimRes.ok) {
-            const startRes = taskGraph.startTask(task.taskId);
-            if (startRes.ok) {
-              const promise = (async () => {
-                try {
-                  const result = await idleWorker.executeTask(startRes.value, (act) => {
-                    onActivity?.(idleWorker.role, act);
-                  });
-                  blackboard.completeTask(task.taskId, result);
-                  if (task.taskId === reportTaskId) {
-                    reporterOutput = result;
-                  }
-                } catch (error) {
-                  process.stderr.write(`[SwarmCoordinator] Task ${task.taskId} failed: ${error}\n`);
-                  taskGraph.failTask(task.taskId, error instanceof Error ? error.message : String(error));
-                } finally {
-                  activeTasks.delete(task.taskId);
-                }
-              })();
-              activeTasks.set(task.taskId, promise);
-            }
-          }
-        }
-      }
-
-      // If no tasks are running and there are no claimable tasks, break.
-      if (activeTasks.size === 0 && claimable.length === 0) {
-        const hasUnfinished = allTasks.some((t) => t.status === 'blocked' || t.status === 'pending');
-        if (hasUnfinished) {
-          process.stderr.write('[SwarmCoordinator] Swarm stalled. Deadlock or dependency issues.\n');
-          break;
-        }
-
-        break;
-      }
-
-      // Save Blackboard snapshot
-      await blackboard.saveSnapshot();
-
-      // Wait a bit
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 100);
-      });
-    }
-
-    // 5. Cleanup workers
-    for (const worker of this.workers.values()) {
-      worker.terminate();
-    }
-
-    // Save final blackboard snapshot
-    await blackboard.saveSnapshot();
+    // 4. Extract the final report from the reporter task result.
+    const finalBlackboard = (finalState as { blackboard?: BlackboardState }).blackboard ?? {
+      tasks: [],
+    };
+    const reportTask = finalBlackboard.tasks.find((t) => t.taskType === 'report');
+    const reporterOutput = typeof reportTask?.result === 'string' ? reportTask.result : '';
 
     return reporterOutput || 'No report generated by reporting worker.';
   }
 
-  getBlackboard(): Blackboard | null {
+  findIdleWorker(role: AgentRole, blackboard: Blackboard, excludedWorkers?: Set<string>): AgentWorker | undefined {
+    return [...this.workers.values()].find((w) => {
+      if (excludedWorkers?.has(w.agentId)) return false;
+      const active = blackboard.getActiveAgents().find((a) => a.agentId === w.agentId);
+      return w.role === role && active?.status === 'idle';
+    });
+  }
+
+  getBlackboard(): Blackboard {
+    if (!this.blackboard) {
+      throw new Error('Blackboard has not been initialized');
+    }
+
     return this.blackboard;
+  }
+
+  getConfig(): ShadowConfig {
+    return this.config;
+  }
+
+  getModel(): LanguageModel {
+    return this.model;
+  }
+
+  getOnActivity(): SwarmCoordinatorRuntime['onActivity'] | undefined {
+    return this.onActivity;
+  }
+
+  getUserMessage(): string {
+    return this.userMessage;
+  }
+
+  isPatchEnabled(): boolean {
+    return this.config.swarm?.roles?.includes('patch-engineer') ?? false;
+  }
+
+  registerWorker(agentId: string, worker: AgentWorker): void {
+    this.workers.set(agentId, worker);
+  }
+
+  terminateAllWorkers(): void {
+    for (const worker of this.workers.values()) {
+      worker.terminate();
+    }
   }
 }

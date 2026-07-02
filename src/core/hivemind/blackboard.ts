@@ -10,6 +10,7 @@ import type { EventStore } from '../memory/event-store.js';
 import type { KnowledgeGraph } from '../memory/knowledge-graph.js';
 
 import { err, ok, type Result, safeParseJson } from '../schema/base.js';
+import { ConsensusManager } from './consensus.js';
 import {
   type AgentRegistration,
   agentRegistrationSchema,
@@ -28,6 +29,7 @@ import {
 import { TaskGraph } from './task-graph.js';
 
 export interface BlackboardOptions {
+  consensusManager?: ConsensusManager;
   eventStore?: EventStore;
   heartbeatTimeout?: number; // ms before agent considered offline
   knowledgeGraph?: KnowledgeGraph;
@@ -50,6 +52,7 @@ export class Blackboard {
   private claimVerifiedListeners: Set<ClaimListener> = new Set();
   private conflictCreatedListeners: Set<ConflictListener> = new Set();
   private conflicts: Map<string, ConflictMarker> = new Map();
+  private readonly consensusManager: ConsensusManager;
   private readonly eventStore?: EventStore;
   private readonly heartbeatTimeout: number;
   private readonly knowledgeGraph?: KnowledgeGraph;
@@ -67,6 +70,7 @@ export class Blackboard {
     this.taskGraph = new TaskGraph();
     this.eventStore = options.eventStore;
     this.knowledgeGraph = options.knowledgeGraph;
+    this.consensusManager = options.consensusManager ?? new ConsensusManager();
   }
 
   /**
@@ -139,6 +143,16 @@ export class Blackboard {
 
     this.claims.set(claimId, updated);
 
+    // Cast a rejection vote on the consensus proposal for this claim,
+    // including evidence hash and trust score for epistemic gating.
+    const proposal = this.consensusManager.getActiveProposals().find((p) => p.topic === claimId);
+    if (proposal) {
+      this.consensusManager.vote(proposal.consensusId, contestingAgentId, 'reject', {
+        evidenceHash: updated.evidenceHash,
+        trustScore: updated.trustScore,
+      });
+    }
+
     // Create conflict marker
     this.createConflict('contradictory_evidence', [claim.agentId, contestingAgentId], {
       claimId,
@@ -199,6 +213,20 @@ export class Blackboard {
   }
 
   /**
+   * Get all claims.
+   */
+  getAllClaims(): EvidenceClaim[] {
+    return [...this.claims.values()];
+  }
+
+  /**
+   * Get all conflicts.
+   */
+  getAllConflicts(): ConflictMarker[] {
+    return [...this.conflicts.values()];
+  }
+
+  /**
    * Get claims filtered by minimum trust score.
    */
   getClaimsByMinTrust(minTrustScore: number): EvidenceClaim[] {
@@ -227,6 +255,17 @@ export class Blackboard {
   }
 
   /**
+   * Get the run ID.
+   */
+  getRunId(): string {
+    return this.runId;
+  }
+
+  // ==========================================================================
+  // Evidence Claims
+  // ==========================================================================
+
+  /**
    * Get claims with skepticism annotations for cross-tier consumption.
    *
    * When a premium-tier agent reads claims from a lower-tier agent,
@@ -247,10 +286,6 @@ export class Blackboard {
       return { ...claim };
     });
   }
-
-  // ==========================================================================
-  // Evidence Claims
-  // ==========================================================================
 
   /**
    * Get the task graph.
@@ -372,7 +407,7 @@ export class Blackboard {
       agents: [...this.agents.values()],
       claims: [...this.claims.values()],
       conflicts: [...this.conflicts.values()],
-      consensusRecords: [], // Persisted via dedicated consensus manager flow.
+      consensusRecords: this.consensusManager.exportRecords(),
       runId: this.runId,
       schemaVersion: '1.0.0',
       snapshotAt: new Date().toISOString(),
@@ -396,7 +431,7 @@ export class Blackboard {
     agentId: string,
     claimType: string,
     data: Record<string, unknown>,
-    options: { confidence?: number; entityId?: string; linkedEntityIds?: string[]; modelTier?: ModelTier; trustScore?: number } = {},
+    options: { confidence?: number; entityId?: string; linkedEntityIds?: string[]; linkedEventIds?: string[]; modelTier?: ModelTier; trustScore?: number } = {},
   ): Promise<Result<EvidenceClaim, string>> {
     const agent = this.agents.get(agentId);
     if (!agent) {
@@ -430,7 +465,7 @@ export class Blackboard {
 
     return this.enqueueWrite(async () => {
       // Persist an event so the claim has an audit trail.
-      let linkedEventIds: string[] = [];
+      const linkedEventIds: string[] = [...(options.linkedEventIds ?? [])];
       if (this.eventStore) {
         const eventResult = await this.eventStore.append('finding_created', {
           agentId,
@@ -440,7 +475,7 @@ export class Blackboard {
           linkedEntityIds,
         });
         if (eventResult.ok) {
-          linkedEventIds = [eventResult.value.eventId];
+          linkedEventIds.push(eventResult.value.eventId);
         }
       }
 
@@ -458,6 +493,12 @@ export class Blackboard {
       }
 
       this.claims.set(claimId, claim);
+
+      // Trigger consensus review of this claim.
+      this.consensusManager.createProposal(agentId, claimId, `Claim ${claimId} of type ${claimType}`, {
+        quorum: 2,
+        timeout: 60_000,
+      });
 
       // Notify listeners
       for (const listener of this.claimSubmittedListeners) {
@@ -521,6 +562,16 @@ export class Blackboard {
     };
 
     this.claims.set(claimId, updated);
+
+    // Cast an approval vote on the consensus proposal for this claim,
+    // including evidence hash and trust score for epistemic gating.
+    const proposal = this.consensusManager.getActiveProposals().find((p) => p.topic === claimId);
+    if (proposal) {
+      this.consensusManager.vote(proposal.consensusId, verifyingAgentId, 'approve', {
+        evidenceHash: updated.evidenceHash,
+        trustScore: updated.trustScore,
+      });
+    }
 
     // Notify listeners
     for (const listener of this.claimVerifiedListeners) {
@@ -629,6 +680,9 @@ export class Blackboard {
 
       // Restore tasks
       this.taskGraph.importTasks(state.tasks);
+
+      // Restore consensus records
+      this.consensusManager.importRecords(state.consensusRecords);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return;

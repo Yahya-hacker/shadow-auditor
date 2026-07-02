@@ -1,17 +1,19 @@
 import { z } from 'zod';
 
 import { type Blackboard } from './blackboard.js';
+import { EvidenceTracker } from './evidence-tracker.js';
 import { type ModelTier } from './hivemind-schema.js';
 
 export interface BlackboardToolsOptions {
   agentId: string;
   blackboard: Blackboard;
+  evidenceTracker?: EvidenceTracker;
   modelTier?: ModelTier;
   trustScore?: number;
 }
 
 export function createBlackboardTools(options: BlackboardToolsOptions) {
-  const { agentId, blackboard, modelTier, trustScore } = options;
+  const { agentId, blackboard, evidenceTracker, modelTier, trustScore } = options;
   const submitClaimInputSchema = z.object({
     claimType: z.enum([
       'vulnerability_candidate',
@@ -83,13 +85,23 @@ export function createBlackboardTools(options: BlackboardToolsOptions) {
       description:
         'Submit an evidence claim to the shared blackboard for other agents to see and verify. Use this to share findings, traces, or discoveries.',
       async execute({ claimType, confidence, data, entityId }: z.infer<typeof submitClaimInputSchema>) {
+        const linkedEventIds = evidenceTracker?.getLinkedEventIds() ?? [];
+        const linkedEntityIds = [
+          ...(entityId ? [entityId] : []),
+          ...(evidenceTracker?.getLinkedEntityIds() ?? []),
+        ];
+
         const result = await blackboard.submitClaim(agentId, claimType, data, {
           confidence,
           entityId,
+          linkedEntityIds,
+          linkedEventIds,
           modelTier,
           trustScore,
         });
         if (result.ok) {
+          evidenceTracker?.addEvents(result.value.linkedEventIds);
+          evidenceTracker?.addEntity(result.value.claimId);
           return `Claim submitted successfully. Claim ID: ${result.value.claimId}`;
         }
 

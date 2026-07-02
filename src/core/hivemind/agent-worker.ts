@@ -7,6 +7,7 @@ import { type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 import { streamWithContinuation } from '../session.js';
 import { createBlackboardTools } from './blackboard-tools.js';
 import { type Blackboard } from './blackboard.js';
+import { EvidenceTracker } from './evidence-tracker.js';
 import { type AgentRole, type ModelTier, type Task } from './hivemind-schema.js';
 import { buildWorkerSystemPrompt } from './worker-prompts.js';
 import { createRoleToolSet } from './worker-toolsets.js';
@@ -37,6 +38,7 @@ export class AgentWorker {
   private readonly blackboard: Blackboard;
   private readonly cleanupCallbacks: (() => void)[] = [];
   private readonly diffScopeHint: string;
+  private readonly evidenceTracker: EvidenceTracker;
   private heartbeatInterval?: ReturnType<typeof setInterval>;
   private isTerminated = false;
   private readonly maxOutputTokens: number;
@@ -53,10 +55,12 @@ export class AgentWorker {
     this.blackboard = options.blackboard;
     this.modelTier = options.modelTier ?? 'standard';
     this.trustScore = options.trustScore ?? 0.7;
+    this.evidenceTracker = new EvidenceTracker();
     const roleTools = createRoleToolSet(options.role, options.allTools);
     const blackboardTools = createBlackboardTools({
       agentId: this.agentId,
       blackboard: this.blackboard,
+      evidenceTracker: this.evidenceTracker,
       modelTier: this.modelTier,
       trustScore: this.trustScore,
     });
@@ -104,6 +108,10 @@ export class AgentWorker {
 
     // Heartbeat to Blackboard
     this.blackboard.heartbeat(this.agentId, 'busy');
+
+    // Reset evidence tracking for this task.
+    this.evidenceTracker.reset();
+    this.extractEvidenceFromTask(task);
 
     const userPrompt = `### TASK TO EXECUTE:
 Task ID: ${task.taskId}
@@ -168,5 +176,30 @@ Collaborate with the swarm. Inspect the blackboard if necessary, perform your ta
     }
 
     this.blackboard.heartbeat(this.agentId, 'offline');
+  }
+
+  /**
+   * Extract canonical IDs from task parameters and record them as evidence.
+   */
+  private extractEvidenceFromTask(task: Task): void {
+    const scan = (value: unknown): void => {
+      if (typeof value === 'string') {
+        // Match canonical IDs like ent_abc123, claim_..., task_...
+        const matches = value.match(/\b[a-z]+_[a-f0-9]{8,64}\b/g);
+        if (matches) {
+          this.evidenceTracker.addEntities(matches);
+        }
+      } else if (Array.isArray(value)) {
+        for (const item of value) {
+          scan(item);
+        }
+      } else if (value && typeof value === 'object') {
+        for (const nested of Object.values(value)) {
+          scan(nested);
+        }
+      }
+    };
+
+    scan(task.parameters);
   }
 }
