@@ -19,7 +19,7 @@ import {
   resolveWorkerTier,
   type SwarmModelOverrides,
 } from './swarm-model-router.js';
-import { buildSwarmSupervisor, type SwarmCoordinatorRuntime } from './swarm-supervisor.js';
+import { buildSwarmSupervisor, type SwarmActivity, type SwarmCoordinatorRuntime } from './swarm-supervisor.js';
 
 export interface SwarmCoordinatorOptions {
   allTools: ToolSet;
@@ -42,10 +42,7 @@ export class SwarmCoordinator implements SwarmCoordinatorRuntime {
   public readonly config: ShadowConfig;
   public readonly diffScopeHint: string;
   public readonly model: LanguageModel;
-  onActivity?: (
-    workerRole: AgentRole,
-    activity: { kind: string; message: string; toolName?: string },
-  ) => void;
+  onActivity?: (workerRole: AgentRole, activity: SwarmActivity) => void;
   public readonly runId: string;
 public readonly storagePath: string;
   private blackboard: Blackboard | null = null;
@@ -87,10 +84,7 @@ private readonly workers: Map<string, AgentWorker> = new Map();
 
   async executeMission(
     userMessage: string,
-    onActivity?: (
-      workerRole: AgentRole,
-      activity: { kind: string; message: string; toolName?: string },
-    ) => void,
+    onActivity?: (workerRole: AgentRole, activity: SwarmActivity) => void,
   ): Promise<string> {
     this.userMessage = userMessage;
     this.onActivity = onActivity;
@@ -139,6 +133,18 @@ private readonly workers: Map<string, AgentWorker> = new Map();
       const active = blackboard.getActiveAgents().find((a) => a.agentId === w.agentId);
       return w.role === role && active?.status === 'idle';
     });
+  }
+
+  /**
+   * Look up a live worker by its agent ID.
+   *
+   * Used by the supervisor's per-task `executeTask` graph node to resolve the
+   * worker that claimed a task. Returns undefined when the worker has not been
+   * (re-)created — e.g. immediately after a fresh-process resume before
+   * `spawnWorkers` reconciliation has run.
+   */
+  findWorkerByAgentId(agentId: string): AgentWorker | undefined {
+    return this.workers.get(agentId);
   }
 
   getBlackboard(): Blackboard {

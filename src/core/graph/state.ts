@@ -46,6 +46,10 @@ function mergeById<T extends Record<string, unknown>>(
 
 /* eslint-disable new-cap */
 export const AgentState = Annotation.Root({
+  agentId: Annotation<string>({
+    default: () => '',
+    reducer: (_state, update) => update,
+  }),
   blackboard: Annotation<BlackboardState>({
     default: () => ({
       agents: [],
@@ -78,6 +82,15 @@ export const AgentState = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
     default: () => [],
     reducer: messagesStateReducer,
+  }),
+  // Transient per-task routing fields populated by Send() fan-out from the
+  // swarm supervisor's `dispatch` conditional edge. Each parallel
+  // `executeTask` node instance receives the (taskId, agentId) pair it should
+  // run. They are not meaningful across supersteps and are undefined on the
+  // main agent workflow graph.
+  taskId: Annotation<string>({
+    default: () => '',
+    reducer: (_state, update) => update,
   }),
 });
 /* eslint-enable new-cap */

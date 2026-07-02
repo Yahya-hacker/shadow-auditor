@@ -114,8 +114,31 @@ describe('SwarmCoordinator', () => {
       throw new Error('Claim submission failed');
     }
 
+    // The evidence chain must be cryptographically linked: every submitted
+    // claim carries a non-empty sha256 evidenceHash binding it to its lineage.
+    expect(claimRes.value.evidenceHash.length).to.be.greaterThan(
+      0,
+      'evidenceHash must be cryptographically linked to the claim lineage',
+    );
+    // submitClaim must trigger a consensus proposal that is recoverable from
+    // the blackboard (and therefore from checkpointed graph state).
+    expect(blackboard.getConsensusRecords().length).to.be.greaterThan(
+      0,
+      'submitClaim must create a consensus proposal',
+    );
+
     const verifyRes = blackboard.verifyClaim(claimRes.value.claimId, reg2.value.agentId);
     expect(verifyRes.ok).to.be.true;
     expect(claimVerified).to.be.true;
+
+    // verifyClaim must cast an evidence-bearing approval vote on the proposal.
+    const proposal = blackboard
+      .getConsensusRecords()
+      .find((r) => r.topic === claimRes.value.claimId);
+    expect(proposal, 'consensus proposal for the claim must exist').to.exist;
+    if (proposal) {
+      expect(proposal.votes.length).to.be.greaterThan(0, 'verifyClaim must record a vote');
+      expect(proposal.votes[0].evidenceHash).to.equal(claimRes.value.evidenceHash);
+    }
   });
 });

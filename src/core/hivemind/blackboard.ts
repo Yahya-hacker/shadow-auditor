@@ -20,6 +20,7 @@ import {
   type ConflictMarker,
   conflictMarkerSchema,
   type ConflictType,
+  type ConsensusRecord,
   type EvidenceClaim,
   evidenceClaimSchema,
   type EvidenceClaimStatus,
@@ -195,6 +196,17 @@ export class Blackboard {
   }
 
   /**
+   * Close expired consensus proposals and return the records that timed out.
+   *
+   * The supervisor calls this each consensus-evaluation superstep so proposals
+   * do not linger in 'voting' forever — without it, `checkTimeouts` is never
+   * invoked and consensus state never transitions to 'timeout'/'failed'.
+   */
+  expireConsensusProposals(): ConsensusRecord[] {
+    return this.consensusManager.checkTimeouts();
+  }
+
+  /**
    * Get all active agents.
    */
   getActiveAgents(): AgentRegistration[] {
@@ -248,10 +260,35 @@ export class Blackboard {
   }
 
   /**
+   * Get all consensus records (proposals and their votes).
+   *
+   * Delegates to the consensus manager so the supervisor can flow consensus
+   * state into the checkpointed LangGraph blackboard channel — without this,
+   * proposals and votes are only persisted to the JSON snapshot and are lost
+   * from graph checkpoints.
+   */
+  getConsensusRecords(): ConsensusRecord[] {
+    return this.consensusManager.exportRecords();
+  }
+
+  /**
    * Get open conflicts.
    */
   getOpenConflicts(): ConflictMarker[] {
     return [...this.conflicts.values()].filter((c) => c.status === 'open' || c.status === 'resolving');
+  }
+
+  /**
+   * Get every registered agent, regardless of heartbeat freshness.
+   *
+   * Unlike `getActiveAgents`, this does not filter by heartbeat. It is
+   * used by the supervisor to reconcile in-memory workers against persisted
+   * agent registrations when resuming a run from a checkpoint — a crashed
+   * process has stale heartbeats but the agent identities must still map to
+   * live workers for task dispatch to resume.
+   */
+  getRegisteredAgents(): AgentRegistration[] {
+    return [...this.agents.values()];
   }
 
   /**

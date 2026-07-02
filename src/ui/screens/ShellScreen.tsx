@@ -1,15 +1,143 @@
-import { Box, useApp } from 'ink';
+import { Box, useApp, useInput } from 'ink';
 import React, { useState } from 'react';
 
 import { useAgentSessionRef } from '../AgentSessionContext.js';
 import { ActivityPanel } from '../components/ActivityPanel.js';
 import { ChatArea } from '../components/ChatArea.js';
 import { Header } from '../components/Header.js';
+import { HelpOverlay } from '../components/HelpOverlay.js';
 import { InputArea } from '../components/InputArea.js';
 import { StatusLine } from '../components/StatusLine.js';
 import { StreamingResponse } from '../components/StreamingResponse.js';
+import { SwarmPanel } from '../components/SwarmPanel.js';
 import { Layout, Panel } from '../layout/Layout.js';
-import { useAppStore } from '../store/appStore.js';
+import { type AppState, useAppStore } from '../store/appStore.js';
+
+interface KeyLike {
+  downArrow: boolean;
+  escape: boolean;
+  return: boolean;
+  tab: boolean;
+  upArrow: boolean;
+}
+
+interface KeyActions {
+  setFocus: (focus: 'input' | 'panel') => void;
+  setInput: (input: string) => void;
+  setScrollOffset: (offset: number) => void;
+  setSearchActive: (active: boolean) => void;
+  toggleHelp: () => void;
+  togglePanel: () => void;
+}
+
+/** Key handling while the swarm panel is focused (message TextInput unmounted). */
+function handlePanelFocusKey(char: string, key: KeyLike, state: AppState, actions: KeyActions): void {
+  if (key.upArrow) {
+    actions.setScrollOffset(state.scrollOffset + 1);
+    return;
+  }
+
+  if (key.downArrow) {
+    actions.setScrollOffset(Math.max(0, state.scrollOffset - 1));
+    return;
+  }
+
+  if (key.escape) {
+    actions.setFocus('input');
+    return;
+  }
+
+  if (key.tab || char === 'i') {
+    actions.setFocus('input');
+    return;
+  }
+
+  switch (char) {
+    case '/': {
+      actions.setSearchActive(true);
+      break;
+    }
+
+    case '?': {
+      actions.toggleHelp();
+      break;
+    }
+
+    case 'G': {
+      actions.setScrollOffset(0);
+      break;
+    }
+
+    case 'g': {
+      actions.setScrollOffset(Number.MAX_SAFE_INTEGER);
+      break;
+    }
+
+    case 'j': {
+      actions.setScrollOffset(Math.max(0, state.scrollOffset - 1));
+      break;
+    }
+
+    case 'k': {
+      actions.setScrollOffset(state.scrollOffset + 1);
+      break;
+    }
+
+    case 'P': {
+      actions.togglePanel();
+      break;
+    }
+  }
+}
+
+/** Key handling while the input is focused (TextInput capturing typing). */
+function handleInputFocusKey(char: string, key: KeyLike, state: AppState, actions: KeyActions): void {
+  if (key.upArrow) {
+    actions.setScrollOffset(state.scrollOffset + 1);
+    return;
+  }
+
+  if (key.downArrow) {
+    actions.setScrollOffset(Math.max(0, state.scrollOffset - 1));
+    return;
+  }
+
+  if (key.tab && state.panelOpen) {
+    actions.setFocus('panel');
+    return;
+  }
+
+  // Command keys only fire on an empty input to avoid clashing with typing.
+  if (state.input.length > 0) return;
+
+  switch (char) {
+    case '/': {
+      actions.setInput('');
+      actions.setSearchActive(true);
+      break;
+    }
+
+    case '?': {
+      actions.toggleHelp();
+      break;
+    }
+
+    case 'G': {
+      actions.setScrollOffset(0);
+      break;
+    }
+
+    case 'g': {
+      actions.setScrollOffset(Number.MAX_SAFE_INTEGER);
+      break;
+    }
+
+    case 'P': {
+      actions.togglePanel();
+      break;
+    }
+  }
+}
 
 function useHandleSubmit(
   setIsProcessing: (value: boolean) => void,
@@ -72,13 +200,55 @@ export const ShellScreen: React.FC = () => {
   const isStreaming = useAppStore((state) => state.streaming);
   const streamingText = useAppStore((state) => state.streamingText);
   const activity = useAppStore((state) => state.activity);
+  const panelOpen = useAppStore((state) => state.panelOpen);
+  const helpOpen = useAppStore((state) => state.helpOpen);
   const [isProcessing, setIsProcessing] = useState(false);
   const { exit } = useApp();
 
   const handleSubmit = useHandleSubmit(setIsProcessing, exit);
 
+  // Stable action references; state values are read fresh via getState() to
+  // avoid stale closures inside the global key handler.
+  const actions: KeyActions = {
+    setFocus: useAppStore((state) => state.setFocus),
+    setInput: useAppStore((state) => state.setInput),
+    setScrollOffset: useAppStore((state) => state.setScrollOffset),
+    setSearchActive: useAppStore((state) => state.setSearchActive),
+    toggleHelp: useAppStore((state) => state.toggleHelp),
+    togglePanel: useAppStore((state) => state.togglePanel),
+  };
+
+  useInput((char, key) => {
+    const state = useAppStore.getState();
+    const keyArg: KeyLike = {
+      downArrow: key.downArrow,
+      escape: key.escape,
+      return: key.return,
+      tab: key.tab,
+      upArrow: key.upArrow,
+    };
+
+    // Help overlay is a focus trap: only `?` / Esc close it.
+    if (state.helpOpen) {
+      if (keyArg.escape || char === '?') actions.toggleHelp();
+      return;
+    }
+
+    // Search mode: Esc clears; the search TextInput handles typing.
+    if (state.searchActive) {
+      if (keyArg.escape) actions.setSearchActive(false);
+      return;
+    }
+
+    if (state.focus === 'panel') {
+      handlePanelFocusKey(char, keyArg, state, actions);
+    } else {
+      handleInputFocusKey(char, keyArg, state, actions);
+    }
+  });
+
   return (
-    <Layout>
+    <Layout rightPanel={panelOpen}>
       {(rect) => (
         <Box
           flexDirection="column"
@@ -93,13 +263,26 @@ export const ShellScreen: React.FC = () => {
               targetName={targetPath}
             />
           </Panel>
-          <Panel rect={rect.body}>
-            <Box flexDirection="column" height={rect.body.height}>
-              <ChatArea />
-              {isStreaming && <StreamingResponse text={streamingText} />}
-              {activity.length > 0 && <ActivityPanel />}
-            </Box>
-          </Panel>
+          <Box flexDirection="row" height={rect.body.height}>
+            <Panel rect={rect.body}>
+              <Box flexDirection="column" height={rect.body.height}>
+                {helpOpen ? (
+                  <HelpOverlay />
+                ) : (
+                  <>
+                    <ChatArea height={rect.body.height} />
+                    {isStreaming && <StreamingResponse text={streamingText} />}
+                    {activity.length > 0 && <ActivityPanel />}
+                  </>
+                )}
+              </Box>
+            </Panel>
+            {rect.swarm.width > 0 && (
+              <Panel rect={rect.swarm}>
+                <SwarmPanel />
+              </Panel>
+            )}
+          </Box>
           <Panel rect={rect.status}>
             <StatusLine />
           </Panel>

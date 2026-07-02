@@ -15,6 +15,7 @@ import { type ShadowConfig } from '../utils/config.js';
 import { getEmbeddingDefaults, getProviderBaseUrl, normalizeProviderName } from '../utils/provider-catalog.js';
 import { compileWorkflow } from './graph/workflow.js';
 import { SwarmCoordinator } from './hivemind/swarm-coordinator.js';
+import { type SwarmStateSnapshot } from './hivemind/swarm-supervisor.js';
 import { createChromeDevtoolsAdapter } from './mcp/adapters/chrome-devtools.js';
 import { createKaliLinuxAdapter } from './mcp/adapters/kali-linux.js';
 import { MCPManager } from './mcp/manager.js';
@@ -54,8 +55,9 @@ export interface AgentSessionOptions {
 }
 
 export interface AgentStreamEvent {
-  kind: 'status' | StreamActivity['kind'];
+  kind: 'status' | 'swarm_state' | StreamActivity['kind'];
   message: string;
+  swarmState?: SwarmStateSnapshot;
   timestamp: string;
   toolCallId?: string;
   toolName?: string;
@@ -727,6 +729,16 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       const result = await this.swarmCoordinator!.executeMission(
         userMessage,
         (workerRole, activity) => {
+          if (activity.kind === 'swarm_state' && activity.swarmState) {
+            // Structured swarm snapshot for the live panel / status bar.
+            emitEvent({
+              kind: 'swarm_state',
+              message: activity.message,
+              swarmState: activity.swarmState,
+            });
+            return;
+          }
+
           emitEvent({
             kind: activity.kind === 'tool_call' ? 'tool_call' : activity.kind === 'tool_result' ? 'tool_result' : 'status',
             message: `[${workerRole}] ${activity.message}`,

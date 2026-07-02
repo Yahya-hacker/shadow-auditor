@@ -1,29 +1,130 @@
 import chalk from 'chalk';
 
 /**
- * Premium terminal color theme using Chalk.
+ * Shadow Auditor — Enterprise TUI Theme.
  *
- * Ink components should use the semantic `colors` object (ink-compatible names).
- * Raw strings / borders / spinners should use the `chalkTheme` helpers below.
+ * Design follows the TUI design system: color encodes meaning (not
+ * decoration), and the interface degrades gracefully across terminal color
+ * tiers. Every semantic slot is a truecolor hex value; Ink and chalk
+ * downsample it to the terminal's capability based on `chalk.level` (set in
+ * {@link initTheme}). A dark palette ships by default with a light variant.
+ *
+ * Accessibility: `NO_COLOR` disables all color; symbols, typography, and
+ * layout carry the hierarchy independently, so the UI remains usable in
+ * monochrome.
  */
 
+export type ColorTier = 0 | 1 | 2 | 3; // 0=none, 1=16 ANSI, 2=256, 3=truecolor
+export type ThemeMode = 'dark' | 'light';
+
+/**
+ * Semantic color slots. Components reference these indirectly via the
+ * `colors` object (which maps legacy UI keys to these slots), so palettes can
+ * be swapped without touching component code.
+ */
+export interface ThemePalette {
+  accentPrimary: string;
+  accentSecondary: string;
+  borderBase: string;
+  fgDefault: string;
+  fgDim: string;
+  fgEmphasis: string;
+  fgMuted: string;
+  statusError: string;
+  statusInfo: string;
+  statusSuccess: string;
+  statusWarning: string;
+}
+
+const DARK_PALETTE: ThemePalette = {
+  accentPrimary: '#7aa2f7',
+  accentSecondary: '#bb9af7',
+  borderBase: '#565f89',
+  fgDefault: '#c0caf5',
+  fgDim: '#414868',
+  fgEmphasis: '#e0e0e0',
+  fgMuted: '#565f89',
+  statusError: '#f7768e',
+  statusInfo: '#7dcfff',
+  statusSuccess: '#9ece6a',
+  statusWarning: '#e0af68',
+};
+
+const LIGHT_PALETTE: ThemePalette = {
+  accentPrimary: '#0969da',
+  accentSecondary: '#8250df',
+  borderBase: '#afb8c1',
+  fgDefault: '#24292f',
+  fgDim: '#8c959f',
+  fgEmphasis: '#1f2328',
+  fgMuted: '#636c76',
+  statusError: '#cf222e',
+  statusInfo: '#0969da',
+  statusSuccess: '#1a7f37',
+  statusWarning: '#9a6700',
+};
+
+/**
+ * Detect the terminal's color tier from the environment.
+ *
+ * Order: `NO_COLOR` → none; `COLORTERM` truecolor/24bit → truecolor;
+ * `TERM` containing `256color` → 256; otherwise 16 ANSI.
+ */
+export function detectColorTier(): ColorTier {
+  if (process.env.NO_COLOR) return 0;
+  const colorterm = process.env.COLORTERM ?? '';
+  if (colorterm === 'truecolor' || colorterm === '24bit') return 3;
+  const term = process.env.TERM ?? '';
+  if (term.includes('256color')) return 2;
+  return 1;
+}
+
+/**
+ * Detect dark vs light terminal background.
+ *
+ * `COLORFGBG` is "fg:bg" (set by some terminals); a background value < 7
+ * indicates a dark background. The `SHADOW_THEME` env var overrides this for
+ * manual control/testing. Defaults to dark.
+ */
+export function detectThemeMode(): ThemeMode {
+  const override = process.env.SHADOW_THEME?.toLowerCase();
+  if (override === 'light' || override === 'dark') return override;
+  const colorfgbg = process.env.COLORFGBG ?? '';
+  if (colorfgbg) {
+    const bg = Number(colorfgbg.split(':')[1]);
+    if (!Number.isNaN(bg)) return bg < 7 ? 'dark' : 'light';
+  }
+
+  return 'dark';
+}
+
+export const colorTier: ColorTier = detectColorTier();
+export const themeMode: ThemeMode = detectThemeMode();
+
+const activePalette: ThemePalette = themeMode === 'light' ? LIGHT_PALETTE : DARK_PALETTE;
+
+/**
+ * Ink-compatible color values (hex strings) mapped to the legacy UI key names
+ * the components already import. Tier downsampling happens at render via
+ * `chalk.level`.
+ */
 export const colors = {
-  agent: 'cyan',
-  border: 'magenta',
-  borderError: 'red',
-  borderSecondary: 'blue',
-  borderWarning: 'yellow',
-  brand: 'magenta',
-  bright: '#ffffff',
-  dim: '#666666',
-  error: 'red',
-  info: 'blue',
-  muted: '#888888',
-  pending: 'yellow',
-  success: 'green',
-  system: 'blue',
-  user: 'green',
-  warning: 'yellow',
+  agent: activePalette.statusInfo,
+  border: activePalette.borderBase,
+  borderError: activePalette.statusError,
+  borderSecondary: activePalette.accentSecondary,
+  borderWarning: activePalette.statusWarning,
+  brand: activePalette.accentPrimary,
+  bright: activePalette.fgEmphasis,
+  dim: activePalette.fgDim,
+  error: activePalette.statusError,
+  info: activePalette.statusInfo,
+  muted: activePalette.fgMuted,
+  pending: activePalette.statusWarning,
+  success: activePalette.statusSuccess,
+  system: activePalette.accentPrimary,
+  user: activePalette.statusSuccess,
+  warning: activePalette.statusWarning,
 } as const;
 
 export const labels = {
@@ -50,27 +151,42 @@ export const rolePrefix = {
   user: '❯',
 } as const;
 
+/**
+ * Raw chalk helpers bound to the active palette. Used for non-Ink output
+ * (stderr, logs). Ink components should use the `colors` object instead.
+ */
 export const chalkTheme = {
-  agent: chalk.cyan,
-  brand: chalk.magenta.bold,
-  dim: chalk.gray,
-  error: chalk.red,
-  errorBold: chalk.red.bold,
-  highlight: chalk.white.bold,
-  muted: chalk.hex('#888888'),
-  pending: chalk.yellow,
-  success: chalk.green,
-  system: chalk.blue,
-  user: chalk.green,
-  warning: chalk.yellow.bold,
+  agent: chalk.hex(activePalette.statusInfo),
+  brand: chalk.hex(activePalette.accentPrimary).bold,
+  dim: chalk.hex(activePalette.fgDim),
+  error: chalk.hex(activePalette.statusError),
+  errorBold: chalk.hex(activePalette.statusError).bold,
+  highlight: chalk.hex(activePalette.fgEmphasis).bold,
+  muted: chalk.hex(activePalette.fgMuted),
+  pending: chalk.hex(activePalette.statusWarning),
+  success: chalk.hex(activePalette.statusSuccess),
+  system: chalk.hex(activePalette.accentPrimary),
+  user: chalk.hex(activePalette.statusSuccess),
+  warning: chalk.hex(activePalette.statusWarning).bold,
 } as const;
 
 export function disableColors(): void {
   chalk.level = 0;
 }
 
+/**
+ * Apply the detected color tier to the shared chalk singleton. Ink imports the
+ * same chalk instance, so this governs `<Text color>` and border downsampling.
+ * Respects `NO_COLOR`. Self-invoked at module load so callers need not
+ * remember to call it.
+ */
 export function initTheme(): void {
   if (process.env.NO_COLOR) {
     disableColors();
+    return;
   }
+
+  chalk.level = colorTier;
 }
+
+initTheme();

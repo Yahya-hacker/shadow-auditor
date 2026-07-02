@@ -1,14 +1,22 @@
 /**
  * Swarm Supervisor - LangGraph-native orchestration of the multi-agent swarm.
  *
- * Replaces the imperative while(true) coordinator loop with a checkpointed
- * StateGraph. The supervisor state is the AgentState blackboard channel, so
- * blackboard snapshots survive process restarts through PersistentCheckpointSaver.
+ * The supervisor is a checkpointed StateGraph. Parallel agent routing is
+ * expressed natively with the `Send` API: a `dispatch` node claims+starts
+ * claimable tasks, then a conditional edge fans out one `Send` per in-progress
+ * task to a parallel `executeTask` node. LangGraph barriers the fan-out
+ * (map-reduce join), so each `executeTask` completion is its own checkpoint
+ * boundary — per-task progress survives process restarts through
+ * PersistentCheckpointSaver, replacing the old imperative Promise.all loop.
+ *
+ * Only serializable blackboard state crosses the checkpoint boundary. Runtime
+ * handles (workers) live on the SwarmCoordinator and are reconciled against
+ * persisted agent registrations on resume (see `spawnWorkers`).
  */
 
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 
-import { END, START, StateGraph } from '@langchain/langgraph';
+import { END, Send, START, StateGraph } from '@langchain/langgraph';
 
 import type { ShadowConfig } from '../../utils/config.js';
 import type { AgentWorker } from './agent-worker.js';
@@ -34,23 +42,40 @@ export interface SwarmSupervisorOptions {
   runId: string;
 }
 
- 
-interface RunningTask {
-  promise: Promise<void>;
-  taskId: string;
-  workerAgentId: string;
-}
-
 // Maximum time a task can remain in_progress before the supervisor resets it.
 const STALE_IN_PROGRESS_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
+ * Compact, serializable snapshot of swarm progress, emitted through the
+ * activity channel for the UI to render a live swarm panel / status bar.
+ */
+export interface SwarmStateSnapshot {
+  agents: Array<{ agentId: string; role: AgentRole; status: string }>;
+  claims: number;
+  consensus: number;
+  runId: string;
+  tasks: Array<{ requiredRole?: string; status: string; taskId: string; taskType: string }>;
+  taskStats: Record<string, number>;
+}
+
+/**
+ * Activity payload the supervisor emits to the coordinator's `onActivity`.
+ * Extends the worker activity shape with an optional structured swarm snapshot
+ * (carried on `swarm_state` events) so the UI can render live swarm state
+ * without parsing a message string.
+ */
+export interface SwarmActivity {
+  kind: string;
+  message: string;
+  swarmState?: SwarmStateSnapshot;
+  toolName?: string;
+}
+
+/**
  * Build the LangGraph supervisor that drives the swarm.
  *
- * The graph owns the lifecycle of the mission: plan, spawn, dispatch, collect,
- * and cleanup. Runtime handles (workers, promises) are held outside the graph
- * in the SwarmCoordinator; only the serializable blackboard state crosses the
- * checkpoint boundary.
+ * The graph owns the lifecycle of the mission: plan, spawn, dispatch,
+ * execute (parallel fan-out), evaluate consensus, and cleanup.
  */
 export function buildSwarmSupervisor(options: {
   blackboard: Blackboard;
@@ -145,51 +170,75 @@ export function buildSwarmSupervisor(options: {
   }
 
   async function spawnWorkers(): Promise<Partial<GraphState>> {
-    // Idempotent: if agents already exist, do not re-spawn.
-    if (blackboard.getActiveAgents().length > 0) {
+    // Reconcile live workers against persisted agent registrations. On a fresh
+    // run there are no registered agents and we spawn one worker per role. On
+    // a resume from checkpoint, registered agents already exist (loaded from
+    // the snapshot) but the in-memory workers Map is empty — we must re-create
+    // a worker for each registered agent so task dispatch can proceed. This is
+    // what makes a crashed run actually continue instead of stalling.
+    const registered = blackboard.getRegisteredAgents();
+
+    if (registered.length === 0) {
+      const rolesToSpawn: AgentRole[] = ['recon', 'taint-tracer', 'exploit-analyst', 'verifier', 'reporter'];
+      if (coordinator.isPatchEnabled()) {
+        rolesToSpawn.push('patch-engineer');
+      }
+
+      for (const role of rolesToSpawn) {
+        const regRes = blackboard.registerAgent(role, ['typescript', 'security']);
+        if (!regRes.ok) throw new Error(regRes.error);
+        await ensureWorkerForAgent(regRes.value.agentId, regRes.value.role);
+      }
+
       return { blackboard: blackboardToState(blackboard) };
     }
 
-    const rolesToSpawn: AgentRole[] = ['recon', 'taint-tracer', 'exploit-analyst', 'verifier', 'reporter'];
-    if (coordinator.isPatchEnabled()) {
-      rolesToSpawn.push('patch-engineer');
-    }
-
-    for (const role of rolesToSpawn) {
-      const regRes = blackboard.registerAgent(role, ['typescript', 'security']);
-      if (!regRes.ok) throw new Error(regRes.error);
-      const agentId = regRes.value.agentId;
-
-      const overrides = coordinator.getConfig().swarm?.modelOverrides as SwarmModelOverrides | undefined;
-      const workerModel = resolveWorkerModel(role, coordinator.getModel(), overrides);
-      const { modelTier, trustScore } = resolveWorkerTier(
-        role,
-        coordinator.getConfig().provider,
-        coordinator.getConfig().model,
-        overrides,
-      );
-
-      const worker = coordinator.createWorker({
-        agentId,
-        model: workerModel,
-        modelTier,
-        role,
-        trustScore,
-      });
-      coordinator.registerWorker(agentId, worker);
+    // Resume path: re-create any missing live workers for existing agents.
+    for (const agent of registered) {
+      if (coordinator.findWorkerByAgentId(agent.agentId)) continue;
+      await ensureWorkerForAgent(agent.agentId, agent.role);
     }
 
     return { blackboard: blackboardToState(blackboard) };
   }
 
-  async function supervise(): Promise<Partial<GraphState>> {
+  /**
+   * Create (or re-create) a worker for an existing agent registration,
+   * resolving its model/tier/trust from config overrides.
+   */
+  async function ensureWorkerForAgent(agentId: string, role: AgentRole): Promise<void> {
+    const overrides = coordinator.getConfig().swarm?.modelOverrides as SwarmModelOverrides | undefined;
+    const workerModel = resolveWorkerModel(role, coordinator.getModel(), overrides);
+    const { modelTier, trustScore } = resolveWorkerTier(
+      role,
+      coordinator.getConfig().provider,
+      coordinator.getConfig().model,
+      overrides,
+    );
+    const worker = coordinator.createWorker({
+      agentId,
+      model: workerModel,
+      modelTier,
+      role,
+      trustScore,
+    });
+    coordinator.registerWorker(agentId, worker);
+  }
+
+  /**
+   * Dispatch node: reset stale in_progress tasks (crash recovery), then claim
+   * and start every claimable task that has an idle worker. The conditional
+   * edge `routeFromDispatch` then fans out one Send per in_progress task.
+   */
+  async function dispatch(): Promise<Partial<GraphState>> {
     const taskGraph = blackboard.getTaskGraph();
     const activeAgents = blackboard.getActiveAgents();
+    const assignedWorkers = new Set<string>();
 
-    // Reset stale in-progress tasks: those whose assigned agents have gone
-    // offline, or those that have been running too long. This makes the
-    // supervisor resilient to process restarts, where in-memory promises were
-    // lost but the blackboard still shows tasks as in_progress.
+    // Release in_progress tasks whose agents have gone offline or run too long.
+    // On resume from a crash, in-memory promises were lost but the blackboard
+    // still shows these as in_progress; releasing them makes them claimable
+    // again so the re-created workers can pick them up.
     for (const task of taskGraph.getTasksByStatus('in_progress')) {
       const agent = activeAgents.find((a) => a.agentId === task.assignedAgent);
       const runningTooLong =
@@ -199,42 +248,70 @@ export function buildSwarmSupervisor(options: {
       }
     }
 
-    const claimable = taskGraph.getClaimableTasks();
-    const dispatched: RunningTask[] = [];
-    const assignedWorkers = new Set<string>();
-
-    for (const task of claimable) {
+    for (const task of taskGraph.getClaimableTasks()) {
       if (!task.requiredRole) continue;
-
       const idleWorker = coordinator.findIdleWorker(task.requiredRole, blackboard, assignedWorkers);
       if (!idleWorker) continue;
-
       const claimRes = taskGraph.claimTask(task.taskId, idleWorker.agentId);
       if (!claimRes.ok) continue;
-
       const startRes = taskGraph.startTask(task.taskId);
       if (!startRes.ok) continue;
-
       assignedWorkers.add(idleWorker.agentId);
-
-      const promise = executeTaskWithWorker(task, idleWorker, blackboard, coordinator.getOnActivity()).catch(
-        (error) => {
-          process.stderr.write(`[SwarmCoordinator] Task ${task.taskId} failed: ${error}\n`);
-          taskGraph.failTask(task.taskId, error instanceof Error ? error.message : String(error));
-        },
-      );
-
-      dispatched.push({ promise, taskId: task.taskId, workerAgentId: idleWorker.agentId });
     }
 
-    if (dispatched.length > 0) {
-      // Wait for the current batch to finish before checkpointing again. The
-      // blackboard state itself is checkpointed after every supervise step.
-      await Promise.all(dispatched.map((d) => d.promise));
-    } else {
-      // No work available yet; yield briefly to avoid busy-spinning.
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 100);
+    return { blackboard: blackboardToState(blackboard) };
+  }
+
+  /**
+   * executeTask node (one per Send): run a single claimed task on its worker.
+   * Each completion is a checkpoint boundary, so per-task progress survives
+   * crashes. Failures are recorded via failTask so dependents/deadlock logic
+   * can react.
+   */
+  async function executeTask(state: GraphState): Promise<Partial<GraphState>> {
+    const { agentId, taskId } = state;
+    const taskGraph = blackboard.getTaskGraph();
+    if (!taskId || !agentId) {
+      return { blackboard: blackboardToState(blackboard) };
+    }
+
+    const task = taskGraph.getTask(taskId);
+    const worker = coordinator.findWorkerByAgentId(agentId);
+    if (!task || !worker) {
+      if (task) {
+        taskGraph.failTask(taskId, `Worker ${agentId} unavailable`);
+      }
+
+      return { blackboard: blackboardToState(blackboard) };
+    }
+
+    try {
+      await executeTaskWithWorker(task, worker, blackboard, coordinator.getOnActivity());
+    } catch (error) {
+      process.stderr.write(`[SwarmCoordinator] Task ${taskId} failed: ${error}\n`);
+      taskGraph.failTask(taskId, error instanceof Error ? error.message : String(error));
+    }
+
+    return { blackboard: blackboardToState(blackboard) };
+  }
+
+  /**
+   * evaluateConsensus node (join): close expired consensus proposals, emit a
+   * swarm-state snapshot for the UI, then route to the next dispatch round or
+   * terminate. Idempotent — safe even if LangGraph invokes it once per joined
+   * fan-out branch.
+   */
+  async function evaluateConsensus(): Promise<Partial<GraphState>> {
+    blackboard.expireConsensusProposals();
+
+    const onActivity = coordinator.getOnActivity();
+    if (onActivity) {
+      const snapshot = buildSwarmStateSnapshot(blackboard);
+      const total = Object.values(snapshot.taskStats).reduce((a, b) => a + b, 0);
+      onActivity('orchestrator', {
+        kind: 'swarm_state',
+        message: `swarm: ${snapshot.taskStats.in_progress ?? 0} active, ${snapshot.taskStats.completed ?? 0}/${total} done, ${snapshot.claims} claims, ${snapshot.consensus} consensus`,
+        swarmState: snapshot,
       });
     }
 
@@ -248,40 +325,74 @@ export function buildSwarmSupervisor(options: {
     return { blackboard: blackboardToState(blackboard) };
   }
 
-  function routeAfterSupervise(state: GraphState): string {
-    const bb = state.blackboard;
-    const allTasks = bb.tasks;
-    const isFinished = allTasks.every(
-      (t) => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled',
-    );
-    if (isFinished) {
-      return 'cleanup';
-    }
-
-    const stalled =
-      allTasks.every((t) => t.status !== 'in_progress') &&
-      allTasks.some((t) => t.status === 'blocked' || t.status === 'pending');
-
-    if (stalled) {
-      process.stderr.write('[SwarmCoordinator] Swarm stalled. Deadlock or dependency issues.\n');
-      return END;
-    }
-
-    return 'supervise';
-  }
-
   const workflow = new StateGraph(AgentState)
     .addNode('planMission', planMission)
     .addNode('spawnWorkers', spawnWorkers)
-    .addNode('supervise', supervise)
+    .addNode('dispatch', dispatch)
+    .addNode('executeTask', executeTask)
+    .addNode('evaluateConsensus', evaluateConsensus)
     .addNode('cleanup', cleanup)
     .addEdge(START, 'planMission')
     .addEdge('planMission', 'spawnWorkers')
-    .addEdge('spawnWorkers', 'supervise')
-    .addConditionalEdges('supervise', routeAfterSupervise)
+    .addEdge('spawnWorkers', 'dispatch')
+    .addConditionalEdges('dispatch', routeFromDispatch)
+    .addEdge('executeTask', 'evaluateConsensus')
+    .addConditionalEdges('evaluateConsensus', routeAfterEvaluate)
     .addEdge('cleanup', END);
 
   return workflow.compile({ checkpointer });
+}
+
+/**
+ * Conditional edge after dispatch: fan out one Send per in_progress task to a
+ * parallel `executeTask` node instance. If nothing is in progress, fall
+ * through to consensus evaluation. LangGraph barriers the fan-out — the join
+ * edge `executeTask -> evaluateConsensus` runs evaluateConsensus once after
+ * all parallel instances complete.
+ */
+function routeFromDispatch(state: GraphState): Array<Send> | string {
+  const inProgress = state.blackboard.tasks.filter(
+    (t) => t.status === 'in_progress' && t.assignedAgent,
+  );
+  if (inProgress.length === 0) {
+    return 'evaluateConsensus';
+  }
+
+  return inProgress.map(
+    (t) => new Send('executeTask', { agentId: t.assignedAgent!, taskId: t.taskId }),
+  );
+}
+
+/**
+ * Conditional edge after consensus evaluation: continue dispatching if there is
+ * in-progress or claimable work; clean up if every task is terminal; otherwise
+ * the swarm is deadlocked and we stop.
+ */
+function routeAfterEvaluate(state: GraphState): string {
+  const tasks = state.blackboard.tasks;
+
+  if (
+    tasks.length > 0 &&
+    tasks.every(
+      (t) => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled',
+    )
+  ) {
+    return 'cleanup';
+  }
+
+  const hasInProgress = tasks.some((t) => t.status === 'in_progress');
+  const hasClaimable = tasks.some(
+    (t) =>
+      t.status === 'pending' &&
+      t.dependencies.every((d) => tasks.find((x) => x.taskId === d)?.status === 'completed'),
+  );
+
+  if (hasInProgress || hasClaimable) {
+    return 'dispatch';
+  }
+
+  process.stderr.write('[SwarmCoordinator] Swarm stalled: deadlock or unresolved dependencies.\n');
+  return END;
 }
 
 async function executeTaskWithWorker(
@@ -302,11 +413,32 @@ function blackboardToState(blackboard: Blackboard): BlackboardState {
     agents: blackboard.getActiveAgents(),
     claims: blackboard.getAllClaims(),
     conflicts: blackboard.getAllConflicts(),
-    consensusRecords: [],
+    consensusRecords: blackboard.getConsensusRecords(),
     runId: blackboard.getRunId(),
     schemaVersion: '1.0.0',
     snapshotAt: new Date().toISOString(),
     tasks: taskGraph.getAllTasks(),
+  };
+}
+
+function buildSwarmStateSnapshot(blackboard: Blackboard): SwarmStateSnapshot {
+  const taskGraph = blackboard.getTaskGraph();
+  return {
+    agents: blackboard.getRegisteredAgents().map((a) => ({
+      agentId: a.agentId,
+      role: a.role,
+      status: a.status,
+    })),
+    claims: blackboard.getAllClaims().length,
+    consensus: blackboard.getConsensusRecords().length,
+    runId: blackboard.getRunId(),
+    tasks: taskGraph.getAllTasks().map((t) => ({
+      requiredRole: t.requiredRole,
+      status: t.status,
+      taskId: t.taskId,
+      taskType: t.taskType,
+    })),
+    taskStats: taskGraph.getStats(),
   };
 }
 
@@ -328,15 +460,13 @@ export interface SwarmCoordinatorRuntime {
   }) => AgentWorker;
   diffScopeHint: string;
   findIdleWorker: (role: AgentRole, blackboard: Blackboard, excludedWorkers?: Set<string>) => AgentWorker | undefined;
+  findWorkerByAgentId: (agentId: string) => AgentWorker | undefined;
   getConfig: () => SwarmCoordinatorOptions['config'];
   getModel: () => SwarmCoordinatorOptions['model'];
   getOnActivity: () => SwarmCoordinatorRuntime['onActivity'] | undefined;
   getUserMessage: () => string;
   isPatchEnabled: () => boolean;
-  onActivity?: (
-    workerRole: AgentRole,
-    activity: { kind: string; message: string; toolName?: string },
-  ) => void;
+  onActivity?: (workerRole: AgentRole, activity: SwarmActivity) => void;
   registerWorker: (agentId: string, worker: AgentWorker) => void;
   terminateAllWorkers: () => void;
 }
