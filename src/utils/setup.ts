@@ -34,6 +34,10 @@ export function getModelPlaceholder(provider: string): string {
       return 'your-model-name';
     }
 
+    case 'deepseek': {
+      return 'deepseek-chat';
+    }
+
     case 'google': {
       return 'gemini-2.5-pro-preview-05-06';
     }
@@ -42,12 +46,28 @@ export function getModelPlaceholder(provider: string): string {
       return 'mistral-large-latest';
     }
 
+    case 'moonshot': {
+      return 'moonshot-v1-8k';
+    }
+
+    case 'nvidia': {
+      return 'meta/llama-3.1-70b-instruct';
+    }
+
     case 'ollama': {
       return 'llama3';
     }
 
     case 'openai': {
       return 'gpt-4o';
+    }
+
+    case 'perplexity': {
+      return 'sonar-pro';
+    }
+
+    case 'qwen': {
+      return 'qwen-plus';
     }
 
     default: {

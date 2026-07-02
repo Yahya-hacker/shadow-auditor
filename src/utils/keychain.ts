@@ -22,10 +22,15 @@ const SERVICE_NAME = 'shadow-auditor';
 const ENV_VAR_MAP: Record<string, string> = {
   anthropic: 'SHADOW_ANTHROPIC_KEY',
   custom: 'SHADOW_CUSTOM_KEY',
+  deepseek: 'SHADOW_DEEPSEEK_KEY',
   google: 'SHADOW_GOOGLE_KEY',
   mistral: 'SHADOW_MISTRAL_KEY',
+  moonshot: 'SHADOW_MOONSHOT_KEY',
+  nvidia: 'SHADOW_NVIDIA_KEY',
   ollama: 'SHADOW_OLLAMA_KEY',
   openai: 'SHADOW_OPENAI_KEY',
+  perplexity: 'SHADOW_PERPLEXITY_KEY',
+  qwen: 'SHADOW_QWEN_KEY',
 };
 
 // =============================================================================

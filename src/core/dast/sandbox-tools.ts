@@ -29,7 +29,7 @@ export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
   const mirage = sandboxManager.getMirage();
 
   return {
-    check_oast_logs: tool<{ domain?: string; token?: string }, string>({
+    check_oast_logs: tool({
       description: [
         'Query the Mirage OAST callback log to check if the target application',
         'made an outbound request to a specific domain or OAST token.',
@@ -65,7 +65,7 @@ export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
       }),
     }),
 
-    sandbox_deploy: tool<{ startCommand?: string }, string>({
+    sandbox_deploy: tool({
       description: [
         'Start the target application inside the DAST sandbox container.',
         'Optionally provide a start command override (e.g., "npm start").',
@@ -91,7 +91,7 @@ export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
       }),
     }),
 
-    sandbox_exec: tool<{ command: string }, string>({
+    sandbox_exec: tool({
       description: [
         'Execute a command inside the DAST sandbox target container.',
         'Use this to run exploit payloads (e.g., curl commands, Python scripts)',
@@ -125,7 +125,7 @@ export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
       }),
     }),
 
-    sandbox_status: tool<Record<string, never>, string>({
+    sandbox_status: tool({
       description: [
         'Check the status of the DAST sandbox environment.',
         'Returns whether the target container and Mirage OAST proxy are running,',

@@ -1,33 +1,44 @@
 import { BaseMessage } from '@langchain/core/messages';
-import { Annotation, StateGraph, MemorySaver } from '@langchain/langgraph';
-import { EnhancedFinding } from '../output/finding-schema.js';
 import { BaseStore } from '@langchain/core/stores';
-import * as fs from 'fs';
-import * as path from 'path';
+import { Annotation } from '@langchain/langgraph';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
+import { type EnhancedFinding } from '../output/finding-schema.js';
+
+type KnowledgeGraphState = Record<string, unknown>;
+type MemoryEntry = Record<string, unknown>;
+type StoreValue = Record<string, unknown>;
+
+/* eslint-disable new-cap */
 export const AgentState = Annotation.Root({
-  messages: Annotation<BaseMessage[]>({
-    reducer: (state, update) => state.concat(update),
-    default: () => [],
-  }),
   findings: Annotation<EnhancedFinding[]>({
-    reducer: (state, update) => state.concat(update),
     default: () => [],
+    reducer: (state, update) => state.concat(update),
   }),
-  knowledgeGraph: Annotation<Record<string, any>>({
-    reducer: (state, update) => ({ ...state, ...update }),
+  iterationCount: Annotation<number>({
+    default: () => 0,
+    reducer: (_state, update) => update,
+  }),
+  knowledgeGraph: Annotation<KnowledgeGraphState>({
     default: () => ({}),
+    reducer: (state, update) => ({ ...state, ...update }),
   }),
-  longTermMemory: Annotation<any[]>({
-    reducer: (state, update) => state.concat(update),
+  longTermMemory: Annotation<MemoryEntry[]>({
     default: () => [],
+    reducer: (state, update) => state.concat(update),
+  }),
+  messages: Annotation<BaseMessage[]>({
+    default: () => [],
+    reducer: (state, update) => state.concat(update),
   }),
 });
+/* eslint-enable new-cap */
 
 export type AgentStateType = typeof AgentState.State;
 
-export class ProjectPersistentStore extends BaseStore<string, any> {
-  lc_namespace = ["langgraph", "store"];
+export class ProjectPersistentStore extends BaseStore<string, StoreValue> {
+  lc_namespace = ['langgraph', 'store'];
   private readonly storePath: string;
 
   constructor(projectRoot: string) {
@@ -36,52 +47,26 @@ export class ProjectPersistentStore extends BaseStore<string, any> {
     this.ensureStoreExists();
   }
 
-  private ensureStoreExists(): void {
-    const dir = path.dirname(this.storePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    if (!fs.existsSync(this.storePath)) {
-      fs.writeFileSync(this.storePath, JSON.stringify({}), 'utf-8');
-    }
-  }
-
-  private readStore(): Record<string, any> {
-    try {
-      const data = fs.readFileSync(this.storePath, 'utf-8');
-      return JSON.parse(data);
-    } catch (error) {
-      console.error(`Failed to read store at ${this.storePath}:`, error);
-      return {};
-    }
-  }
-
-  private writeStore(data: Record<string, any>): void {
-    try {
-      fs.writeFileSync(this.storePath, JSON.stringify(data, null, 2), 'utf-8');
-    } catch (error) {
-      console.error(`Failed to write store at ${this.storePath}:`, error);
-    }
-  }
-
-  async mget(keys: string[]): Promise<(any | undefined)[]> {
-    const store = this.readStore();
-    return keys.map((key) => store[key]);
-  }
-
-  async mset(keyValuePairs: [string, any][]): Promise<void> {
-    const store = this.readStore();
-    for (const [key, value] of keyValuePairs) {
-      store[key] = value;
-    }
-    this.writeStore(store);
-  }
-
   async mdelete(keys: string[]): Promise<void> {
     const store = this.readStore();
     for (const key of keys) {
       delete store[key];
     }
+
+    this.writeStore(store);
+  }
+
+  async mget(keys: string[]): Promise<Array<StoreValue | undefined>> {
+    const store = this.readStore();
+    return keys.map((key) => store[key]);
+  }
+
+  async mset(keyValuePairs: Array<[string, StoreValue]>): Promise<void> {
+    const store = this.readStore();
+    for (const [key, value] of keyValuePairs) {
+      store[key] = value;
+    }
+
     this.writeStore(store);
   }
 
@@ -91,6 +76,35 @@ export class ProjectPersistentStore extends BaseStore<string, any> {
       if (prefix === undefined || key.startsWith(prefix)) {
         yield key;
       }
+    }
+  }
+
+  private ensureStoreExists(): void {
+    const dir = path.dirname(this.storePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    if (!fs.existsSync(this.storePath)) {
+      fs.writeFileSync(this.storePath, JSON.stringify({}, null, 2), 'utf8');
+    }
+  }
+
+  private readStore(): Record<string, StoreValue> {
+    try {
+      const data = fs.readFileSync(this.storePath, 'utf8');
+      return JSON.parse(data) as Record<string, StoreValue>;
+    } catch (error) {
+      process.stderr.write(`[ShadowAuditor] Failed to read store at ${this.storePath}: ${error}\n`);
+      return {};
+    }
+  }
+
+  private writeStore(data: Record<string, StoreValue>): void {
+    try {
+      fs.writeFileSync(this.storePath, JSON.stringify(data, null, 2), 'utf8');
+    } catch (error) {
+      process.stderr.write(`[ShadowAuditor] Failed to write store at ${this.storePath}: ${error}\n`);
     }
   }
 }

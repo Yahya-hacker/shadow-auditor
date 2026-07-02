@@ -140,6 +140,11 @@ Shadow Auditor is provider-agnostic. Use **any** supported AI provider:
 - **OpenAI** — GPT-4, GPT-4o, and latest models
 - **Google Gemini** — High-performance analysis
 - **Mistral** — Fast, cost-effective alternative
+- **DeepSeek** — OpenAI-compatible API
+- **Qwen (Alibaba)** — OpenAI-compatible API
+- **Moonshot AI** — OpenAI-compatible API
+- **NVIDIA NIM** — OpenAI-compatible API
+- **Perplexity** — Sonar family models
 - **Ollama** — Run local models (open-source, privacy-first)
 - **Custom OpenAI-compatible** — Any endpoint that speaks the API
 
@@ -430,6 +435,8 @@ Includes:
 - `model` — Model name (e.g., `gpt-4`, `claude-3-sonnet`)
 - `apiKey` — Your API key (not required for Ollama)
 - `customBaseUrl` — For custom OpenAI-compatible endpoints
+- `indexing.embeddingProvider` — Embedding backend (`openai` compatible or local `ollama`)
+- `indexing.embeddingModel` — Embedding model selected automatically from your provider when available
 - `maxOutputTokens` — Output token limit (optional)
 - `maxToolSteps` — Max tool calls per query (optional)
 

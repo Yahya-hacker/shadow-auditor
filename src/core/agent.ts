@@ -1,14 +1,19 @@
+import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
+import type { CompiledStateGraph } from '@langchain/langgraph';
 import type { LanguageModel, ModelMessage, StepResult, ToolSet } from 'ai';
-import { HumanMessage } from "@langchain/core/messages";
-import { compileWorkflow } from "./graph/workflow.js";
+
+import { HumanMessage } from '@langchain/core/messages';
 import * as path from 'node:path';
 
-import type { ShadowConfig } from '../utils/config.js';
+import type { AgentStateType } from './graph/state.js';
 import type { MCPRawInvoker } from './mcp/types.js';
 import type { MissionObjective, MissionPhase, TransitionReason } from './orchestrator/mission-state.js';
 import type { TransitionContext } from './orchestrator/transitions.js';
 import type { SecurityReport } from './output/report-schema.js';
 
+import { type ShadowConfig } from '../utils/config.js';
+import { getEmbeddingDefaults, getProviderBaseUrl, normalizeProviderName } from '../utils/provider-catalog.js';
+import { compileWorkflow } from './graph/workflow.js';
 import { SwarmCoordinator } from './hivemind/swarm-coordinator.js';
 import { createChromeDevtoolsAdapter } from './mcp/adapters/chrome-devtools.js';
 import { createKaliLinuxAdapter } from './mcp/adapters/kali-linux.js';
@@ -23,7 +28,7 @@ import {
   SemanticIndex,
 } from './memory/semantic-index.js';
 import { resolveRuntimeSettings, type RuntimeSettings } from './model-capabilities.js';
-import { getModel } from './model-router.js';
+import { getLangchainModel, getModel } from './model-router.js';
 import { MissionEngine } from './orchestrator/mission-engine.js';
 import { computeCiExitCode, type FailOnSeverity, formatCiSummary } from './output/ci-exit.js';
 import { deduplicateFindings } from './output/dedup.js';
@@ -123,11 +128,20 @@ function toContentString(content: ModelMessage['content']): string {
   return JSON.stringify(content);
 }
 
+/**
+ * Write to stderr without interfering with Ink's stdout rendering.
+ */
+function logToStderr(message: string): void {
+  process.stderr.write(`[ShadowAuditor] ${message}\n`);
+}
+
 export class AgentSession {
   private artifacts: null | RunArtifacts = null;
+  private compiledWorkflow: null | ReturnType<typeof compileWorkflow> = null;
   private diffScopeHint: string;
   private expertUnsafe: boolean;
   private initialized: Promise<void>;
+  private langchainModel: BaseChatModel | null = null;
   private mcpManager: MCPManager | null = null;
   private messages: ModelMessage[] = [];
   private missionEngine: MissionEngine | null = null;
@@ -135,7 +149,9 @@ export class AgentSession {
   private runtime: RuntimeSettings;
   private runtimeWarnings: string[] = [];
   private semanticIndex: null | SemanticIndex = null;
+  private swarmCoordinator: null | SwarmCoordinator = null;
   private systemPrompt = '';
+  private threadCounter = 0;
   private tools: ToolSet = {};
 
   constructor(
@@ -151,7 +167,7 @@ export class AgentSession {
       config,
       (warning: string) => {
         this.runtimeWarnings.push(warning);
-        console.warn(warning);
+        logToStderr(warning);
       },
       config.auditMode,
     );
@@ -184,6 +200,10 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     this.initialized = this.initialize();
   }
 
+  /**
+   * Send a message to the agent and stream responses back.
+   * Routes to either single-agent LangGraph or multi-agent Swarm mode.
+   */
   async sendMessage(
     userMessage: string,
     onChunk: (text: string) => void,
@@ -201,847 +221,41 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       });
     };
 
-    emitEvent({
-      kind: 'status',
-      message: 'Processing mission sequence...',
-    });
-
-    try {
-      // Compile our multi-agent workflow
-      // We pass the raw tools array constructed in initialize()
-      const toolsArray = Object.entries(this.tools).map(([name, tool]) => ({ name, tool }));
-      const workflow = compileWorkflow(toolsArray);
-
-      // We maintain short term state inside the LangGraph checkpointer by passing a thread_id
-      const config = { configurable: { thread_id: "mission_1" }, version: "v2" as const };
-
-      const inputs = {
-        messages: [new HumanMessage({ content: userMessage })]
-      };
-
-      let fullResponse = "";
-
-      // Stream events from the LangGraph execution
-      const stream = await workflow.streamEvents(inputs, config);
-
-      for await (const event of stream) {
-        // Map LangGraph events to UI streams
-        if (event.event === "on_chat_model_stream" && event.data?.chunk?.content) {
-            let content = event.data.chunk.content;
-            if (typeof content === 'string') {
-              onChunk(content);
-              fullResponse += content;
-            }
-        } else if (event.event === "on_tool_start") {
-            emitEvent({
-                kind: 'tool_call',
-                message: `Executing tool: ${event.name}`,
-                toolCallId: event.run_id,
-                toolName: event.name
-            });
-        } else if (event.event === "on_tool_end") {
-            emitEvent({
-                kind: 'tool_result',
-                message: `Completed tool: ${event.name}`,
-                toolCallId: event.run_id,
-                toolName: event.name
-            });
-        }
-      }
-
-      await this.persistMessages([{ role: 'user', content: userMessage }]);
-      await this.persistMessages([{ role: 'assistant', content: fullResponse }]);
-
-      return fullResponse;
-    } catch (error) {
-      this.runtimeWarnings.push(`Workflow execution failed: ${error instanceof Error ? error.message : String(error)}`);
-      emitEvent({
-        kind: 'status',
-        message: 'Workflow execution aborted due to error.',
-      });
-      return "[Workflow Failed]";
-    }
-  }
-
-import type { LanguageModel, ModelMessage, StepResult, ToolSet } from 'ai';
-import { HumanMessage } from "@langchain/core/messages";
-import { compileWorkflow } from "./graph/workflow.js";
-import * as path from 'node:path';
-
-import type { ShadowConfig } from '../utils/config.js';
-import type { MCPRawInvoker } from './mcp/types.js';
-import type { MissionObjective, MissionPhase, TransitionReason } from './orchestrator/mission-state.js';
-import type { TransitionContext } from './orchestrator/transitions.js';
-import type { SecurityReport } from './output/report-schema.js';
-
-import { SwarmCoordinator } from './hivemind/swarm-coordinator.js';
-import { createChromeDevtoolsAdapter } from './mcp/adapters/chrome-devtools.js';
-import { createKaliLinuxAdapter } from './mcp/adapters/kali-linux.js';
-import { MCPManager } from './mcp/manager.js';
-import { vulnerabilityCanonicalId } from './memory/entity-normalizer.js';
-import { HybridRetriever } from './memory/hybrid-retriever.js';
-import {
-  type EmbeddingProvider,
-  NullEmbeddingProvider,
-  OllamaEmbeddingProvider,
-  OpenAIEmbeddingProvider,
-  SemanticIndex,
-} from './memory/semantic-index.js';
-import { resolveRuntimeSettings, type RuntimeSettings } from './model-capabilities.js';
-import { getModel } from './model-router.js';
-import { MissionEngine } from './orchestrator/mission-engine.js';
-import { computeCiExitCode, type FailOnSeverity, formatCiSummary } from './output/ci-exit.js';
-import { deduplicateFindings } from './output/dedup.js';
-import { validateAndRepairReport } from './output/report-validator.js';
-import { generateSarifReport } from './output/sarif.js';
-import { createPathGuard } from './policy/path-guard.js';
-import { RunArtifacts } from './run-artifacts.js';
-import { type StreamActivity, streamWithContinuation } from './session.js';
-import { buildSystemPrompt } from './system-prompt.js';
-import { createBashTool } from './tools/bash.js';
-import { createContextRetrievalTool } from './tools/context-retrieval.js';
-import { createEditFileTool } from './tools/edit-file.js';
-import { createExecuteCommandTool } from './tools/execute-command.js';
-import { createFinishTaskTool } from './tools/finish-task.js';
-import { createListDirectoryTool } from './tools/list-directory.js';
-import { createReadFileTool } from './tools/read-file.js';
-import { createSearchCodebaseTool } from './tools/search-codebase.js';
-
-export interface AgentSessionOptions {
-  /** Diff scope hint from incremental mode (pre-built string) */
-  diffScopeHint?: string;
-  expertUnsafe?: boolean;
-}
-
-export interface AgentStreamEvent {
-  kind: 'status' | StreamActivity['kind'];
-  message: string;
-  timestamp: string;
-  toolCallId?: string;
-  toolName?: string;
-}
-
-const REPORT_REPAIR_SYSTEM_PROMPT = `You are a strict JSON repair engine.
-Return only valid JSON for this schema:
-{
-  "findings": [
-    {
-      "vuln_id": "string",
-      "title": "string",
-      "severity_label": "Critical|High|Medium|Low|Info",
-      "cvss_v31_score": 0.0,
-      "cvss_v31_vector": "CVSS:3.1/...",
-      "cvss_v40_score": null,
-      "cwe": "CWE-000",
-      "file_paths": ["path/to/file"]
-    }
-  ]
-}
-If no findings, return {"findings":[]}.
-Do not include markdown fences or extra text.`;
-
-function normalizeRole(role: string): 'assistant' | 'system' | 'tool' | 'user' {
-  if (role === 'assistant' || role === 'tool' || role === 'user') {
-    return role;
-  }
-
-  return 'system';
-}
-
-function maybeCreateHttpInvoker(endpoint?: string): MCPRawInvoker | undefined {
-  const normalizedEndpoint = endpoint?.trim();
-  if (!normalizedEndpoint) {
-    return undefined;
-  }
-
-  return async (operation: string, input: Record<string, unknown>) => {
-    const response = await fetch(normalizedEndpoint, {
-      body: JSON.stringify({ input, operation }),
-      headers: {
-        'content-type': 'application/json',
-      },
-      method: 'POST',
-    });
-
-    if (!response.ok) {
-      throw new Error(`MCP endpoint error (${response.status}): ${response.statusText}`);
+    // Route to swarm mode if enabled
+    if (this.config.swarm?.enabled && this.swarmCoordinator) {
+      return this.sendSwarmMessage(userMessage, onChunk, onEvent, emitEvent);
     }
 
-    const rawBody = await response.text();
-    if (!rawBody) {
-      return '';
-    }
-
-    try {
-      return JSON.parse(rawBody) as unknown;
-    } catch {
-      return rawBody;
-    }
-  };
-}
-
-function toContentString(content: ModelMessage['content']): string {
-  if (typeof content === 'string') {
-    return content;
-  }
-
-  return JSON.stringify(content);
-}
-
-export class AgentSession {
-  private artifacts: null | RunArtifacts = null;
-  private diffScopeHint: string;
-  private expertUnsafe: boolean;
-  private initialized: Promise<void>;
-  private mcpManager: MCPManager | null = null;
-  private messages: ModelMessage[] = [];
-  private missionEngine: MissionEngine | null = null;
-  private model: LanguageModel;
-  private runtime: RuntimeSettings;
-  private runtimeWarnings: string[] = [];
-  private semanticIndex: null | SemanticIndex = null;
-  private systemPrompt = '';
-  private tools: ToolSet = {};
-
-  constructor(
-    private readonly config: ShadowConfig,
-    private readonly repoMap: string,
-    private readonly targetPath: string,
-    options: AgentSessionOptions = {},
-  ) {
-    this.model = getModel(config);
-    this.expertUnsafe = options.expertUnsafe ?? config.expertUnsafe ?? false;
-    this.diffScopeHint = options.diffScopeHint ?? '';
-    this.runtime = resolveRuntimeSettings(
-      config,
-      (warning: string) => {
-        this.runtimeWarnings.push(warning);
-        console.warn(warning);
-      },
-      config.auditMode,
-    );
-
-    const resolvedTargetPath = path.resolve(targetPath);
-    this.messages = [
-      {
-        content: `## REPOSITORY ARCHITECTURE MAP
-
-The following is a compressed architectural map of the target codebase at \`${resolvedTargetPath}\`.
-It contains structural signatures (imports, declarations, type surfaces), not implementation bodies.
-
-\`\`\`
-${repoMap}
-\`\`\`
-
-You also have access to a \`context_retrieval\` tool that provides semantic, lexical, and graph-based code search.
-Use \`context_retrieval\` to find specific code patterns, vulnerability-related functions, or data flow paths on-demand
-rather than reading entire files. This is more efficient for large codebases.
-
-Use your tools to inspect implementation details, verify assumptions, and produce precise security findings.`,
-        role: 'user',
-      },
-      {
-        content: `Repository map ingested. Semantic code retrieval is available via context_retrieval. Ready for autonomous security analysis with controlled tooling and machine-readable reporting.`,
-        role: 'assistant',
-      },
-    ];
-
-    this.initialized = this.initialize();
-  }
-
-  async sendMessage(
-    userMessage: string,
-    onChunk: (text: string) => void,
-    onEvent?: (event: AgentStreamEvent) => void,
-  ): Promise<string> {
-    await this.initialized;
-    if (!this.artifacts) {
-      throw new Error('Run artifacts are not initialized.');
-    }
-
-    const emitEvent = (event: Omit<AgentStreamEvent, 'timestamp'>) => {
-      onEvent?.({
-        ...event,
-        timestamp: new Date().toISOString(),
-      });
-    };
-
-    emitEvent({
-      kind: 'status',
-      message: 'Processing mission sequence...',
-    });
-
-    try {
-      // Compile our multi-agent workflow
-      // We pass the raw tools array constructed in initialize()
-      const toolsArray = Object.entries(this.tools).map(([name, tool]) => ({ name, tool }));
-      const workflow = compileWorkflow(toolsArray);
-
-      // We maintain short term state inside the LangGraph checkpointer by passing a thread_id
-      const config = { configurable: { thread_id: "mission_1" }, version: "v2" as const };
-
-      const inputs = {
-        messages: [new HumanMessage({ content: userMessage })]
-      };
-
-      let fullResponse = "";
-
-      // Stream events from the LangGraph execution
-      const stream = await workflow.streamEvents(inputs, config);
-
-      for await (const event of stream) {
-        // Map LangGraph events to UI streams
-        if (event.event === "on_chat_model_stream" && event.data?.chunk?.content) {
-            let content = event.data.chunk.content;
-            if (typeof content === 'string') {
-              onChunk(content);
-              fullResponse += content;
-            }
-        } else if (event.event === "on_tool_start") {
-            emitEvent({
-                kind: 'tool_call',
-                message: `Executing tool: ${event.name}`,
-                toolCallId: event.run_id,
-                toolName: event.name
-            });
-        } else if (event.event === "on_tool_end") {
-            emitEvent({
-                kind: 'tool_result',
-                message: `Completed tool: ${event.name}`,
-                toolCallId: event.run_id,
-                toolName: event.name
-            });
-        }
-      }
-
-      await this.persistMessages([{ role: 'user', content: userMessage }]);
-      await this.persistMessages([{ role: 'assistant', content: fullResponse }]);
-
-      return fullResponse;
-    } catch (error) {
-      this.runtimeWarnings.push(`Workflow execution failed: ${error instanceof Error ? error.message : String(error)}`);
-      emitEvent({
-        kind: 'status',
-        message: 'Workflow execution aborted due to error.',
-      });
-      return "[Workflow Failed]";
-    }
-  }
-
-  import type { LanguageModel, ModelMessage, StepResult, ToolSet } from 'ai';
-import { HumanMessage } from "@langchain/core/messages";
-import { compileWorkflow } from "./graph/workflow.js";
-import * as path from 'node:path';
-
-import type { ShadowConfig } from '../utils/config.js';
-import type { MCPRawInvoker } from './mcp/types.js';
-import type { MissionObjective, MissionPhase, TransitionReason } from './orchestrator/mission-state.js';
-import type { TransitionContext } from './orchestrator/transitions.js';
-import type { SecurityReport } from './output/report-schema.js';
-
-import { SwarmCoordinator } from './hivemind/swarm-coordinator.js';
-import { createChromeDevtoolsAdapter } from './mcp/adapters/chrome-devtools.js';
-import { createKaliLinuxAdapter } from './mcp/adapters/kali-linux.js';
-import { MCPManager } from './mcp/manager.js';
-import { vulnerabilityCanonicalId } from './memory/entity-normalizer.js';
-import { HybridRetriever } from './memory/hybrid-retriever.js';
-import {
-  type EmbeddingProvider,
-  NullEmbeddingProvider,
-  OllamaEmbeddingProvider,
-  OpenAIEmbeddingProvider,
-  SemanticIndex,
-} from './memory/semantic-index.js';
-import { resolveRuntimeSettings, type RuntimeSettings } from './model-capabilities.js';
-import { getModel } from './model-router.js';
-import { MissionEngine } from './orchestrator/mission-engine.js';
-import { computeCiExitCode, type FailOnSeverity, formatCiSummary } from './output/ci-exit.js';
-import { deduplicateFindings } from './output/dedup.js';
-import { validateAndRepairReport } from './output/report-validator.js';
-import { generateSarifReport } from './output/sarif.js';
-import { createPathGuard } from './policy/path-guard.js';
-import { RunArtifacts } from './run-artifacts.js';
-import { type StreamActivity, streamWithContinuation } from './session.js';
-import { buildSystemPrompt } from './system-prompt.js';
-import { createBashTool } from './tools/bash.js';
-import { createContextRetrievalTool } from './tools/context-retrieval.js';
-import { createEditFileTool } from './tools/edit-file.js';
-import { createExecuteCommandTool } from './tools/execute-command.js';
-import { createFinishTaskTool } from './tools/finish-task.js';
-import { createListDirectoryTool } from './tools/list-directory.js';
-import { createReadFileTool } from './tools/read-file.js';
-import { createSearchCodebaseTool } from './tools/search-codebase.js';
-
-export interface AgentSessionOptions {
-  /** Diff scope hint from incremental mode (pre-built string) */
-  diffScopeHint?: string;
-  expertUnsafe?: boolean;
-}
-
-export interface AgentStreamEvent {
-  kind: 'status' | StreamActivity['kind'];
-  message: string;
-  timestamp: string;
-  toolCallId?: string;
-  toolName?: string;
-}
-
-const REPORT_REPAIR_SYSTEM_PROMPT = `You are a strict JSON repair engine.
-Return only valid JSON for this schema:
-{
-  "findings": [
-    {
-      "vuln_id": "string",
-      "title": "string",
-      "severity_label": "Critical|High|Medium|Low|Info",
-      "cvss_v31_score": 0.0,
-      "cvss_v31_vector": "CVSS:3.1/...",
-      "cvss_v40_score": null,
-      "cwe": "CWE-000",
-      "file_paths": ["path/to/file"]
-    }
-  ]
-}
-If no findings, return {"findings":[]}.
-Do not include markdown fences or extra text.`;
-
-function normalizeRole(role: string): 'assistant' | 'system' | 'tool' | 'user' {
-  if (role === 'assistant' || role === 'tool' || role === 'user') {
-    return role;
-  }
-
-  return 'system';
-}
-
-function maybeCreateHttpInvoker(endpoint?: string): MCPRawInvoker | undefined {
-  const normalizedEndpoint = endpoint?.trim();
-  if (!normalizedEndpoint) {
-    return undefined;
-  }
-
-  return async (operation: string, input: Record<string, unknown>) => {
-    const response = await fetch(normalizedEndpoint, {
-      body: JSON.stringify({ input, operation }),
-      headers: {
-        'content-type': 'application/json',
-      },
-      method: 'POST',
-    });
-
-    if (!response.ok) {
-      throw new Error(`MCP endpoint error (${response.status}): ${response.statusText}`);
-    }
-
-    const rawBody = await response.text();
-    if (!rawBody) {
-      return '';
-    }
-
-    try {
-      return JSON.parse(rawBody) as unknown;
-    } catch {
-      return rawBody;
-    }
-  };
-}
-
-function toContentString(content: ModelMessage['content']): string {
-  if (typeof content === 'string') {
-    return content;
-  }
-
-  return JSON.stringify(content);
-}
-
-export class AgentSession {
-  private artifacts: null | RunArtifacts = null;
-  private diffScopeHint: string;
-  private expertUnsafe: boolean;
-  private initialized: Promise<void>;
-  private mcpManager: MCPManager | null = null;
-  private messages: ModelMessage[] = [];
-  private missionEngine: MissionEngine | null = null;
-  private model: LanguageModel;
-  private runtime: RuntimeSettings;
-  private runtimeWarnings: string[] = [];
-  private semanticIndex: null | SemanticIndex = null;
-  private systemPrompt = '';
-  private tools: ToolSet = {};
-
-  constructor(
-    private readonly config: ShadowConfig,
-    private readonly repoMap: string,
-    private readonly targetPath: string,
-    options: AgentSessionOptions = {},
-  ) {
-    this.model = getModel(config);
-    this.expertUnsafe = options.expertUnsafe ?? config.expertUnsafe ?? false;
-    this.diffScopeHint = options.diffScopeHint ?? '';
-    this.runtime = resolveRuntimeSettings(
-      config,
-      (warning: string) => {
-        this.runtimeWarnings.push(warning);
-        console.warn(warning);
-      },
-      config.auditMode,
-    );
-
-    const resolvedTargetPath = path.resolve(targetPath);
-    this.messages = [
-      {
-        content: `## REPOSITORY ARCHITECTURE MAP
-
-The following is a compressed architectural map of the target codebase at \`${resolvedTargetPath}\`.
-It contains structural signatures (imports, declarations, type surfaces), not implementation bodies.
-
-\`\`\`
-${repoMap}
-\`\`\`
-
-You also have access to a \`context_retrieval\` tool that provides semantic, lexical, and graph-based code search.
-Use \`context_retrieval\` to find specific code patterns, vulnerability-related functions, or data flow paths on-demand
-rather than reading entire files. This is more efficient for large codebases.
-
-Use your tools to inspect implementation details, verify assumptions, and produce precise security findings.`,
-        role: 'user',
-      },
-      {
-        content: `Repository map ingested. Semantic code retrieval is available via context_retrieval. Ready for autonomous security analysis with controlled tooling and machine-readable reporting.`,
-        role: 'assistant',
-      },
-    ];
-
-    this.initialized = this.initialize();
-  }
-
-  async sendMessage(
-    userMessage: string,
-    onChunk: (text: string) => void,
-    onEvent?: (event: AgentStreamEvent) => void,
-  ): Promise<string> {
-    await this.initialized;
-    if (!this.artifacts) {
-      throw new Error('Run artifacts are not initialized.');
-    }
-
-    const emitEvent = (event: Omit<AgentStreamEvent, 'timestamp'>) => {
-      onEvent?.({
-        ...event,
-        timestamp: new Date().toISOString(),
-      });
-    };
-
-
-
-    const timestamp = new Date().toISOString();
-    this.messages.push({
-      content: userMessage,
-      role: 'user',
-    });
-    await this.artifacts.recordMessage({
-      content: userMessage,
-      role: 'user',
-      timestamp,
-    });
-    // ... (rest of the existing sendMessage logic)
-
-    if (this.config.swarm?.enabled) {
-      emitEvent({ kind: 'status', message: 'Planning Swarm analysis mission' });
-      const missionActionId = await this.startMissionCycle(userMessage);
-      emitEvent({ kind: 'status', message: 'Spawning and coordinating Swarm Intelligence workers' });
-      
-      const runDirectory = this.artifacts.getRunDirectory();
-      const coordinator = new SwarmCoordinator({
-        allTools: this.tools,
-        auditMode: this.config.auditMode ?? this.runtime.capabilities.preferredAuditMode,
-        config: this.config,
-        diffScopeHint: this.diffScopeHint,
-        model: this.model,
-        runId: path.basename(runDirectory),
-        storagePath: runDirectory,
-      });
-
-      const swarmResultText = await coordinator.executeMission(userMessage, (role, act) => {
-        emitEvent({
-          kind: act.kind as 'tool_call' | 'tool_result',
-          message: `[${role.toUpperCase()}] ${act.message}`,
-          toolName: act.toolName,
-        });
-      });
-
-      emitEvent({ kind: 'status', message: 'Validating and writing report artifacts' });
-      await this.artifacts.writeReportMarkdown(swarmResultText);
-
-      let validatedReport: SecurityReport = { findings: [] };
-      try {
-        const validation = await validateAndRepairReport({
-          maxRetries: this.config.reportValidation?.maxRepairRetries ?? 2,
-          repair: async ({ attempt, lastCandidate, validationError }) => {
-            const prompt = `Original response:
-${swarmResultText}
-
-Last invalid candidate:
-${lastCandidate ?? '<none>'}
-
-Validation error:
-${validationError}
-
-Repair attempt:
-${attempt}
-
-Return corrected JSON now.`;
-
-            const repaired = await generateText({
-              maxOutputTokens: Math.min(this.runtime.maxOutputTokens, 4096),
-              model: this.model,
-              prompt,
-              system: REPORT_REPAIR_SYSTEM_PROMPT,
-              temperature: 0,
-            });
-
-            return repaired.text;
-          },
-          responseText: swarmResultText,
-        });
-
-        validatedReport = validation.report;
-
-        // Apply finding deduplication before writing artifacts
-        const dedupedReport: SecurityReport = {
-          findings: deduplicateFindings(validation.report.findings),
-        };
-
-        await this.artifacts.writeReportJson(dedupedReport);
-        if (dedupedReport.findings.length > 0) {
-          await this.artifacts.writeReportSarif(generateSarifReport(dedupedReport));
-        }
-
-        // CI mode: emit summary and trigger exit if threshold is met
-        if (this.config.ci?.enabled) {
-          const failOn = (this.config.ci.failOn ?? 'high') as FailOnSeverity;
-          const ciResult = computeCiExitCode({ failOn, findings: dedupedReport.findings });
-          const summary = formatCiSummary(ciResult, failOn);
-          emitEvent({ kind: 'status', message: summary });
-          if (ciResult.code !== 0) {
-            process.exitCode = ciResult.code;
-          }
-        }
-
-        validatedReport = dedupedReport;
-      } catch (error) {
-        const fallbackReport = { findings: [] as [] };
-        await this.artifacts.writeReportJson(fallbackReport);
-        this.runtimeWarnings.push(`Report validation fallback applied: ${(error as Error).message}`);
-      }
-
-      await this.completeMissionCycle(missionActionId, validatedReport, swarmResultText.length);
-
-      await this.artifacts.updateMeta({
-        warnings: [...this.runtimeWarnings],
-      });
-      emitEvent({ kind: 'status', message: 'Analysis complete' });
-
-      return swarmResultText;
-    }
-
-    emitEvent({ kind: 'status', message: 'Planning analysis mission' });
-    const missionActionId = await this.startMissionCycle(userMessage);
-    emitEvent({ kind: 'status', message: 'Streaming model output and tool activity' });
-
-    const streamResult = await streamWithContinuation({
-      maxContinuations: this.config.continuation?.maxContinuations ?? 2,
-      maxOutputTokens: this.runtime.maxOutputTokens,
-      maxToolSteps: this.runtime.maxToolSteps,
-      messages: this.messages,
-      model: this.model,
-      onActivity(activity) {
-        emitEvent({
-          kind: activity.kind,
-          message: activity.summary,
-          toolCallId: activity.toolCallId,
-          toolName: activity.toolName,
-        });
-      },
-      onChunk,
-      systemPrompt: this.systemPrompt,
-      tools: this.tools as ToolSet,
-    });
-
-    this.messages.push(...streamResult.messagesDelta);
-    await this.persistMessages(streamResult.messagesDelta);
-    await this.persistToolEvents(streamResult.steps);
-    emitEvent({ kind: 'status', message: 'Validating and writing report artifacts' });
-
-    await this.artifacts.writeReportMarkdown(streamResult.text);
-
-    let validatedReport: SecurityReport = { findings: [] };
-    try {
-      const validation = await validateAndRepairReport({
-        maxRetries: this.config.reportValidation?.maxRepairRetries ?? 2,
-        repair: async ({ attempt, lastCandidate, validationError }) => {
-          const prompt = `Original response:
-${streamResult.text}
-
-Last invalid candidate:
-${lastCandidate ?? '<none>'}
-
-Validation error:
-${validationError}
-
-Repair attempt:
-${attempt}
-
-Return corrected JSON now.`;
-
-          const repaired = await generateText({
-            maxOutputTokens: Math.min(this.runtime.maxOutputTokens, 4096),
-            model: this.model,
-            prompt,
-            system: REPORT_REPAIR_SYSTEM_PROMPT,
-            temperature: 0,
-          });
-
-          return repaired.text;
-        },
-        responseText: streamResult.text,
-      });
-
-      validatedReport = validation.report;
-
-      // Apply finding deduplication before writing artifacts
-      const dedupedReport: SecurityReport = {
-        findings: deduplicateFindings(validation.report.findings),
-      };
-
-      await this.artifacts.writeReportJson(dedupedReport);
-      if (dedupedReport.findings.length > 0) {
-        await this.artifacts.writeReportSarif(generateSarifReport(dedupedReport));
-      }
-
-      // CI mode: emit summary and trigger exit if threshold is met
-      if (this.config.ci?.enabled) {
-        const failOn = (this.config.ci.failOn ?? 'high') as FailOnSeverity;
-        const ciResult = computeCiExitCode({ failOn, findings: dedupedReport.findings });
-        const summary = formatCiSummary(ciResult, failOn);
-        emitEvent({ kind: 'status', message: summary });
-        if (ciResult.code !== 0) {
-          process.exitCode = ciResult.code;
-        }
-      }
-
-      validatedReport = dedupedReport;
-    } catch (error) {
-      const fallbackReport = { findings: [] as [] };
-      await this.artifacts.writeReportJson(fallbackReport);
-      this.runtimeWarnings.push(`Report validation fallback applied: ${(error as Error).message}`);
-    }
-
-    await this.completeMissionCycle(missionActionId, validatedReport, streamResult.text.length);
-
-    await this.artifacts.updateMeta({
-      warnings: [...this.runtimeWarnings],
-    });
-    emitEvent({ kind: 'status', message: 'Analysis complete' });
-
-    return streamResult.text;
-  }
-
-  async dispose(): Promise<void> {
-    // No-op for now
-  }
-
-  private async completeMissionCycle(
-    actionId: null | string,
-    report: SecurityReport,
-    tokensUsed: number,
-  ): Promise<void> {
-    if (!this.missionEngine) {
-      return;
-    }
-
-    await this.transitionMission('VERIFY', 'action_executed', {
-      completedActionId: actionId ?? undefined,
-      tokensUsed,
-    });
-
-    await this.ingestReportFindings(report);
-
-    await this.transitionMission(
-      'REPORT',
-      report.findings.length > 0 ? 'verification_passed' : 'verification_failed',
-      {},
-    );
-    await this.missionEngine.saveCheckpoint();
-    await this.missionEngine.getGraph().saveSnapshot();
-    await this.transitionMission('OBSERVE', 'evidence_collected', {});
+    return this.sendSingleAgentMessage(userMessage, onChunk, onEvent, emitEvent);
   }
 
   private createEmbeddingProvider(): EmbeddingProvider {
-    const providerType = this.config.indexing?.embeddingProvider ?? 'ollama';
-    const model = this.config.indexing?.embeddingModel;
+    const indexingConfig = this.config.indexing;
+    const providerDefaults = getEmbeddingDefaults(this.config.provider);
+    const embeddingProvider = indexingConfig?.embeddingProvider ?? providerDefaults.embeddingProvider;
+    const embeddingModel = indexingConfig?.embeddingModel ?? providerDefaults.embeddingModel;
 
-    switch (providerType) {
-      case 'openai': {
-        if (!this.config.apiKey) {
-          console.warn('[SemanticIndex] OpenAI embeddings require an API key. Falling back to null provider.');
-          return new NullEmbeddingProvider();
-        }
-
-        return new OpenAIEmbeddingProvider({
-          apiKey: this.config.apiKey,
-          model: model ?? 'text-embedding-3-small',
-        });
-      }
-
-      case 'ollama':
-      default: {
-        return new OllamaEmbeddingProvider({
-          model: model ?? 'nomic-embed-text',
-        });
-      }
-    }
-  }
-
-  private async ingestReportFindings(report: SecurityReport): Promise<void> {
-    if (!this.missionEngine || report.findings.length === 0) {
-      return;
+    if (embeddingProvider === 'ollama') {
+      return new OllamaEmbeddingProvider({
+        model: embeddingModel,
+      });
     }
 
-    const graph = this.missionEngine.getGraph();
-    const now = new Date().toISOString();
-
-    for (const finding of report.findings) {
-      const vulnerabilityId = vulnerabilityCanonicalId(
-        finding.cwe,
-        undefined,
-        undefined,
-        finding.title,
+    if (!this.config.apiKey) {
+      throw new Error(
+        `[SemanticIndex] Embedding provider "${embeddingProvider}" requires an API key for "${this.config.provider}".`,
       );
-
-      graph.addEntity({
-        canonicalId: vulnerabilityId,
-        confidence: Math.min(1, finding.cvss_v31_score / 10),
-        createdAt: now,
-        entityType: 'vulnerability',
-        label: finding.title,
-        properties: {
-          cvssV31Score: finding.cvss_v31_score,
-          cvssV31Vector: finding.cvss_v31_vector,
-          cwe: finding.cwe,
-          title: finding.title,
-          verified: true,
-        },
-        updatedAt: now,
-      });
-
-      this.missionEngine.addHypothesis({
-        confidence: Math.min(1, Math.max(0.3, finding.cvss_v31_score / 10)),
-        description: `${finding.title} (${finding.cwe})`,
-        evidenceIds: [],
-        status: 'verified',
-        type: 'finding',
-      });
     }
+
+    const normalizedProvider = normalizeProviderName(this.config.provider);
+    const baseUrl = getProviderBaseUrl(normalizedProvider, this.config.customBaseUrl);
+
+    return new OpenAIEmbeddingProvider({
+      apiKey: this.config.apiKey,
+      baseUrl,
+      model: embeddingModel,
+      providerName: normalizedProvider,
+    });
   }
 
   private async initialize(): Promise<void> {
@@ -1096,6 +310,16 @@ Return corrected JSON now.`;
       diffScope: this.diffScopeHint || undefined,
       mcpEnabled: Object.keys(mcpTools).length > 0,
     });
+
+    // Compile the LangGraph workflow ONCE for reuse across messages
+    this.langchainModel = getLangchainModel(this.config);
+    const toolsArray = Object.entries(this.tools).map(([name, tool]) => ({ name, tool }));
+    this.compiledWorkflow = compileWorkflow(toolsArray, this.langchainModel);
+
+    // Initialize swarm coordinator if enabled
+    if (this.config.swarm?.enabled) {
+      await this.initializeSwarmCoordinator(resolvedTargetPath);
+    }
 
     await this.artifacts.recordMessage({
       content: {
@@ -1188,7 +412,41 @@ Return corrected JSON now.`;
 
     try {
       // Create embedding provider based on configuration
-      const provider = this.createEmbeddingProvider();
+      let provider = this.createEmbeddingProvider();
+
+      // Preflight: test the embedding provider connection before committing
+      // to a full repository indexing pass. This prevents the 400-error spam
+      // that occurs when a non-OpenAI provider hits the OpenAI embeddings endpoint.
+      if (provider.testConnection) {
+        const isHealthy = await provider.testConnection();
+        if (!isHealthy) {
+          logToStderr(
+            `[SemanticIndex] Embedding provider "${provider.name}" failed health check. ` +
+            'Attempting fallback...',
+          );
+
+          // Try Ollama as fallback
+          const ollamaFallback = new OllamaEmbeddingProvider();
+          const ollamaHealthy = await ollamaFallback.testConnection();
+          if (ollamaHealthy) {
+            logToStderr(
+              '[SemanticIndex] Falling back to local Ollama embeddings.',
+            );
+            provider = ollamaFallback;
+          } else {
+            logToStderr(
+              '[SemanticIndex] Embeddings unavailable or misconfigured. ' +
+              'Disabling semantic search for this session.',
+            );
+            this.semanticIndex = null;
+            this.runtimeWarnings.push(
+              'Semantic indexing disabled: no working embedding provider available. ' +
+              'Install Ollama and pull nomic-embed-text for local embeddings.',
+            );
+            return {};
+          }
+        }
+      }
 
       // Create semantic index
       const storagePath = this.artifacts
@@ -1204,20 +462,36 @@ Return corrected JSON now.`;
 
       await this.semanticIndex.initialize();
 
-      // Index the repository
-      const { chunksIndexed, filesIndexed } = await this.semanticIndex.indexRepository(
-        (progress) => {
-          if (progress.filesIndexed % 50 === 0 || progress.filesIndexed === progress.totalFiles) {
-            console.log(
-              `[SemanticIndex] Indexed ${progress.filesIndexed}/${progress.totalFiles} files (${progress.currentFile})`,
-            );
-          }
-        },
-      );
+      // Index the repository — wrapped in its own try/catch so that
+      // embedding failures during indexing are caught cleanly
+      try {
+        const { chunksIndexed, filesIndexed } = await this.semanticIndex.indexRepository(
+          (progress) => {
+            if (progress.filesIndexed % 50 === 0 || progress.filesIndexed === progress.totalFiles) {
+              logToStderr(
+                `[SemanticIndex] Indexed ${progress.filesIndexed}/${progress.totalFiles} files (${progress.currentFile})`,
+              );
+            }
+          },
+        );
 
-      console.log(
-        `[SemanticIndex] Indexing complete: ${filesIndexed} files, ${chunksIndexed} chunks`,
-      );
+        logToStderr(
+          `[SemanticIndex] Indexing complete: ${filesIndexed} files, ${chunksIndexed} chunks`,
+        );
+      } catch (indexError) {
+        // Embedding API failed during indexing — disable gracefully
+        logToStderr(
+          '[SemanticIndex] Embeddings unavailable or misconfigured. ' +
+          'Disabling semantic search for this session.',
+        );
+        this.semanticIndex = null;
+        this.runtimeWarnings.push(
+          `Semantic indexing disabled after embedding error: ${
+            indexError instanceof Error ? indexError.message : String(indexError)
+          }`,
+        );
+        return {};
+      }
 
       // Build HybridRetriever if MissionEngine graph is available
       if (this.missionEngine) {
@@ -1246,14 +520,42 @@ Return corrected JSON now.`;
       // Fallback: create a minimal hybrid retriever without graph
       // (MissionEngine may not be initialized yet)
       return {};
-    } catch (error) {
-      this.runtimeWarnings.push(
-        `Semantic indexing failed (falling back to repo-map only): ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+    } catch {
+      // Top-level catch for any unexpected errors (initialization, etc.)
+      logToStderr(
+        '[SemanticIndex] Embeddings unavailable or misconfigured. ' +
+        'Disabling semantic search for this session.',
       );
       this.semanticIndex = null;
       return {};
+    }
+  }
+
+  private async initializeSwarmCoordinator(resolvedTargetPath: string): Promise<void> {
+    if (!this.artifacts) {
+      return;
+    }
+
+    try {
+      const runDirectory = this.artifacts.getRunDirectory();
+      const runId = path.basename(runDirectory);
+
+      this.swarmCoordinator = new SwarmCoordinator({
+        allTools: this.tools,
+        auditMode: this.config.auditMode ?? 'balanced',
+        config: this.config,
+        diffScopeHint: this.diffScopeHint,
+        model: this.model,
+        runId,
+        storagePath: path.join(runDirectory, 'swarm'),
+      });
+
+      logToStderr('[SwarmCoordinator] Multi-agent swarm mode enabled.');
+    } catch (error) {
+      this.swarmCoordinator = null;
+      this.runtimeWarnings.push(
+        `Swarm coordinator initialization failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -1304,6 +606,145 @@ Return corrected JSON now.`;
           toolName: toolResult.toolName,
         });
       }
+    }
+  }
+
+  /**
+   * Send message through the single-agent LangGraph workflow.
+   */
+  private async sendSingleAgentMessage(
+    userMessage: string,
+    onChunk: (text: string) => void,
+    onEvent: ((event: AgentStreamEvent) => void) | undefined,
+    emitEvent: (event: Omit<AgentStreamEvent, 'timestamp'>) => void,
+  ): Promise<string> {
+    emitEvent({
+      kind: 'status',
+      message: 'Processing mission sequence...',
+    });
+
+    try {
+      if (!this.compiledWorkflow) {
+        throw new Error('Workflow not compiled. Initialization may have failed.');
+      }
+
+      // Reuse the same thread for conversation continuity
+      this.threadCounter++;
+      const config = {
+        configurable: { thread_id: `session_${this.threadCounter}` },
+        version: 'v2' as const,
+      };
+
+      const inputs = {
+        messages: [new HumanMessage({ content: userMessage })],
+      };
+
+      let fullResponse = '';
+
+      // Stream events from the LangGraph execution
+      const stream = await this.compiledWorkflow.streamEvents(inputs, config);
+
+      for await (const event of stream) {
+        // Map LangGraph events to UI streams
+        if (event.event === 'on_chat_model_stream' && event.data?.chunk?.content) {
+          const content = event.data.chunk.content;
+          if (typeof content === 'string') {
+            onChunk(content);
+            fullResponse += content;
+          }
+        } else if (event.event === 'on_tool_start') {
+          emitEvent({
+            kind: 'tool_call',
+            message: `Executing tool: ${event.name}`,
+            toolCallId: event.run_id,
+            toolName: event.name,
+          });
+
+          // Persist tool call event
+          if (this.artifacts) {
+            await this.artifacts.recordToolEvent({
+              data: event.data?.input ?? {},
+              event: 'call',
+              timestamp: new Date().toISOString(),
+              toolCallId: event.run_id ?? '',
+              toolName: event.name ?? '',
+            });
+          }
+        } else if (event.event === 'on_tool_end') {
+          emitEvent({
+            kind: 'tool_result',
+            message: `Completed tool: ${event.name}`,
+            toolCallId: event.run_id,
+            toolName: event.name,
+          });
+
+          // Persist tool result event
+          if (this.artifacts) {
+            await this.artifacts.recordToolEvent({
+              data: event.data?.output ?? {},
+              event: 'result',
+              timestamp: new Date().toISOString(),
+              toolCallId: event.run_id ?? '',
+              toolName: event.name ?? '',
+            });
+          }
+        }
+      }
+
+      await this.persistMessages([{ content: userMessage, role: 'user' }]);
+      await this.persistMessages([{ content: fullResponse, role: 'assistant' }]);
+
+      return fullResponse;
+    } catch (error) {
+      this.runtimeWarnings.push(`Workflow execution failed: ${error instanceof Error ? error.message : String(error)}`);
+      emitEvent({
+        kind: 'status',
+        message: 'Workflow execution aborted due to error.',
+      });
+      return '[Workflow Failed]';
+    }
+  }
+
+  /**
+   * Send message through the multi-agent swarm coordinator.
+   */
+  private async sendSwarmMessage(
+    userMessage: string,
+    onChunk: (text: string) => void,
+    onEvent: ((event: AgentStreamEvent) => void) | undefined,
+    emitEvent: (event: Omit<AgentStreamEvent, 'timestamp'>) => void,
+  ): Promise<string> {
+    emitEvent({
+      kind: 'status',
+      message: 'Dispatching to swarm coordinator...',
+    });
+
+    try {
+      const result = await this.swarmCoordinator!.executeMission(
+        userMessage,
+        (workerRole, activity) => {
+          emitEvent({
+            kind: activity.kind === 'tool_call' ? 'tool_call' : activity.kind === 'tool_result' ? 'tool_result' : 'status',
+            message: `[${workerRole}] ${activity.message}`,
+            toolName: activity.toolName,
+          });
+        },
+      );
+
+      onChunk(result);
+      await this.persistMessages([
+        { content: userMessage, role: 'user' },
+        { content: result, role: 'assistant' },
+      ]);
+
+      return result;
+    } catch (error) {
+      this.runtimeWarnings.push(`Swarm execution failed: ${error instanceof Error ? error.message : String(error)}`);
+      emitEvent({
+        kind: 'status',
+        message: 'Swarm execution aborted due to error.',
+      });
+      return '[Swarm Failed]';
     }
   }
 

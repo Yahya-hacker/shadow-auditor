@@ -3,17 +3,20 @@ import { render } from 'ink';
 import React from 'react';
 
 import App from '../ui/App.js';
+import { loadConfig, registerSecretStoreAdapter } from '../utils/config.js';
+import { KeychainAdapter } from '../utils/keychain.js';
 
 export default class Shell extends Command {
   static override description = 'Shadow Auditor — Autonomous AI-Powered SAST Interactive Shell';
-static override examples = [
+  static override examples = [
     '<%= config.bin %>',
     '<%= config.bin %> --reconfigure',
     '<%= config.bin %> --mode triage',
     '<%= config.bin %> --ci --fail-on high',
     '<%= config.bin %> --since HEAD~5',
+    '<%= config.bin %> --swarm',
   ];
-static override flags = {
+  static override flags = {
     ci: Flags.boolean({
       default: false,
       description: 'Enable CI mode: produce deterministic machine outputs and exit non-zero on severity threshold',
@@ -43,25 +46,35 @@ static override flags = {
     since: Flags.string({
       description: 'Git ref for incremental scan base (used with --diff). Defaults to HEAD~1.',
     }),
+    swarm: Flags.boolean({
+      default: false,
+      description: 'Enable multi-agent swarm mode for parallel security analysis',
+    }),
   };
 
   async run(): Promise<void> {
     const { flags } = await this.parse(Shell);
 
-    console.clear();
+    registerSecretStoreAdapter(new KeychainAdapter());
+
+    let config: import('../utils/config.js').ShadowConfig | null = null;
+    if (!flags.reconfigure) {
+      config = await loadConfig();
+    }
 
     const { waitUntilExit } = render(
       <App
         ciEnabled={flags.ci}
+        config={config}
         diffEnabled={flags.diff}
         expertUnsafe={flags.expertUnsafe}
         failOn={flags['fail-on']}
-        forceReconfigure={flags.reconfigure}
         mode={flags.mode}
+        needsSetup={!config || flags.reconfigure}
         since={flags.since}
       />,
       {
-      exitOnCtrlC: true,
+        exitOnCtrlC: true,
       },
     );
 

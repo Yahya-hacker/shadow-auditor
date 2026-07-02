@@ -51,6 +51,7 @@ describe('SwarmCoordinator', () => {
 
     const blackboard = coordinator.getBlackboard();
     expect(blackboard).to.exist;
+    if (!blackboard) throw new Error('Blackboard should exist after executeMission');
 
     const taskGraph = blackboard.getTaskGraph();
     const tasks = taskGraph.getAllTasks();

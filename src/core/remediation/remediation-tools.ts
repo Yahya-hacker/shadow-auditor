@@ -29,7 +29,7 @@ export function createRemediationTools(options: RemediationToolsOptions): ToolSe
   const { remediationLoop, testRunner } = options;
 
   return {
-    apply_and_test_patch: tool<{ diff: string; findingId: string }, string>({
+    apply_and_test_patch: tool({
       description: [
         'Apply a unified diff patch to fix a security finding, then run the test suite',
         'inside an isolated twin container. If the patch introduces new test failures',
@@ -63,7 +63,7 @@ export function createRemediationTools(options: RemediationToolsOptions): ToolSe
       }),
     }),
 
-    detect_test_framework: tool<Record<string, never>, string>({
+    detect_test_framework: tool({
       description: [
         'Detect the project\'s test framework and return the detected framework name,',
         'test command, and container image. Use this before applying patches to',
@@ -88,7 +88,7 @@ export function createRemediationTools(options: RemediationToolsOptions): ToolSe
       inputSchema: z.object({}),
     }),
 
-    get_baseline_status: tool<Record<string, never>, string>({
+    get_baseline_status: tool({
       description: [
         'Get the pre-mission test baseline status. Shows which tests were already passing',
         'and which were already failing BEFORE any patches were applied. A patch is valid',

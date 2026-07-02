@@ -164,6 +164,17 @@ const CAPABILITY_RULES: CapabilityRule[] = [
       supportsReasoningMode: false,
     },
     modelPattern: /.*/,
+    provider: 'deepseek',
+  },
+  {
+    capabilities: {
+      maxOutputTokens: 16_000,
+      maxToolSteps: 12,
+      preferredAuditMode: 'balanced',
+      supportsLongOutput: false,
+      supportsReasoningMode: false,
+    },
+    modelPattern: /.*/,
     provider: 'google',
   },
   {
@@ -186,7 +197,51 @@ const CAPABILITY_RULES: CapabilityRule[] = [
       supportsReasoningMode: false,
     },
     modelPattern: /.*/,
+    provider: 'moonshot',
+  },
+  {
+    capabilities: {
+      maxOutputTokens: 16_000,
+      maxToolSteps: 12,
+      preferredAuditMode: 'balanced',
+      supportsLongOutput: false,
+      supportsReasoningMode: false,
+    },
+    modelPattern: /.*/,
+    provider: 'nvidia',
+  },
+  {
+    capabilities: {
+      maxOutputTokens: 8000,
+      maxToolSteps: 10,
+      preferredAuditMode: 'quick',
+      supportsLongOutput: false,
+      supportsReasoningMode: false,
+    },
+    modelPattern: /.*/,
     provider: 'ollama',
+  },
+  {
+    capabilities: {
+      maxOutputTokens: 16_000,
+      maxToolSteps: 10,
+      preferredAuditMode: 'balanced',
+      supportsLongOutput: false,
+      supportsReasoningMode: false,
+    },
+    modelPattern: /.*/,
+    provider: 'perplexity',
+  },
+  {
+    capabilities: {
+      maxOutputTokens: 16_000,
+      maxToolSteps: 12,
+      preferredAuditMode: 'balanced',
+      supportsLongOutput: false,
+      supportsReasoningMode: false,
+    },
+    modelPattern: /.*/,
+    provider: 'qwen',
   },
   {
     capabilities: {

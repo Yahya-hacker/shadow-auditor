@@ -40,6 +40,11 @@ describe('licensing and credential vault', () => {
         expect(ENV_VAR_MAP).to.have.property('google', 'SHADOW_GOOGLE_KEY');
         expect(ENV_VAR_MAP).to.have.property('mistral', 'SHADOW_MISTRAL_KEY');
         expect(ENV_VAR_MAP).to.have.property('ollama', 'SHADOW_OLLAMA_KEY');
+        expect(ENV_VAR_MAP).to.have.property('deepseek', 'SHADOW_DEEPSEEK_KEY');
+        expect(ENV_VAR_MAP).to.have.property('qwen', 'SHADOW_QWEN_KEY');
+        expect(ENV_VAR_MAP).to.have.property('moonshot', 'SHADOW_MOONSHOT_KEY');
+        expect(ENV_VAR_MAP).to.have.property('nvidia', 'SHADOW_NVIDIA_KEY');
+        expect(ENV_VAR_MAP).to.have.property('perplexity', 'SHADOW_PERPLEXITY_KEY');
         expect(ENV_VAR_MAP).to.have.property('custom', 'SHADOW_CUSTOM_KEY');
       });
     });
@@ -92,7 +97,7 @@ describe('licensing and credential vault', () => {
       it('should not throw when setApiKey fails', async () => {
         const adapter = new KeychainAdapter();
         // Should silently no-op since cross-keychain isn't installed in test env
-        await adapter.setApiKey('openai', 'test-key');
+        await adapter.setApiKey('test-dummy', 'test-key');
       });
     });
   });

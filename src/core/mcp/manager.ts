@@ -92,7 +92,7 @@ export class MCPManager {
     definition: MCPToolDefinition,
     context: MCPExecutionContext,
   ): ToolSet[string] {
-    return tool<Record<string, unknown>, string>({
+    return tool({
       description: `[MCP:${adapterId}] ${definition.description}`,
       async execute(input: Record<string, unknown>) {
         const policyDecision = evaluateMcpPolicy(adapterId, definition, context.expertUnsafe);

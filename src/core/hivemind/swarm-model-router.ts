@@ -41,6 +41,11 @@ const PREMIUM_PATTERNS: Array<{ modelPattern: RegExp; provider: string }> = [
   { modelPattern: /gpt-5/i, provider: 'openai' },
   { modelPattern: /gpt-4o(?!-mini)/i, provider: 'openai' },
   { modelPattern: /o[1-4]-/i, provider: 'openai' },
+  { modelPattern: /deepseek-(reasoner|chat)/i, provider: 'deepseek' },
+  { modelPattern: /qwen-(max|plus)/i, provider: 'qwen' },
+  { modelPattern: /moonshot-v1-(128k|32k)/i, provider: 'moonshot' },
+  { modelPattern: /(nemotron|llama.*70b|mixtral)/i, provider: 'nvidia' },
+  { modelPattern: /sonar-pro/i, provider: 'perplexity' },
   // Google flagship
   { modelPattern: /gemini-(2|3)\.\d-(pro|ultra)/i, provider: 'google' },
   // Mistral flagship
@@ -56,6 +61,11 @@ const STANDARD_PATTERNS: Array<{ modelPattern: RegExp; provider: string }> = [
   { modelPattern: /gpt-4-turbo/i, provider: 'openai' },
   { modelPattern: /gemini-(2|3)\.\d-flash/i, provider: 'google' },
   { modelPattern: /mistral-(medium|small)/i, provider: 'mistral' },
+  { modelPattern: /sonar/i, provider: 'perplexity' },
+  { modelPattern: /qwen/i, provider: 'qwen' },
+  { modelPattern: /deepseek/i, provider: 'deepseek' },
+  { modelPattern: /moonshot/i, provider: 'moonshot' },
+  { modelPattern: /nvidia|nemotron|llama/i, provider: 'nvidia' },
 ];
 
 /**
@@ -88,7 +98,11 @@ export function classifyModelTier(provider: string, model: string): ModelTier {
   }
 
   // Unknown models from known providers default to standard
-  if (['anthropic', 'google', 'mistral', 'openai'].includes(normalizedProvider)) {
+  if (
+    ['anthropic', 'deepseek', 'google', 'mistral', 'moonshot', 'nvidia', 'openai', 'perplexity', 'qwen'].includes(
+      normalizedProvider,
+    )
+  ) {
     return 'standard';
   }
 

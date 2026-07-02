@@ -1,13 +1,37 @@
-import { DynamicStructuredTool } from "@langchain/core/tools";
+import { DynamicStructuredTool } from '@langchain/core/tools';
+import { type ToolSet } from 'ai';
+import { z } from 'zod';
 
-export function wrapTool(aiTool: any, name: string): DynamicStructuredTool {
+type AITool = ToolSet[string];
+
+function resolveSchema(tool: AITool) {
+  const candidate = (tool as { inputSchema?: z.ZodTypeAny; parameters?: z.ZodTypeAny }).inputSchema ??
+    (tool as { inputSchema?: z.ZodTypeAny; parameters?: z.ZodTypeAny }).parameters;
+
+  return candidate ?? z.object({}).passthrough();
+}
+
+function resolveDescription(tool: AITool): string {
+  const rawDescription = tool.description;
+  if (typeof rawDescription === 'string') {
+    return rawDescription;
+  }
+
+  return 'Wrapped AI SDK tool.';
+}
+
+export function wrapTool(aiTool: AITool, name: string): DynamicStructuredTool {
   return new DynamicStructuredTool({
-    name,
-    description: aiTool.description,
-    schema: aiTool.parameters || aiTool.inputSchema,
-    func: async (input: any) => {
-      const result = await aiTool.execute(input);
-      return typeof result === "string" ? result : JSON.stringify(result);
+    description: resolveDescription(aiTool),
+    async func(input: unknown) {
+      const result = await aiTool.execute?.(input as never, {} as never);
+      if (typeof result === 'string') {
+        return result;
+      }
+
+      return JSON.stringify(result);
     },
+    name,
+    schema: resolveSchema(aiTool),
   });
 }

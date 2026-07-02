@@ -55,6 +55,8 @@ export interface EmbeddingProvider {
   embed(texts: string[]): Promise<number[][]>;
   /** Provider name for logging */
   name: string;
+  /** Test the connection to the embedding service. Returns true if healthy. */
+  testConnection?(): Promise<boolean>;
 }
 
 export interface SemanticIndexOptions {
@@ -130,6 +132,20 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
 
     return results;
   }
+
+  async testConnection(): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.baseUrl}/api/embed`, {
+        body: JSON.stringify({ input: 'test', model: this.model }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+        signal: AbortSignal.timeout(10_000),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
 }
 
 /**
@@ -137,18 +153,27 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
  */
 export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   readonly dimension: number;
-  readonly name = 'openai';
+  readonly name: string;
   private readonly apiKey: string;
+  private readonly baseUrl: string;
   private readonly model: string;
 
-  constructor(options: { apiKey: string; dimension?: number; model?: string }) {
+  constructor(options: {
+    apiKey: string;
+    baseUrl?: string;
+    dimension?: number;
+    model?: string;
+    providerName?: string;
+  }) {
     this.apiKey = options.apiKey;
     this.model = options.model ?? 'text-embedding-3-small';
+    this.baseUrl = (options.baseUrl ?? 'https://api.openai.com/v1').replace(/\/+$/, '');
     this.dimension = options.dimension ?? 1536;
+    this.name = options.providerName ?? 'openai';
   }
 
   async embed(texts: string[]): Promise<number[][]> {
-    const response = await fetch('https://api.openai.com/v1/embeddings', {
+    const response = await fetch(`${this.baseUrl}/embeddings`, {
       body: JSON.stringify({
         input: texts,
         model: this.model,
@@ -170,6 +195,23 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
 
     return data.data.map((d) => d.embedding);
   }
+
+  async testConnection(): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.baseUrl}/embeddings`, {
+        body: JSON.stringify({ input: ['test'], model: this.model }),
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        method: 'POST',
+        signal: AbortSignal.timeout(15_000),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
 }
 
 /**
@@ -186,6 +228,10 @@ export class NullEmbeddingProvider implements EmbeddingProvider {
 
   async embed(texts: string[]): Promise<number[][]> {
     return texts.map((text) => this.deterministicVector(text));
+  }
+
+  async testConnection(): Promise<boolean> {
+    return true;
   }
 
   private deterministicVector(text: string): number[] {
@@ -657,7 +703,16 @@ export class SemanticIndex {
 
       return newChunks.length;
     } catch (error) {
-      console.warn(`[SemanticIndex] Parse error in ${filePath}: ${(error as Error).message}`);
+      const errorMessage = (error as Error).message;
+
+      // If this is an embedding/API error, propagate it to the caller
+      // so it can be handled once (not spammed per-file)
+      if (errorMessage.includes('embed error') || errorMessage.includes('Embedding')) {
+        throw error;
+      }
+
+      // Only log genuine parse errors (rare, worth knowing about)
+      // Suppress noise — the caller handles aggregate error reporting
       return 0;
     }
   }

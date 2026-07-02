@@ -5,11 +5,11 @@
 import { type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 
 import { streamWithContinuation } from '../session.js';
+import { createBlackboardTools } from './blackboard-tools.js';
 import { type Blackboard } from './blackboard.js';
 import { type AgentRole, type ModelTier, type Task } from './hivemind-schema.js';
 import { buildWorkerSystemPrompt } from './worker-prompts.js';
 import { createRoleToolSet } from './worker-toolsets.js';
-import { createBlackboardTools } from './blackboard-tools.js';
 
 export interface AgentWorkerOptions {
   agentId: string;

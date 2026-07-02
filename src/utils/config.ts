@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { z } from 'zod';
 
 /**
  * Configuration interface for Shadow Auditor
@@ -41,9 +42,9 @@ export interface ShadowConfig {
   indexing?: {
     /** Chunking strategy: 'function' (default), 'class', or 'file' */
     chunkStrategy?: 'class' | 'file' | 'function';
-    /** Embedding model name (default: 'nomic-embed-text' for Ollama, 'text-embedding-3-small' for OpenAI) */
+    /** Embedding model name. Defaults are auto-selected from the main provider when supported. */
     embeddingModel?: string;
-    /** Embedding provider: 'ollama' (default, local) or 'openai' (cloud) */
+    /** Embedding provider: 'ollama' (local) or 'openai' (OpenAI-compatible embeddings API). */
     embeddingProvider?: 'ollama' | 'openai';
     /** Enable semantic indexing (default: true when embedding provider is available) */
     enabled?: boolean;
@@ -83,6 +84,88 @@ export interface ShadowConfig {
 const CONFIG_FILENAME = '.shadow-auditor.json';
 let plaintextApiKeyWarningShown = false;
 
+const shadowConfigSchema = z.object({
+  apiKey: z.string().optional().default(''),
+  auditMode: z.enum(['balanced', 'deep', 'deep-sast', 'full-report', 'patch-only', 'quick', 'triage']).optional(),
+  ci: z.object({
+    enabled: z.boolean().optional(),
+    failOn: z.enum(['critical', 'high', 'low', 'medium', 'none']).optional(),
+  }).optional(),
+  commandPolicy: z.object({
+    additionalAllowedCommandPatterns: z.array(z.string()).optional(),
+    additionalDeniedPatterns: z.array(z.string()).optional(),
+    allowPnpmYarn: z.boolean().optional(),
+  }).optional(),
+  continuation: z.object({
+    maxContinuations: z.number().int().optional(),
+  }).optional(),
+  customBaseUrl: z.string().optional(),
+  dast: z.object({
+    baseImage: z.string().optional(),
+    cpuLimit: z.string().optional(),
+    enabled: z.boolean().optional(),
+    healthCheckUrl: z.string().optional(),
+    memoryLimit: z.string().optional(),
+    startCommand: z.string().optional(),
+  }).optional(),
+  diff: z.object({
+    baseRef: z.string().optional(),
+    enabled: z.boolean().optional(),
+  }).optional(),
+  expertUnsafe: z.boolean().optional(),
+  indexing: z.object({
+    chunkStrategy: z.enum(['class', 'file', 'function']).optional(),
+    embeddingModel: z.string().optional(),
+    embeddingProvider: z.enum(['ollama', 'openai']).optional(),
+    enabled: z.boolean().optional(),
+    maxChunkChars: z.number().int().optional(),
+  }).optional(),
+  licenseKey: z.string().optional(),
+  maxOutputTokens: z.number().int().optional(),
+  maxToolSteps: z.number().int().optional(),
+  mcp: z.object({
+    adapters: z.array(z.enum(['chrome-devtools', 'kali-linux'])).optional(),
+    chromeDevtoolsEndpoint: z.string().optional(),
+    enabled: z.boolean().optional(),
+    kaliLinuxEndpoint: z.string().optional(),
+  }).optional(),
+  model: z.string().min(1),
+  provider: z.string().min(1),
+  remediation: z.object({
+    autoRevert: z.boolean().optional(),
+    containerImage: z.string().optional(),
+    enabled: z.boolean().optional(),
+    testCommand: z.string().optional(),
+    testTimeoutMs: z.number().int().optional(),
+  }).optional(),
+  reportValidation: z.object({
+    maxRepairRetries: z.number().int().optional(),
+  }).optional(),
+  swarm: z.object({
+    enabled: z.boolean().optional(),
+    maxWorkers: z.number().int().optional(),
+    modelOverrides: z.record(z.object({
+      apiKey: z.string().optional(),
+      model: z.string(),
+      provider: z.string(),
+    })).optional(),
+    roles: z.array(z.string()).optional(),
+    workerBudgetRatio: z.number().optional(),
+  }).optional(),
+});
+
+export type ValidShadowConfig = z.infer<typeof shadowConfigSchema>;
+
+export function validateConfig(data: unknown): null | ShadowConfig {
+  const result = shadowConfigSchema.safeParse(data);
+  if (!result.success) {
+    process.stderr.write(`[ShadowAuditor][WARN] Invalid config: ${result.error.message}\n`);
+    return null;
+  }
+
+  return result.data as ShadowConfig;
+}
+
 /**
  * Extension point for future secure keychain integration.
  * Current behavior remains JSON-file based for backward compatibility.
@@ -114,10 +197,9 @@ export async function loadConfig(): Promise<null | ShadowConfig> {
 
   try {
     const raw = await fs.readFile(configPath, 'utf8');
-    const parsed = JSON.parse(raw) as ShadowConfig;
-
-    // Validate essential fields
-    if (!parsed.provider || !parsed.model) {
+    const parsedRaw = JSON.parse(raw) as unknown;
+    const parsed = validateConfig(parsedRaw);
+    if (!parsed) {
       return null;
     }
 
@@ -135,9 +217,9 @@ export async function loadConfig(): Promise<null | ShadowConfig> {
 
     if (parsed.provider !== 'ollama' && parsed.apiKey && !plaintextApiKeyWarningShown) {
       plaintextApiKeyWarningShown = true;
-      console.warn(
-        `[SHADOW-AUDITOR][WARN] API key is stored in plaintext at ${configPath}. ` +
-          'Consider using environment variables or registerSecretStoreAdapter(...) for keychain integration.',
+      process.stderr.write(
+        `[ShadowAuditor][WARN] API key is stored in plaintext at ${configPath}. ` +
+          'Consider using environment variables or registerSecretStoreAdapter(...) for keychain integration.\n',
       );
     }
 
