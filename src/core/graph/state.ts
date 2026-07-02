@@ -1,17 +1,64 @@
 import { BaseMessage } from '@langchain/core/messages';
 import { BaseStore } from '@langchain/core/stores';
-import { Annotation } from '@langchain/langgraph';
+import { Annotation, messagesStateReducer } from '@langchain/langgraph';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { type BlackboardState } from '../hivemind/hivemind-schema.js';
 import { type EnhancedFinding } from '../output/finding-schema.js';
 
 type KnowledgeGraphState = Record<string, unknown>;
 type MemoryEntry = Record<string, unknown>;
 type StoreValue = Record<string, unknown>;
 
+function mergeBlackboard(
+  left: BlackboardState,
+  right: Partial<BlackboardState>,
+): BlackboardState {
+  return {
+    agents: right.agents ?? left.agents,
+    claims: mergeById(left.claims, right.claims ?? [], 'claimId'),
+    conflicts: mergeById(left.conflicts, right.conflicts ?? [], 'conflictId'),
+    consensusRecords: right.consensusRecords ?? left.consensusRecords,
+    runId: right.runId ?? left.runId,
+    schemaVersion: right.schemaVersion ?? left.schemaVersion,
+    snapshotAt: right.snapshotAt ?? left.snapshotAt,
+    tasks: mergeById(left.tasks, right.tasks ?? [], 'taskId'),
+  };
+}
+
+function mergeById<T extends Record<string, unknown>>(
+  existing: T[],
+  update: T[],
+  idKey: keyof T,
+): T[] {
+  const map = new Map<string, T>();
+  for (const item of existing) {
+    map.set(String(item[idKey]), item);
+  }
+
+  for (const item of update) {
+    map.set(String(item[idKey]), item);
+  }
+
+  return [...map.values()];
+}
+
 /* eslint-disable new-cap */
 export const AgentState = Annotation.Root({
+  blackboard: Annotation<BlackboardState>({
+    default: () => ({
+      agents: [],
+      claims: [],
+      conflicts: [],
+      consensusRecords: [],
+      runId: '',
+      schemaVersion: '1.0.0',
+      snapshotAt: new Date().toISOString(),
+      tasks: [],
+    }),
+    reducer: (state, update) => (update ? mergeBlackboard(state, update) : state),
+  }),
   findings: Annotation<EnhancedFinding[]>({
     default: () => [],
     reducer: (state, update) => state.concat(update),
@@ -30,7 +77,7 @@ export const AgentState = Annotation.Root({
   }),
   messages: Annotation<BaseMessage[]>({
     default: () => [],
-    reducer: (state, update) => state.concat(update),
+    reducer: messagesStateReducer,
   }),
 });
 /* eslint-enable new-cap */

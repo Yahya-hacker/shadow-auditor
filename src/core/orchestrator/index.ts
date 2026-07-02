@@ -2,6 +2,7 @@
  * Orchestrator module exports.
  */
 
+export * from './checkpoint-saver.js';
 export * from './checkpoints.js';
 export * from './mission-engine.js';
 export * from './mission-state.js';

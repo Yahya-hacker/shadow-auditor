@@ -314,7 +314,11 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     // Compile the LangGraph workflow ONCE for reuse across messages
     this.langchainModel = getLangchainModel(this.config);
     const toolsArray = Object.entries(this.tools).map(([name, tool]) => ({ name, tool }));
-    this.compiledWorkflow = compileWorkflow(toolsArray, this.langchainModel);
+    this.compiledWorkflow = compileWorkflow({
+      model: this.langchainModel,
+      providerHint: this.config.provider,
+      tools: toolsArray,
+    });
 
     // Initialize swarm coordinator if enabled
     if (this.config.swarm?.enabled) {

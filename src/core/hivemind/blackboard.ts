@@ -6,6 +6,9 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
+import type { EventStore } from '../memory/event-store.js';
+import type { KnowledgeGraph } from '../memory/knowledge-graph.js';
+
 import { err, ok, type Result, safeParseJson } from '../schema/base.js';
 import {
   type AgentRegistration,
@@ -25,7 +28,9 @@ import {
 import { TaskGraph } from './task-graph.js';
 
 export interface BlackboardOptions {
+  eventStore?: EventStore;
   heartbeatTimeout?: number; // ms before agent considered offline
+  knowledgeGraph?: KnowledgeGraph;
   runId: string;
   storagePath: string;
 }
@@ -45,17 +50,23 @@ export class Blackboard {
   private claimVerifiedListeners: Set<ClaimListener> = new Set();
   private conflictCreatedListeners: Set<ConflictListener> = new Set();
   private conflicts: Map<string, ConflictMarker> = new Map();
-private readonly heartbeatTimeout: number;
+  private readonly eventStore?: EventStore;
+  private readonly heartbeatTimeout: number;
+  private readonly knowledgeGraph?: KnowledgeGraph;
   private readonly runId: string;
   private readonly snapshotPath: string;
   private taskCompletedListeners: Set<TaskListener> = new Set();
   private readonly taskGraph: TaskGraph;
+  // Serializes mutating operations so concurrent async writes cannot interleave.
+  private writeQueue: Promise<void> = Promise.resolve();
 
   private constructor(options: BlackboardOptions) {
     this.runId = options.runId;
     this.snapshotPath = path.join(options.storagePath, 'blackboard.json');
     this.heartbeatTimeout = options.heartbeatTimeout ?? 60_000;
     this.taskGraph = new TaskGraph();
+    this.eventStore = options.eventStore;
+    this.knowledgeGraph = options.knowledgeGraph;
   }
 
   /**
@@ -378,13 +389,15 @@ private readonly heartbeatTimeout: number;
 
   /**
    * Submit an evidence claim.
+   * This operation is async because it persists an event to the event store
+   * and computes an evidence hash linking the claim to the knowledge graph.
    */
-  submitClaim(
+  async submitClaim(
     agentId: string,
     claimType: string,
     data: Record<string, unknown>,
-    options: { confidence?: number; entityId?: string; modelTier?: ModelTier; trustScore?: number } = {},
-  ): Result<EvidenceClaim, string> {
+    options: { confidence?: number; entityId?: string; linkedEntityIds?: string[]; modelTier?: ModelTier; trustScore?: number } = {},
+  ): Promise<Result<EvidenceClaim, string>> {
     const agent = this.agents.get(agentId);
     if (!agent) {
       return err(`Agent not found: ${agentId}`);
@@ -393,7 +406,11 @@ private readonly heartbeatTimeout: number;
     const now = new Date().toISOString();
     const claimId = `claim_${crypto.randomBytes(8).toString('hex')}`;
 
-    const claim: EvidenceClaim = {
+    // Build linked entity list: explicit IDs plus the primary entity if provided.
+    const linkedEntityIds = [...new Set([...(options.entityId ? [options.entityId] : []), ...(options.linkedEntityIds ?? [])])];
+
+    // Create a preliminary claim for hashing.
+    const preliminaryClaim: EvidenceClaim = {
       agentId,
       claimId,
       claimType,
@@ -402,35 +419,63 @@ private readonly heartbeatTimeout: number;
       createdAt: now,
       data,
       entityId: options.entityId,
+      evidenceHash: '',
+      linkedEntityIds,
+      linkedEventIds: [],
       modelTier: options.modelTier ?? 'standard',
       status: 'proposed',
       trustScore: options.trustScore ?? 0.7,
       verifiedBy: [],
     };
 
-    const validation = evidenceClaimSchema.safeParse(claim);
-    if (!validation.success) {
-      return err(`Invalid claim: ${validation.error.message}`);
-    }
+    return this.enqueueWrite(async () => {
+      // Persist an event so the claim has an audit trail.
+      let linkedEventIds: string[] = [];
+      if (this.eventStore) {
+        const eventResult = await this.eventStore.append('finding_created', {
+          agentId,
+          claimId,
+          claimType,
+          entityId: options.entityId,
+          linkedEntityIds,
+        });
+        if (eventResult.ok) {
+          linkedEventIds = [eventResult.value.eventId];
+        }
+      }
 
-    this.claims.set(claimId, claim);
+      const evidenceHash = this.computeEvidenceHash(preliminaryClaim, linkedEventIds, linkedEntityIds);
 
-    // Notify listeners
-    for (const listener of this.claimSubmittedListeners) {
-      listener(claim);
-    }
+      const claim: EvidenceClaim = {
+        ...preliminaryClaim,
+        evidenceHash,
+        linkedEventIds,
+      };
 
-    const typeListeners = this.claimTypeListeners.get(claimType);
-    if (typeListeners) {
-      for (const listener of typeListeners) {
+      const validation = evidenceClaimSchema.safeParse(claim);
+      if (!validation.success) {
+        return err(`Invalid claim: ${validation.error.message}`);
+      }
+
+      this.claims.set(claimId, claim);
+
+      // Notify listeners
+      for (const listener of this.claimSubmittedListeners) {
         listener(claim);
       }
-    }
 
-    // Check for conflicts with existing claims
-    this.checkForClaimConflicts(claim);
+      const typeListeners = this.claimTypeListeners.get(claimType);
+      if (typeListeners) {
+        for (const listener of typeListeners) {
+          listener(claim);
+        }
+      }
 
-    return ok(claim);
+      // Check for conflicts with existing claims
+      this.checkForClaimConflicts(claim);
+
+      return ok(claim);
+    });
   }
 
   // ==========================================================================
@@ -500,6 +545,24 @@ private readonly heartbeatTimeout: number;
     }
   }
 
+  private computeEvidenceHash(
+    claim: EvidenceClaim,
+    linkedEventIds: string[],
+    linkedEntityIds: string[],
+  ): string {
+    const payload = JSON.stringify({
+      agentId: claim.agentId,
+      claimType: claim.claimType,
+      data: claim.data,
+      entityId: claim.entityId,
+      linkedEntityIds: linkedEntityIds.sort(),
+      linkedEventIds: linkedEventIds.sort(),
+      trustScore: claim.trustScore,
+    });
+
+    return crypto.createHash('sha256').update(payload).digest('hex');
+  }
+
   private determineClaimStatus(verifyCount: number, contestCount: number): EvidenceClaimStatus {
     if (contestCount >= 2) {
       return 'rejected';
@@ -518,6 +581,20 @@ private readonly heartbeatTimeout: number;
     }
 
     return 'proposed';
+  }
+
+  private enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      this.writeQueue = this.writeQueue.then(async () => {
+        try {
+          resolve(await operation());
+        } catch (error) {
+          reject(error);
+        }
+      }).catch(() => {
+        // Ensure the queue continues even if an individual operation fails.
+      });
+    });
   }
 
   /**

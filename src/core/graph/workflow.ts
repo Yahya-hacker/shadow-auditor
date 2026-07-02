@@ -1,9 +1,10 @@
-import { type BaseChatModel } from '@langchain/core/language_models/chat_models';
-import { AIMessage, SystemMessage } from '@langchain/core/messages';
-import { RunnableConfig } from '@langchain/core/runnables';
+import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
+import type { RunnableConfig } from '@langchain/core/runnables';
+import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
+
+import { AIMessage, BaseMessage, SystemMessage } from '@langchain/core/messages';
 import {
   END,
-  MemorySaver,
   START,
   StateGraph,
 } from '@langchain/langgraph';
@@ -11,6 +12,7 @@ import { ToolNode } from '@langchain/langgraph/prebuilt';
 import { type ToolSet } from 'ai';
 
 import { AgentState } from './state.js';
+import { ToolRetriever } from './tool-retriever.js';
 import { wrapTool } from './tools/langchain-wrapper.js';
 
 type GraphState = typeof AgentState.State;
@@ -65,6 +67,14 @@ Reject findings that lack concrete evidence or are based on assumptions.
 Provide a clear verdict for each finding: CONFIRMED, LIKELY, or FALSE_POSITIVE.`,
 };
 
+export interface CompileWorkflowOptions {
+  checkpointer?: BaseCheckpointSaver;
+  model: BaseChatModel;
+  providerHint?: string;
+  toolRetriever?: ToolRetriever;
+  tools: ToolEntry[];
+}
+
 /**
  * Checks whether an AIMessage contains tool calls.
  * Handles both LangChain's direct tool_calls property and
@@ -87,7 +97,7 @@ function hasToolCalls(message: AIMessage): boolean {
 
 function getMessageIterationCount(state: GraphState): number {
   // Count how many AI messages have been produced (rough iteration guard)
-  return state.messages.filter((m) => m instanceof AIMessage).length;
+  return state.messages.filter((m: BaseMessage) => m instanceof AIMessage).length;
 }
 
 /**
@@ -159,21 +169,29 @@ function routeFromSpecialist(state: GraphState): string {
   return routeAfterModelInvocation(state, 'Supervisor');
 }
 
-export function compileWorkflow(tools: ToolEntry[], model: BaseChatModel) {
-  const wrappedTools = tools.map((entry) => wrapTool(entry.tool, entry.name));
+export function compileWorkflow(options: CompileWorkflowOptions) {
+  const { checkpointer, model, providerHint, toolRetriever, tools } = options;
+  const wrappedTools = tools.map((entry) => wrapTool(entry.tool, entry.name, { providerHint }));
   const toolNode = new ToolNode(wrappedTools);
+  const retriever = toolRetriever ?? new ToolRetriever(wrappedTools.map((t, i) => ({ name: t.name ?? `tool_${i}`, tool: tools[i]!.tool })));
 
   if (!model.bindTools) {
     throw new Error('Model does not support bindTools');
   }
 
-  const modelWithTools = model.bindTools(wrappedTools);
+  const bindTools = model.bindTools.bind(model);
 
   // =========================================================================
   // All node functions are defined INSIDE compileWorkflow so they have
-  // closure access to `modelWithTools`. Each node invokes the model with
-  // a specialized system prompt, producing real AI responses (not stubs).
+  // closure access to the model and tool retriever. Each node invokes the
+  // model with a specialized system prompt, producing real AI responses.
   // =========================================================================
+
+  async function bindModel(state: GraphState, config?: RunnableConfig) {
+    const selected = await retriever.retrieve(state.messages);
+    const bound = bindTools(selected, config);
+    return bound;
+  }
 
   /**
    * SAST Analyzer node: invokes the model with a security analysis system prompt.
@@ -184,6 +202,7 @@ export function compileWorkflow(tools: ToolEntry[], model: BaseChatModel) {
     config?: RunnableConfig,
   ): Promise<Partial<GraphState>> {
     const systemMsg = new SystemMessage({ content: NODE_PROMPTS.sastAnalyzer });
+    const modelWithTools = await bindModel(state, config);
     const response = await modelWithTools.invoke([systemMsg, ...state.messages], config);
     return { messages: [response] };
   }
@@ -197,6 +216,7 @@ export function compileWorkflow(tools: ToolEntry[], model: BaseChatModel) {
     config?: RunnableConfig,
   ): Promise<Partial<GraphState>> {
     const systemMsg = new SystemMessage({ content: NODE_PROMPTS.graphTracer });
+    const modelWithTools = await bindModel(state, config);
     const response = await modelWithTools.invoke([systemMsg, ...state.messages], config);
     return { messages: [response] };
   }
@@ -210,6 +230,7 @@ export function compileWorkflow(tools: ToolEntry[], model: BaseChatModel) {
     config?: RunnableConfig,
   ): Promise<Partial<GraphState>> {
     const systemMsg = new SystemMessage({ content: NODE_PROMPTS.verifier });
+    const modelWithTools = await bindModel(state, config);
     const response = await modelWithTools.invoke([systemMsg, ...state.messages], config);
     return { messages: [response] };
   }
@@ -222,6 +243,7 @@ export function compileWorkflow(tools: ToolEntry[], model: BaseChatModel) {
     state: GraphState,
     config?: RunnableConfig,
   ): Promise<Partial<GraphState>> {
+    const modelWithTools = await bindModel(state, config);
     const response = await modelWithTools.invoke(state.messages, config);
     return { messages: [response] };
   }
@@ -240,6 +262,6 @@ export function compileWorkflow(tools: ToolEntry[], model: BaseChatModel) {
     .addEdge('ToolExecutor', 'Supervisor');
 
   return workflow.compile({
-    checkpointer: new MemorySaver(),
+    checkpointer,
   });
 }

@@ -106,7 +106,7 @@ describe('SwarmCoordinator', () => {
       throw new Error('Registration failed');
     }
 
-    const claimRes = blackboard.submitClaim(reg1.value.agentId, 'recon_entrypoint', { entrypoint: '/api/v1/user' });
+    const claimRes = await blackboard.submitClaim(reg1.value.agentId, 'recon_entrypoint', { entrypoint: '/api/v1/user' });
     expect(claimRes.ok).to.be.true;
     expect(claimSubmitted).to.be.true;
 

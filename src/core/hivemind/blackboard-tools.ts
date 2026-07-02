@@ -83,7 +83,7 @@ export function createBlackboardTools(options: BlackboardToolsOptions) {
       description:
         'Submit an evidence claim to the shared blackboard for other agents to see and verify. Use this to share findings, traces, or discoveries.',
       async execute({ claimType, confidence, data, entityId }: z.infer<typeof submitClaimInputSchema>) {
-        const result = blackboard.submitClaim(agentId, claimType, data, {
+        const result = await blackboard.submitClaim(agentId, claimType, data, {
           confidence,
           entityId,
           modelTier,
