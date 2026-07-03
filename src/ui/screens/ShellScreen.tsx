@@ -1,5 +1,5 @@
 import { Box, useApp, useInput } from 'ink';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { useAgentSessionRef } from '../AgentSessionContext.js';
 import { FiltersPanel } from '../components/FiltersPanel.js';
@@ -340,6 +340,17 @@ export const ShellScreen: React.FC = () => {
   const isCompact = useAppStore((state) => state.isCompact);
   const [isProcessing, setIsProcessing] = useState(false);
   const { exit } = useApp();
+
+  // Trigger "Synchronized Output" Mode (DEC Mode 2026)
+  // This commands the terminal emulator to buffer rendering and only swap
+  // the buffer when the frame is complete, eliminating flickering and
+  // overlapping text during high-speed token streaming.
+  useEffect(() => {
+    process.stdout.write('\x1b[?2026h');
+    return () => {
+      process.stdout.write('\x1b[?2026l');
+    };
+  }, []);
 
   const handleSubmit = useHandleSubmit(setIsProcessing, exit);
 

@@ -29,6 +29,7 @@ import {
   resolveWorkerTier,
   type SwarmModelOverrides,
 } from './swarm-model-router.js';
+import { debugLog } from '../../utils/debug-logger.js';
 
 type GraphState = typeof AgentState.State;
 
@@ -288,7 +289,7 @@ export function buildSwarmSupervisor(options: {
     try {
       await executeTaskWithWorker(task, worker, blackboard, coordinator.getOnActivity());
     } catch (error) {
-      process.stderr.write(`[SwarmCoordinator] Task ${taskId} failed: ${error}\n`);
+      debugLog(`[SwarmCoordinator] Task ${taskId} failed: ${error}`);
       taskGraph.failTask(taskId, error instanceof Error ? error.message : String(error));
     }
 
@@ -391,7 +392,7 @@ function routeAfterEvaluate(state: GraphState): string {
     return 'dispatch';
   }
 
-  process.stderr.write('[SwarmCoordinator] Swarm stalled: deadlock or unresolved dependencies.\n');
+  debugLog('[SwarmCoordinator] Swarm stalled: deadlock or unresolved dependencies.');
   return END;
 }
 

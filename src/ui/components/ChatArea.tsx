@@ -1,4 +1,4 @@
-import { Box, Text } from 'ink';
+import { Box, Static, Text } from 'ink';
 import React from 'react';
 
 import { useAppStore } from '../store/appStore.js';
@@ -11,16 +11,15 @@ interface ChatAreaProps {
 }
 
 /**
- * Scrollable, searchable chat transcript.
+ * Chat transcript using Ink's <Static> component.
  *
- * Ink has no native scroll viewport, so we render a window of the most recent
- * messages ending at (length - scrollOffset). scrollOffset 0 follows the
- * latest (auto-scroll); j/k/↑↓ shift the window back/forward. When search is
- * active, messages are live-filtered by substring.
+ * By using <Static>, messages are written to the terminal once and for all,
+ * never re-evaluating them during subsequent refreshes. This instantly removes
+ * flickering from frozen text sections and avoids the "Ink Full-Rerender Trap"
+ * where the entire component tree is cleared and redrawn on every token stream.
  */
 export const ChatArea: React.FC<ChatAreaProps> = ({ height }) => {
   const messages = useAppStore((state) => state.messages);
-  const scrollOffset = useAppStore((state) => state.scrollOffset);
   const searchActive = useAppStore((state) => state.searchActive);
   const searchQuery = useAppStore((state) => state.searchQuery);
 
@@ -39,33 +38,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ height }) => {
     );
   }
 
-  // Each message occupies ~2 rows (text + margin); window from body height.
-  const maxVisible = Math.max(1, Math.floor((height - 2) / 2));
-  // Clamp so an out-of-range offset (e.g. "jump to top") still shows the oldest
-  // window rather than an empty one.
-  const effectiveOffset = Math.min(scrollOffset, Math.max(0, filtered.length - maxVisible));
-  const end = filtered.length - effectiveOffset;
-  const start = Math.max(0, end - maxVisible);
-  const windowMessages = filtered.slice(start, end);
-  const earlier = start;
-  const newer = effectiveOffset;
-
   return (
     <Box flexDirection="column" flexGrow={1}>
-      {earlier > 0 && (
-        <Text color={colors.dim}>
-          ↑ {earlier} earlier message{earlier === 1 ? '' : 's'}
-          {searchActive ? ' (filtered)' : ''}
-        </Text>
-      )}
-      {windowMessages.map((msg) => (
-        <ChatMessage key={msg.id} message={msg} />
-      ))}
-      {newer > 0 && (
-        <Text color={colors.dim}>
-          ↓ {newer} newer message{newer === 1 ? '' : 's'} (press j to follow)
-        </Text>
-      )}
+      <Static items={filtered}>
+        {(msg) => <ChatMessage key={msg.id} message={msg} />}
+      </Static>
     </Box>
   );
 };

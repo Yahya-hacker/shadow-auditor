@@ -7,6 +7,7 @@ import type { HumanInputRequest } from '../core/graph/state.js';
 import { useAgentSessionRef } from './AgentSessionContext.js';
 import { useAppStore } from './store/appStore.js';
 import { colors } from './theme/chalkTheme.js';
+import { debugLog } from '../utils/debug-logger.js';
 
 /**
  * Confirmation dialog for two sources:
@@ -57,6 +58,7 @@ export const ConfirmDialog: React.FC = () => {
         );
         finishStreaming();
       } catch (error) {
+        debugLog(`[ConfirmDialog] Resume failed: ${error}`);
         addErrorMessage(`Error: ${(error as Error).message}`);
         finishStreaming();
       }
