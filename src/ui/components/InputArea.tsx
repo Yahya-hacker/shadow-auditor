@@ -38,6 +38,7 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, onSubmit }) 
   const setSearchQuery = useAppStore((state) => state.setSearchQuery);
   const setSearchActive = useAppStore((state) => state.setSearchActive);
   const isCompact = useAppStore((state) => state.isCompact);
+  const humanInputRequest = useAppStore((state) => state.humanInputRequest);
 
   const isFocused = focus === 'input';
   const panelStyle = searchActive
@@ -45,6 +46,12 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, onSubmit }) 
     : getPanelStyle(isFocused);
 
   const titlePrefix = isFocused ? 'Query' : 'Query';
+
+  const placeholder = humanInputRequest
+    ? humanInputRequest.type === 'confirmation'
+      ? 'Type yes/no to confirm...'
+      : 'Type your answer...'
+    : 'Describe a security concern or ask a question...';
 
   return (
     <Box flexDirection="column">
@@ -85,7 +92,7 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, onSubmit }) 
             <TextInput
               onChange={setInput}
               onSubmit={onSubmit}
-              placeholder="Describe a security concern or ask a question..."
+              placeholder={placeholder}
               value={input}
             />
           </Box>

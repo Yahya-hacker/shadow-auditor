@@ -25,6 +25,12 @@ export const ConfirmDialog: React.FC = () => {
   const closeConfirmation = useAppStore((state) => state.closeConfirmation);
   const humanInputRequest = useAppStore((state) => state.humanInputRequest);
   const setHumanInputRequest = useAppStore((state) => state.setHumanInputRequest);
+  const addUserMessage = useAppStore((state) => state.addUserMessage);
+  const startStreaming = useAppStore((state) => state.startStreaming);
+  const appendStreamChunk = useAppStore((state) => state.appendStreamChunk);
+  const finishStreaming = useAppStore((state) => state.finishStreaming);
+  const addActivityEvent = useAppStore((state) => state.addActivityEvent);
+  const addErrorMessage = useAppStore((state) => state.addErrorMessage);
   const agentSessionRef = useAgentSessionRef();
 
   // Handle LangGraph interrupt-driven confirmation
@@ -36,17 +42,23 @@ export const ConfirmDialog: React.FC = () => {
 
     const handleSelect = async (item: { value: string }) => {
       const approved = item.value === 'yes';
+      const answerText = approved ? 'Yes, approve' : 'No, deny';
+      
+      addUserMessage(answerText);
       setHumanInputRequest(null);
+      startStreaming();
 
       // Resume the LangGraph graph with the human's answer
       try {
         await agentSessionRef.current?.resumeWithHumanInput(
           approved,
-          () => {},
-          () => {},
+          (chunk: string) => { appendStreamChunk(chunk); },
+          (event) => { addActivityEvent(event); },
         );
+        finishStreaming();
       } catch (error) {
-        process.stderr.write(`[ConfirmDialog] Resume failed: ${error}\n`);
+        addErrorMessage(`Error: ${(error as Error).message}`);
+        finishStreaming();
       }
     };
 
