@@ -127,6 +127,7 @@ export interface AppState {
   setSessionPhase: (phase: SessionPhase) => void;
   setSessionTarget: (targetPath: string) => void;
   setSwarmState: (state: null | SwarmStateSnapshot) => void;
+  setUserName: (name: string) => void;
   startStreaming: () => void;
   streaming: boolean;
   streamingText: string;
@@ -137,6 +138,7 @@ export interface AppState {
   toggleFilter: (key: string) => void;
   toggleHelp: () => void;
   togglePanel: () => void;
+  userName: string;
 }
 
 const MAX_MESSAGES = 200;
@@ -281,6 +283,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSessionTarget: (targetPath) =>
     set((state) => ({ session: { ...state.session, targetPath } })),
   setSwarmState: (swarmState) => set({ swarmState }),
+  setUserName: (userName) => set({ userName }),
   startStreaming: () => set({ streaming: true, streamingText: '' }),
   streaming: false,
   streamingText: '',
@@ -289,4 +292,5 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({ filters: { ...state.filters, [key]: !state.filters[key] } })),
   toggleHelp: () => set((state) => ({ helpOpen: !state.helpOpen })),
   togglePanel: () => set((state) => ({ panelOpen: !state.panelOpen })),
+  userName: '',
 }));
