@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import type { AgentStreamEvent } from '../../core/agent.js';
+import type { HumanInputRequest } from '../../core/graph/state.js';
 import type { SwarmStateSnapshot } from '../../core/hivemind/swarm-supervisor.js';
 import type { LicenseGateResult } from '../../core/policy/license-guard.js';
 import type { ShadowConfig } from '../../utils/config.js';
@@ -37,6 +38,8 @@ export interface ConfirmationState {
   title: string;
 }
 
+export type FocusTarget = 'filters' | 'input' | 'output' | 'panel';
+
 export interface AppState {
   // Activity stream
   activity: ActivityEvent[];
@@ -59,11 +62,25 @@ export interface AppState {
   config: null | ShadowConfig;
   // Confirmation dialog
   confirmation: ConfirmationState;
+  // Elapsed time (seconds) since the last query was submitted
+  elapsedTime: number;
+  // Filter state: key = filter label, value = enabled
+  filters: Record<string, boolean>;
   finishStreaming: () => void;
-  focus: 'input' | 'panel';
+  focus: FocusTarget;
+  // Scope label for the metadata panel (e.g. 'Global', 'src/config.ts')
+  focusScope: string;
   helpOpen: boolean;
+  // Hit count (number of findings/vulnerabilities surfaced)
+  hitCount: number;
+  // Human input request from the agent (when the LangGraph graph interrupts
+  // at HumanIntervention). Set when the TUI receives a human_input_required
+  // event; cleared when the user responds and the graph is resumed.
+  humanInputRequest: null | HumanInputRequest;
   // Input
   input: string;
+  // Compact mode (derived from terminal width < COMPACT_THRESHOLD)
+  isCompact: boolean;
   licenseGate: LicenseGateResult | null;
   // Chat
   messages: ChatMessageData[];
@@ -89,10 +106,16 @@ export interface AppState {
   };
 
   setConfig: (config: ShadowConfig) => void;
-  setFocus: (focus: 'input' | 'panel') => void;
+  setElapsedTime: (seconds: number) => void;
+  setFilter: (key: string, value: boolean) => void;
+  setFocus: (focus: FocusTarget) => void;
+  setFocusScope: (scope: string) => void;
   setHelpOpen: (open: boolean) => void;
+  setHitCount: (count: number) => void;
+  setHumanInputRequest: (request: null | HumanInputRequest) => void;
 
   setInput: (input: string) => void;
+  setIsCompact: (compact: boolean) => void;
   setLicenseGate: (gate: LicenseGateResult | null) => void;
 
   setPanelOpen: (open: boolean) => void;
@@ -111,6 +134,7 @@ export interface AppState {
   // the supervisor's evaluateConsensus node; rendered by the swarm panel and
   // status bar.
   swarmState: null | SwarmStateSnapshot;
+  toggleFilter: (key: string) => void;
   toggleHelp: () => void;
   togglePanel: () => void;
 }
@@ -122,6 +146,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   activity: [],
   addActivityEvent: (event) =>
     set((state) => {
+      // Human-input requests from LangGraph interrupts are routed to the
+      // humanInputRequest slice (rendered by ConfirmDialog/InputArea) instead
+      // of cluttering the activity feed.
+      if (event.kind === 'human_input_required' && event.humanInputRequest) {
+        return { humanInputRequest: event.humanInputRequest };
+      }
+
       // Structured swarm snapshots are routed to the swarmState slice (rendered
       // by the panel/status bar) instead of cluttering the activity feed.
       if (event.kind === 'swarm_state' && event.swarmState) {
@@ -178,6 +209,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     open: false,
     title: '',
   },
+  elapsedTime: 0,
+  filters: { 'auto_agent': true, 'crit:high': false, 'doc_type:pdf': false },
   finishStreaming: () =>
     set((state) => {
       if (state.streamingText) {
@@ -191,8 +224,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { streaming: false, streamingText: '' };
     }),
   focus: 'input',
+  focusScope: 'Global',
   helpOpen: false,
+  hitCount: 0,
+  humanInputRequest: null,
   input: '',
+  isCompact: false,
   licenseGate: null,
   messages: [],
   panelOpen: false,
@@ -219,10 +256,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setConfig: (config) => set({ config }),
+  setElapsedTime: (elapsedTime) => set({ elapsedTime }),
+  setFilter: (key, value) =>
+    set((state) => ({ filters: { ...state.filters, [key]: value } })),
   setFocus: (focus) => set({ focus }),
+  setFocusScope: (focusScope) => set({ focusScope }),
   setHelpOpen: (helpOpen) => set({ helpOpen }),
+  setHitCount: (hitCount) => set({ hitCount }),
+  setHumanInputRequest: (humanInputRequest) => set({ humanInputRequest }),
 
   setInput: (input) => set({ input }),
+  setIsCompact: (isCompact) => set({ isCompact }),
   setLicenseGate: (gate) => set({ licenseGate: gate }),
 
   setPanelOpen: (panelOpen) => set({ panelOpen }),
@@ -241,6 +285,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   streaming: false,
   streamingText: '',
   swarmState: null,
+  toggleFilter: (key) =>
+    set((state) => ({ filters: { ...state.filters, [key]: !state.filters[key] } })),
   toggleHelp: () => set((state) => ({ helpOpen: !state.helpOpen })),
   togglePanel: () => set((state) => ({ panelOpen: !state.panelOpen })),
 }));
