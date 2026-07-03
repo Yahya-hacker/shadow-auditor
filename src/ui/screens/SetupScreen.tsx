@@ -1,18 +1,18 @@
 import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import TextInput from 'ink-text-input';
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import type { ShadowConfig } from '../../utils/config.js';
 
 import { saveConfig } from '../../utils/config.js';
+import { saveApiKey } from '../../utils/keychain.js';
 import {
   fetchApiModels,
   getEmbeddingDefaults,
   getProviderModels,
   isOpenAICompatibleProvider,
   providerHasNativeEmbedding,
-  providerRequiresApiKey,
 } from '../../utils/provider-catalog.js';
 import { useAppStore } from '../store/appStore.js';
 import { colors, spacing } from '../theme/chalkTheme.js';
@@ -26,7 +26,8 @@ type Step =
   | 'fetching'
   | 'license'
   | 'model'
-  | 'provider';
+  | 'provider'
+  | 'trust';
 
 const providerOptions = [
   { label: 'Anthropic (Claude)', value: 'anthropic' },
@@ -42,9 +43,15 @@ const providerOptions = [
   { label: 'Custom (OpenAI-Compatible)', value: 'custom' },
 ];
 
+const trustOptions = [
+  { label: 'Yes, I trust this folder and its contents', value: 'yes' },
+  { label: 'No, abort setup', value: 'no' },
+];
+
 export const SetupScreen: React.FC = () => {
   const setScreen = useAppStore((state) => state.setScreen);
-  const [step, setStep] = useState<Step>('provider');
+  const targetPath = useAppStore((state) => state.session.targetPath);
+  const [step, setStep] = useState<Step>('trust');
   const [provider, setProvider] = useState('');
   const [customBaseUrl, setCustomBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -54,6 +61,31 @@ export const SetupScreen: React.FC = () => {
   const [embeddingChoice, setEmbeddingChoice] = useState<string>('cloud');
   const [error, setError] = useState('');
   const [fetching, setFetching] = useState(false);
+
+  // Trigger Synchronized Output Mode to prevent terminal blinking during setup
+  useEffect(() => {
+    process.stdout.write('\x1b[?2026h');
+    return () => {
+      process.stdout.write('\x1b[?2026l');
+    };
+  }, []);
+
+  // Start Tree-sitter / Repo Map indexing in the background once trust is given
+  useEffect(() => {
+    if (step !== 'trust' && targetPath) {
+      import('../../utils/repo-map.js').then((m) => {
+        m.generateRepoMap(targetPath).catch(() => {});
+      });
+    }
+  }, [step, targetPath]);
+
+  const handleTrustSelect = (item: { value: string }) => {
+    if (item.value === 'yes') {
+      setStep('provider');
+    } else {
+      process.exit(0);
+    }
+  };
 
   const handleProviderSelect = (item: { value: string }) => {
     setProvider(item.value);
@@ -69,7 +101,6 @@ export const SetupScreen: React.FC = () => {
       setError('Base URL is required');
       return;
     }
-
     try {
       const url = new URL(value);
       if (!url.hostname) {
@@ -80,7 +111,6 @@ export const SetupScreen: React.FC = () => {
       setError('Please enter a valid URL');
       return;
     }
-
     setCustomBaseUrl(value.trim());
     setError('');
     setStep('apiKey');
@@ -91,16 +121,19 @@ export const SetupScreen: React.FC = () => {
       setError('API key is required');
       return;
     }
-
     setApiKey(value.trim());
     setError('');
+
+    // Save to secure keychain immediately
+    if (value.trim()) {
+      await saveApiKey(provider, value.trim());
+    }
 
     if (isOpenAICompatibleProvider(provider) && value.trim()) {
       setFetching(true);
       setStep('fetching');
       const fetched = await fetchApiModels(provider, value.trim(), customBaseUrl || undefined);
       setFetching(false);
-
       if (fetched && fetched.length > 0) {
         setModels(fetched);
       } else {
@@ -109,7 +142,6 @@ export const SetupScreen: React.FC = () => {
     } else {
       setModels(getProviderModels(provider) ?? []);
     }
-
     setStep('model');
   };
 
@@ -118,7 +150,6 @@ export const SetupScreen: React.FC = () => {
       setStep('customModel');
       return;
     }
-
     setModel(item.value);
     setStep('embedding');
   };
@@ -128,7 +159,6 @@ export const SetupScreen: React.FC = () => {
       setError('Model name is required');
       return;
     }
-
     setModel(value.trim());
     setError('');
     setStep('embedding');
@@ -161,7 +191,7 @@ export const SetupScreen: React.FC = () => {
     }
 
     const config: ShadowConfig = {
-      apiKey,
+      apiKey: '', // API key is now stored in keychain, not plain text config
       customBaseUrl: customBaseUrl || undefined,
       indexing: {
         embeddingModel,
@@ -175,7 +205,7 @@ export const SetupScreen: React.FC = () => {
 
     await saveConfig(config);
     setStep('done');
-    setTimeout(() => setScreen('target'), 1500);
+    setTimeout(() => setScreen('shell'), 1500);
   };
 
   useInput((_, key) => {
@@ -185,16 +215,16 @@ export const SetupScreen: React.FC = () => {
     }
   });
 
-  const modelOptions = [
+  const modelOptions = useMemo(() => [
     ...models.map((m) => ({ label: m.label, value: m.value })),
     { label: 'Type a custom model name...', value: '__custom__' },
-  ];
+  ], [models]);
 
-  const embeddingOptions = [
+  const embeddingOptions = useMemo(() => [
     { label: `Cloud embeddings via ${provider}`, value: 'cloud' },
     { label: 'Local Ollama embeddings (nomic-embed-text)', value: 'ollama' },
     { label: 'Skip semantic indexing', value: 'skip' },
-  ];
+  ], [provider]);
 
   return (
     <Box flexDirection="column" paddingX={spacing.panelPadX}>
@@ -205,11 +235,23 @@ export const SetupScreen: React.FC = () => {
         paddingY={spacing.panelPadY}
       >
         <Text bold color={colors.brand}>
-          ◈ Shadow Auditor — Setup
+          ◈ Shadow Auditor — Environment Setup
         </Text>
       </Box>
 
       <Box flexDirection="column" marginTop={1}>
+        {step === 'trust' && (
+          <>
+            <Text color={colors.bright}>
+              Shadow requires deep read/write access to: <Text bold>{targetPath}</Text>
+            </Text>
+            <Text color={colors.muted} marginBottom={1}>
+              Do you trust this folder and its contents?
+            </Text>
+            <SelectInput items={trustOptions} onSelect={handleTrustSelect} />
+          </>
+        )}
+
         {step === 'provider' && (
           <>
             <Text color={colors.bright}>Select your LLM provider:</Text>
@@ -231,7 +273,7 @@ export const SetupScreen: React.FC = () => {
 
         {step === 'apiKey' && (
           <>
-            <Text color={colors.bright}>Enter your API key:</Text>
+            <Text color={colors.bright}>Enter your API key (stored securely in OS vault):</Text>
             <TextInput
               mask="*"
               onChange={setApiKey}
@@ -242,7 +284,7 @@ export const SetupScreen: React.FC = () => {
         )}
 
         {step === 'fetching' && (
-          <Text color={colors.agent}>Fetching models from API...</Text>
+          <Text color={colors.agent}>Fetching live models from API...</Text>
         )}
 
         {step === 'model' && (
@@ -287,7 +329,7 @@ export const SetupScreen: React.FC = () => {
         )}
 
         {step === 'done' && (
-          <Text color={colors.success}>Configuration saved! Starting Shadow Auditor...</Text>
+          <Text color={colors.success}>Configuration saved! Entering Shadow Auditor...</Text>
         )}
 
         {error && (

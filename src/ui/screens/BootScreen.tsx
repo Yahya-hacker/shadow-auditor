@@ -1,61 +1,73 @@
-import { Box, Text } from 'ink';
-import Spinner from 'ink-spinner';
-import React, { useEffect } from 'react';
+import { Box, Text, useInput } from 'ink';
+import TextInput from 'ink-text-input';
+import React, { useEffect, useState } from 'react';
 
 import { useAppStore } from '../store/appStore.js';
-import { colors, labels } from '../theme/chalkTheme.js';
+import { colors } from '../theme/chalkTheme.js';
+
+const BANNER = `
+   _____ __               __              ___                   __  __           __
+  / ___// /_  ____ _____ / /      ____   /   |  __  __ ____/ // /_/ /_  _____/ /
+  \\__ \\/ __ \\/ __ \`/ __ \\| | /| / / __ \\ / /| | / / / // __  // __/ / / / ___/ _ \\
+ ___/ / / / / /_/ / /_/ /| |/ |/ / /_/ // ___ |/ /_/ // /_/ // /_/ /_/ / /  /  __/
+/____/_/ /_/\\__,_/\\____/ |__/|__/\\____//_/  |_|\__,_/ \\__,_/ \\__/\\__,_/_/   \\___/
+`;
 
 export const BootScreen: React.FC = () => {
-  const setScreen = useAppStore((state) => state.setScreen);
+  const setScreen = useAppStore((s) => s.setScreen);
+  const setUserName = useAppStore((s) => s.setUserName);
+  const [phase, setPhase] = useState<'banner' | 'name' | 'greeting' | 'env'>('banner');
+  const [name, setName] = useState('');
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setScreen('target');
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, [setScreen]);
+    // Trigger Synchronized Output Mode to prevent terminal blinking
+    process.stdout.write('\x1b[?2026h');
+    const timer = setTimeout(() => setPhase('name'), 5000);
+    return () => {
+      clearTimeout(timer);
+      process.stdout.write('\x1b[?2026l');
+    };
+  }, []);
+
+  useInput((_, key) => {
+    if (phase === 'env' && key.return) {
+      setScreen('setup');
+    }
+  });
+
+  const handleNameSubmit = (val: string) => {
+    const trimmed = val.trim() || 'User';
+    setUserName(trimmed);
+    setName(trimmed);
+    setPhase('greeting');
+    setTimeout(() => setPhase('env'), 2000);
+  };
 
   return (
-    <Box alignItems="center" flexDirection="column" justifyContent="center" paddingY={2}>
-      <Box flexDirection="column">
-        <Text bold color={colors.brand}>
-          {'  ███████╗██╗  ██╗ █████╗ ██████╗  ██████╗ ██╗    ██╗'}
-        </Text>
-        <Text bold color={colors.brand}>
-          {'  ██╔════╝██║  ██║██╔══██╗██╔══██╗██╔═══██╗██║    ██║'}
-        </Text>
-        <Text bold color={colors.brand}>
-          {'  ███████╗███████║███████║██║  ██║██║   ██║██║ █╗ ██║'}
-        </Text>
-        <Text color={colors.brand}>
-          {'  ╚════██║██╔══██║██╔══██║██║  ██║██║   ██║██║███╗██║'}
-        </Text>
-        <Text color={colors.brand}>
-          {'  ███████║██║  ██║██║  ██║██████╔╝╚██████╔╝╚███╔███╔╝'}
-        </Text>
-        <Text color={colors.brand}>
-          {'  ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝  ╚═════╝  ╚══╝╚══╝'}
-        </Text>
-      </Box>
+    <Box flexDirection="column" padding={1}>
+      <Text color={colors.brand}>{BANNER}</Text>
+      
+      {phase === 'banner' && (
+        <Text color={colors.muted}>Initializing Shadow Auditor...</Text>
+      )}
 
-      <Box marginTop={1}>
-        <Text bold color={colors.bright}>
-          {labels.appName}
-        </Text>
-        <Text color={colors.dim}> {labels.version}</Text>
-      </Box>
+      {phase === 'name' && (
+        <Box flexDirection="column">
+          <Text color={colors.bright}>Can Shadow know what's your name or how to call you?</Text>
+          <TextInput value={name} onChange={setName} onSubmit={handleNameSubmit} placeholder="Enter your name..." />
+        </Box>
+      )}
 
-      <Box marginTop={1}>
-        <Text color={colors.muted}>{labels.appTagline}</Text>
-      </Box>
+      {phase === 'greeting' && (
+        <Text color={colors.success} bold>Greetings, {name}. I am Shadow, your autonomous security companion.</Text>
+      )}
 
-      <Box marginTop={2}>
-        <Text color={colors.agent}>
-          <Spinner type="dots" />{' '}
-        </Text>
-        <Text color={colors.muted}>Booting security engine</Text>
-        <Text color={colors.dim}>...</Text>
-      </Box>
+      {phase === 'env' && (
+        <Box flexDirection="column">
+          <Text color={colors.bright}>Let's start by setting up your environment.</Text>
+          <Text color={colors.muted}>Press [Enter] to continue...</Text>
+        </Box>
+      )}
     </Box>
   );
 };
