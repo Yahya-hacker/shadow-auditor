@@ -4,7 +4,7 @@ import TextInput from 'ink-text-input';
 import React from 'react';
 
 import { useAppStore } from '../store/appStore.js';
-import { colors, spacing } from '../theme/chalkTheme.js';
+import { colors, getPanelStyle } from '../theme/chalkTheme.js';
 import { Footer } from './Footer.js';
 
 interface InputAreaProps {
@@ -13,68 +13,95 @@ interface InputAreaProps {
 }
 
 /**
- * Input region with three modes:
- * - search: a filter TextInput bound to `searchQuery` (entered via `/`).
- * - input (default): the message TextInput for typing commands.
- * - panel: a static, non-capturing view of the current input, so global
- *   navigation keys (j/k, g/G, ?) don't conflict with typing while the swarm
- *   panel is focused. Press `i` or `Tab` to return to editable input.
+ * Query panel with focus-driven border styling.
+ *
+ * Idle:
+ * ┌─ Query ────────────────────────────────────────────────────────────────┐
+ * │ Press <Enter> to search or type a command...                          │
+ * └────────────────────────────────────────────────────────────────────────┘
+ *
+ * Focused:
+ * ╔═ Query ════════════════════════════════════════════════════════════════╗
+ * ║ > Find hardcoded AWS credentials in src/█                            ║
+ * ╚═══════════════════════════════════════════════════════════════════════╝
+ *
+ * Border changes from single+muted (idle) to double+blue (focused).
+ * Search mode switches border to pending color. The Footer keybinding bar
+ * renders below the query panel.
  */
 export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, onSubmit }) => {
   const input = useAppStore((state) => state.input);
   const setInput = useAppStore((state) => state.setInput);
-  const targetPath = useAppStore((state) => state.session.targetPath);
   const focus = useAppStore((state) => state.focus);
   const searchActive = useAppStore((state) => state.searchActive);
   const searchQuery = useAppStore((state) => state.searchQuery);
   const setSearchQuery = useAppStore((state) => state.setSearchQuery);
   const setSearchActive = useAppStore((state) => state.setSearchActive);
+  const isCompact = useAppStore((state) => state.isCompact);
 
-  const modeLabel = searchActive ? 'search' : focus === 'panel' ? 'panel' : 'ready';
-  const prompt = searchActive ? 'filter' : targetPath;
-  const promptColor = searchActive ? colors.pending : colors.success;
+  const isFocused = focus === 'input';
+  const panelStyle = searchActive
+    ? { borderColor: colors.pending, borderStyle: 'double' as const }
+    : getPanelStyle(isFocused);
+
+  const titlePrefix = isFocused ? 'Query' : 'Query';
 
   return (
-    <Box flexDirection="column" marginTop={1} paddingX={spacing.inputPadX}>
-      <Box>
-        <Text color={promptColor}>{prompt} </Text>
-        <Text color={colors.muted}>[{modeLabel}]</Text>
-      </Box>
-
-      <Box marginTop={1}>
-        <Text bold color={colors.brand}>
-          ❯{' '}
+    <Box flexDirection="column">
+      <Box
+        borderColor={panelStyle.borderColor}
+        borderStyle={panelStyle.borderStyle}
+        flexDirection="column"
+        paddingX={1}
+      >
+        {/* Title line in the panel header */}
+        <Text bold color={panelStyle.borderColor}>
+          {titlePrefix}
         </Text>
+
+        {/* Input line */}
         {isProcessing ? (
-          <Text color={colors.agent}>
-            <Spinner type="dots" /> Agent is thinking...
-          </Text>
+          <Box>
+            <Text bold color={colors.brand}>❯ </Text>
+            <Text color={colors.agent}>
+              <Spinner type="dots" /> Agent is thinking...
+            </Text>
+          </Box>
         ) : searchActive ? (
-          <TextInput
-            onChange={setSearchQuery}
-            onSubmit={() => {
-              if (!searchQuery) setSearchActive(false);
-            }}
-            placeholder="filter messages… (Esc to clear)"
-            value={searchQuery}
-          />
-        ) : focus === 'input' ? (
-          <TextInput
-            onChange={setInput}
-            onSubmit={onSubmit}
-            placeholder="Describe a security concern or ask a question..."
-            value={input}
-          />
+          <Box>
+            <Text bold color={colors.pending}>filter ❯ </Text>
+            <TextInput
+              onChange={setSearchQuery}
+              onSubmit={() => {
+                if (!searchQuery) setSearchActive(false);
+              }}
+              placeholder="filter messages… (Esc to clear)"
+              value={searchQuery}
+            />
+          </Box>
+        ) : isFocused ? (
+          <Box>
+            <Text bold color={colors.brand}>❯ </Text>
+            <TextInput
+              onChange={setInput}
+              onSubmit={onSubmit}
+              placeholder="Describe a security concern or ask a question..."
+              value={input}
+            />
+          </Box>
         ) : (
           <Text color={colors.muted}>
-            {input || '(press i or Tab to edit)'}
+            {input || 'Press <Enter> to search or type a command...'}
           </Text>
         )}
       </Box>
 
-      <Box marginTop={1}>
-        <Footer />
-      </Box>
+      {/* Footer keybinding bar below the query panel */}
+      {!isCompact && (
+        <Box paddingX={1}>
+          <Footer />
+        </Box>
+      )}
     </Box>
   );
 };
