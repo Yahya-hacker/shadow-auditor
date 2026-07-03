@@ -245,9 +245,11 @@ export const SetupScreen: React.FC = () => {
             <Text color={colors.bright}>
               Shadow requires deep read/write access to: <Text bold>{targetPath}</Text>
             </Text>
-            <Text color={colors.muted} marginBottom={1}>
-              Do you trust this folder and its contents?
-            </Text>
+            <Box marginBottom={1}>
+              <Text color={colors.muted}>
+                Do you trust this folder and its contents?
+              </Text>
+            </Box>
             <SelectInput items={trustOptions} onSelect={handleTrustSelect} />
           </>
         )}

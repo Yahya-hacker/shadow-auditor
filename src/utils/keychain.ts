@@ -131,6 +131,19 @@ export class KeychainAdapter implements SecretStoreAdapter {
 }
 
 // =============================================================================
+// Convenience Helpers
+// =============================================================================
+
+const adapterInstance = new KeychainAdapter();
+
+/**
+ * Convenience function to save an API key using the default KeychainAdapter.
+ */
+export async function saveApiKey(provider: string, apiKey: string): Promise<void> {
+  await adapterInstance.setApiKey(provider, apiKey);
+}
+
+// =============================================================================
 // Exports for testing
 // =============================================================================
 
