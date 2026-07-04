@@ -12,15 +12,59 @@ const roleConfig: Record<ChatMessageData['role'], { color: string; prefix: strin
   user: { color: colors.user, prefix: rolePrefix.user },
 };
 
-export const ChatMessage: React.FC<{ message: ChatMessageData }> = ({ message }) => {
+interface ChatMessageProps {
+  /** Compact mode: reduced padding, no margin between messages. */
+  compact?: boolean;
+  message: ChatMessageData;
+}
+
+/**
+ * Single chat message with █ gutter prefix and role-colored prefix glyph.
+ *
+ * In the new OutputArea, messages are prefixed with a colored █ gutter
+ * character that visually separates content from the left margin. Code
+ * blocks are rendered inside bordered sub-boxes.
+ */
+export const ChatMessage: React.FC<ChatMessageProps> = ({ compact = false, message }) => {
   const config = roleConfig[message.role];
 
+  // Check for code blocks in agent messages
+  const codeBlocks = extractCodeBlocks(message.text);
+  const hasCodeBlocks = codeBlocks.length > 0;
+
+  if (hasCodeBlocks) {
+    const textWithoutBlocks = removeCodeBlocks(message.text);
+    return (
+      <Box flexDirection="column" marginBottom={compact ? 0 : 1} paddingX={spacing.inputPadX}>
+        <Box>
+          <Text color={colors.brand}>█ </Text>
+          <Text bold color={config.color}>{config.prefix} </Text>
+          {message.role === 'user' ? (
+            <Text color={config.color}>{textWithoutBlocks}</Text>
+          ) : (
+            <Text wrap="wrap">{textWithoutBlocks}</Text>
+          )}
+        </Box>
+        {codeBlocks.map((block, i) => (
+          <Box
+            borderColor={colors.dim}
+            borderStyle="single"
+            flexDirection="column"
+            key={`cb-${i}`}
+            paddingX={1}
+          >
+            <Text wrap="wrap">{block}</Text>
+          </Box>
+        ))}
+      </Box>
+    );
+  }
+
   return (
-    <Box flexDirection="column" marginBottom={1} paddingX={spacing.inputPadX}>
+    <Box flexDirection="column" marginBottom={compact ? 0 : 1} paddingX={spacing.inputPadX}>
       <Box>
-        <Text bold color={config.color}>
-          {config.prefix}{' '}
-        </Text>
+        <Text color={colors.brand}>█ </Text>
+        <Text bold color={config.color}>{config.prefix} </Text>
         {message.role === 'user' ? (
           <Text color={config.color}>{message.text}</Text>
         ) : (
@@ -30,3 +74,20 @@ export const ChatMessage: React.FC<{ message: ChatMessageData }> = ({ message })
     </Box>
   );
 };
+
+function extractCodeBlocks(text: string): string[] {
+  const regex = /```[\s\S]*?```/g;
+  const blocks: string[] = [];
+  let match = regex.exec(text);
+  while (match !== null) {
+    const block = match[0].replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '');
+    blocks.push(block);
+    match = regex.exec(text);
+  }
+
+  return blocks;
+}
+
+function removeCodeBlocks(text: string): string {
+  return text.replaceAll(/```[\s\S]*?```/g, '').trim();
+}

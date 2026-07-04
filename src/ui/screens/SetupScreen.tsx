@@ -1,7 +1,7 @@
 import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import TextInput from 'ink-text-input';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { ShadowConfig } from '../../utils/config.js';
 
@@ -14,6 +14,7 @@ import {
   isOpenAICompatibleProvider,
   providerHasNativeEmbedding,
 } from '../../utils/provider-catalog.js';
+import { startRepoMapGeneration } from '../hooks/useAgentSession.js';
 import { useAppStore } from '../store/appStore.js';
 import { colors, spacing } from '../theme/chalkTheme.js';
 
@@ -62,22 +63,12 @@ export const SetupScreen: React.FC = () => {
   const [error, setError] = useState('');
   const [fetching, setFetching] = useState(false);
 
-  // Trigger Synchronized Output Mode to prevent terminal blinking during setup
+  // Start Tree-sitter / Repo Map indexing in the background as soon as we have a target
   useEffect(() => {
-    process.stdout.write('\x1b[?2026h');
-    return () => {
-      process.stdout.write('\x1b[?2026l');
-    };
-  }, []);
-
-  // Start Tree-sitter / Repo Map indexing in the background once trust is given
-  useEffect(() => {
-    if (step !== 'trust' && targetPath) {
-      import('../../utils/repo-map.js').then((m) => {
-        m.generateRepoMap(targetPath).catch(() => {});
-      });
+    if (targetPath) {
+      startRepoMapGeneration(targetPath);
     }
-  }, [step, targetPath]);
+  }, [targetPath]);
 
   const handleTrustSelect = (item: { value: string }) => {
     if (item.value === 'yes') {
@@ -208,12 +199,12 @@ export const SetupScreen: React.FC = () => {
     setTimeout(() => setScreen('shell'), 1500);
   };
 
-  useInput((_, key) => {
+  useInput(useCallback((_, key) => {
     if (key.escape && step === 'customModel') {
       setStep('model');
       setError('');
     }
-  });
+  }, [step]));
 
   const modelOptions = useMemo(() => [
     ...models.map((m) => ({ label: m.label, value: m.value })),

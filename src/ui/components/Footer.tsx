@@ -1,27 +1,55 @@
 import { Box, Text } from 'ink';
-import React from 'react';
+import React, { memo } from 'react';
 
-import { type Keybind, primaryKeybinds, searchKeybinds } from '../keybinds.js';
+import {
+  filterKeybinds,
+  type Keybind,
+  outputKeybinds,
+  primaryKeybinds,
+  searchKeybinds,
+} from '../keybinds.js';
 import { useAppStore } from '../store/appStore.js';
 import { colors } from '../theme/chalkTheme.js';
 
-const KeybindTag: React.FC<Keybind> = ({ desc, keys }) => (
+const KeybindTag: React.FC<Keybind> = memo(({ desc, keys }) => (
   <>
-    <Text bold color={colors.brand}>
+    <Text bold color={colors.dim}>
       [{keys}]
     </Text>
-    <Text color={colors.muted}> {desc} </Text>
+    <Text color={colors.muted} dimColor> {desc} · </Text>
   </>
-);
+));
+
+KeybindTag.displayName = 'KeybindTag';
 
 /**
- * One-line contextual keybinding bar. Shows the primary keybinds by default and
- * a search-mode set while a search is active. Replaces the legacy hardcoded
- * hint that lived in InputArea.
+ * One-line contextual keybinding bar. Shows the keybind set appropriate for
+ * the current focus target: input → primary, output → output, filters →
+ * filter, search → search. Memoized to prevent re-rendering on every keystroke
+ * when the parent InputArea re-renders from the `input` store subscription.
  */
-export const Footer: React.FC = () => {
+export const Footer: React.FC = memo(() => {
+  const focus = useAppStore((state) => state.focus);
   const searchActive = useAppStore((state) => state.searchActive);
-  const keybinds = searchActive ? searchKeybinds : primaryKeybinds;
+
+  let keybinds: Keybind[];
+  if (searchActive) {
+    keybinds = searchKeybinds;
+  } else {
+    switch (focus) {
+      case 'filters': { keybinds = filterKeybinds; break;
+      }
+
+      case 'output': { keybinds = outputKeybinds; break;
+      }
+
+      case 'panel': { keybinds = outputKeybinds; break;
+      }
+
+      default: { keybinds = primaryKeybinds; break;
+      }
+    }
+  }
 
   return (
     <Box>
@@ -32,4 +60,6 @@ export const Footer: React.FC = () => {
       ))}
     </Box>
   );
-};
+});
+
+Footer.displayName = 'Footer';

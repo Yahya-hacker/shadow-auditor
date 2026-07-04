@@ -1,6 +1,6 @@
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 
 import { useAppStore } from '../store/appStore.js';
 import { colors } from '../theme/chalkTheme.js';
@@ -13,27 +13,32 @@ const BANNER = `
 /____/_/ /_/\\__,_/\\____/ |__/|__/\\____//_/  |_|\__,_/ \\__,_/ \\__/\\__,_/_/   \\___/
 `;
 
-export const BootScreen: React.FC = () => {
+interface BootScreenProps {
+  onBootComplete?: () => void;
+}
+
+export const BootScreen: React.FC<BootScreenProps> = ({ onBootComplete }) => {
   const setScreen = useAppStore((s) => s.setScreen);
   const setUserName = useAppStore((s) => s.setUserName);
   const [phase, setPhase] = useState<'banner' | 'name' | 'greeting' | 'env'>('banner');
   const [name, setName] = useState('');
 
   useEffect(() => {
-    // Trigger Synchronized Output Mode to prevent terminal blinking
-    process.stdout.write('\x1b[?2026h');
     const timer = setTimeout(() => setPhase('name'), 5000);
     return () => {
       clearTimeout(timer);
-      process.stdout.write('\x1b[?2026l');
     };
   }, []);
 
-  useInput((_, key) => {
+  useInput(useCallback((_, key) => {
     if (phase === 'env' && key.return) {
-      setScreen('setup');
+      if (onBootComplete) {
+        onBootComplete();
+      } else {
+        useAppStore.getState().setScreen('setup');
+      }
     }
-  });
+  }, [phase, onBootComplete]));
 
   const handleNameSubmit = (val: string) => {
     const trimmed = val.trim() || 'User';

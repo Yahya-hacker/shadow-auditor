@@ -22,6 +22,10 @@ export function createExecuteCommandTool(options: ExecuteCommandToolOptions) {
         return policyDecision.reason;
       }
 
+      // Request human confirmation. In LangGraph context this throws a Command
+      // (interrupting the graph at HumanIntervention). On resume, the tool is
+      // called again and this returns true. In non-LangGraph context (Vercel AI
+      // SDK swarm mode), returns the blocking confirmation result.
       const confirmed = await confirmCommandExecution(command, policyDecision.warning);
       if (!confirmed) {
         return `[DENIED] User denied command execution: "${command}".`;
@@ -51,12 +55,14 @@ export function createExecuteCommandTool(options: ExecuteCommandToolOptions) {
       } catch (error: unknown) {
         const execError = error as { message: string; stderr?: string; stdout?: string };
         let output = `// ─── COMMAND FAILED: ${command} ───\n\n[ERROR] ${execError.message}`;
-        if (execError.stdout?.trim()) {
-          output += `\n\n[STDOUT]\n${execError.stdout.trim()}`;
+        const stdoutTrimmed = execError.stdout?.trim() ?? '';
+        if (stdoutTrimmed) {
+          output += `\n\n[STDOUT]\n${stdoutTrimmed}`;
         }
 
-        if (execError.stderr?.trim()) {
-          output += `\n\n[STDERR]\n${execError.stderr.trim()}`;
+        const stderrTrimmed = execError.stderr?.trim() ?? '';
+        if (stderrTrimmed) {
+          output += `\n\n[STDERR]\n${stderrTrimmed}`;
         }
 
         return output;

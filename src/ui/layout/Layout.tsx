@@ -1,145 +1,84 @@
-import { Box, useStdout } from 'ink';
-import React, { useEffect, useState } from 'react';
-import Yoga from 'yoga-layout-prebuilt';
+import { useStdout } from 'ink';
+import React, { useEffect, useRef, useState } from 'react';
 
-export interface PanelRect {
-  height: number;
-  width: number;
-  x: number;
-  y: number;
-}
+import { useAppStore } from '../store/appStore.js';
+import { layout } from '../theme/chalkTheme.js';
 
 export interface LayoutResult {
-  body: PanelRect;
-  header: PanelRect;
-  input: PanelRect;
-  status: PanelRect;
-  swarm: PanelRect;
+  bodyHeight: number;
+  columns: number;
+  isCompact: boolean;
+  outputWidth: number;
+  rows: number;
+  sidebarWidth: number;
 }
 
 interface LayoutProps {
   children: (result: LayoutResult) => React.ReactNode;
-  /** When true, split the body into a chat column and a right-hand swarm panel. */
-  rightPanel?: boolean;
 }
 
-export const HEADER_HEIGHT = 3;
-export const STATUS_HEIGHT = 1;
-export const INPUT_HEIGHT = 3;
-
-const MIN_WIDTH_FOR_PANEL = 100;
-
 /**
- * Yoga-based deterministic layout.
+ * Ink flexbox-based layout.
  *
- * Computes exact panel rectangles so Ink only reconciles what actually
- * changed. The body region is optionally split into a chat column (left) and a
- * swarm panel (right) when `rightPanel` is set and the terminal is wide enough.
+ * Computes terminal dimensions and provides a simplified LayoutResult for
+ * components to consume. Replaces the previous Yoga-based layout with pure
+ * Ink flexbox, which is sufficient for our grid-based TUI.
+ *
+ * Uses a ref for stdout to avoid re-subscribing on every render — the stdout
+ * stream is stable for the lifetime of the Ink app, so we capture it once
+ * and avoid the effect re-running when Ink's internal state changes.
  */
-export const Layout: React.FC<LayoutProps> = ({ children, rightPanel = false }) => {
+export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { stdout } = useStdout();
+  const stdoutRef = useRef(stdout);
+  stdoutRef.current = stdout;
+
+  const setIsCompact = useAppStore((state) => state.setIsCompact);
   const [result, setResult] = useState<LayoutResult>(() =>
-    computeLayout(stdout.columns || 80, stdout.rows || 24, rightPanel),
+    computeLayout(stdout.columns || 80, stdout.rows || 24),
   );
 
   useEffect(() => {
+    const stream = stdoutRef.current;
     const handleResize = () => {
-      setResult(computeLayout(stdout.columns || 80, stdout.rows || 24, rightPanel));
+      const newResult = computeLayout(stream.columns || 80, stream.rows || 24);
+      setResult(newResult);
+      // Use getState to avoid needing setIsCompact in deps
+      useAppStore.getState().setIsCompact(newResult.isCompact);
     };
 
-    setResult(computeLayout(stdout.columns || 80, stdout.rows || 24, rightPanel));
-    stdout.on('resize', handleResize);
+    // Set initial layout (may already be set by useState initializer, but
+    // stdout dimensions could have changed by the time this effect runs).
+    handleResize();
+    stream.on('resize', handleResize);
     return () => {
-      stdout.off('resize', handleResize);
+      stream.off('resize', handleResize);
     };
-  }, [stdout, rightPanel]);
+  }, []); // Empty deps — stdout stream is stable for the app lifetime
 
   return <>{children(result)}</>;
 };
 
-function computeLayout(columns: number, rows: number, rightPanel: boolean): LayoutResult {
-  const root = Yoga.Node.create();
-  root.setWidth(columns);
-  root.setHeight(rows);
-  root.setFlexDirection(Yoga.FLEX_DIRECTION_COLUMN);
+function computeLayout(columns: number, rows: number): LayoutResult {
+  const isCompact = columns < layout.COMPACT_THRESHOLD;
 
-  const header = Yoga.Node.create();
-  header.setHeight(HEADER_HEIGHT);
-  root.insertChild(header, 0);
+  // Sidebar takes 25% of width (min 18 cols) when not compact
+  const sidebarWidth = isCompact
+    ? 0
+    : Math.max(layout.MIN_SIDEBAR_WIDTH, Math.floor(columns * layout.SIDEBAR_RATIO));
 
-  const body = Yoga.Node.create();
-  body.setFlex(1);
-  root.insertChild(body, 1);
+  // Output area gets remaining width
+  const outputWidth = columns - sidebarWidth;
 
-  const status = Yoga.Node.create();
-  status.setHeight(STATUS_HEIGHT);
-  root.insertChild(status, 2);
+  // Body height = total rows - header - input
+  const bodyHeight = rows - layout.HEADER_HEIGHT - layout.INPUT_HEIGHT;
 
-  const input = Yoga.Node.create();
-  input.setHeight(INPUT_HEIGHT);
-  root.insertChild(input, 3);
-
-  root.calculateLayout(columns, rows, Yoga.DIRECTION_LTR);
-
-  const headerLayout = header.getComputedLayout();
-  const bodyLayout = body.getComputedLayout();
-  const statusLayout = status.getComputedLayout();
-  const inputLayout = input.getComputedLayout();
-
-  // Optional right-hand swarm panel within the body region. Auto-disabled
-  // below MIN_WIDTH_FOR_PANEL to respect small terminals.
-  const swarmWidth =
-    rightPanel && columns >= MIN_WIDTH_FOR_PANEL
-      ? Math.min(40, Math.floor(columns * 0.33))
-      : 0;
-  const chatWidth = Math.max(0, Math.floor(bodyLayout.width) - swarmWidth);
-
-  const result: LayoutResult = {
-    body: {
-      height: Math.max(0, Math.floor(bodyLayout.height)),
-      width: chatWidth,
-      x: Math.floor(bodyLayout.left),
-      y: Math.floor(bodyLayout.top),
-    },
-    header: {
-      height: Math.max(0, Math.floor(headerLayout.height)),
-      width: Math.max(0, Math.floor(headerLayout.width)),
-      x: Math.floor(headerLayout.left),
-      y: Math.floor(headerLayout.top),
-    },
-    input: {
-      height: Math.max(0, Math.floor(inputLayout.height)),
-      width: Math.max(0, Math.floor(inputLayout.width)),
-      x: Math.floor(inputLayout.left),
-      y: Math.floor(inputLayout.top),
-    },
-    status: {
-      height: Math.max(0, Math.floor(statusLayout.height)),
-      width: Math.max(0, Math.floor(statusLayout.width)),
-      x: Math.floor(statusLayout.left),
-      y: Math.floor(statusLayout.top),
-    },
-    swarm: {
-      height: Math.max(0, Math.floor(bodyLayout.height)),
-      width: swarmWidth,
-      x: Math.floor(bodyLayout.left) + chatWidth,
-      y: Math.floor(bodyLayout.top),
-    },
+  return {
+    bodyHeight: Math.max(0, bodyHeight),
+    columns,
+    isCompact,
+    outputWidth: Math.max(0, outputWidth),
+    rows,
+    sidebarWidth,
   };
-
-  root.freeRecursive();
-  return result;
 }
-
-/**
- * Convenience wrapper that renders a panel at a fixed rectangle.
- * Avoids re-rendering the whole screen when only one panel changes.
- */
-export const Panel: React.FC<{
-  children: React.ReactNode;
-  rect: PanelRect;
-}> = ({ children, rect }) => (
-  <Box flexDirection="column" height={rect.height} width={rect.width}>
-    {children}
-  </Box>
-);

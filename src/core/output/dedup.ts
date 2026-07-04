@@ -42,8 +42,7 @@ export function deduplicateFindings(findings: SecurityFinding[]): SecurityFindin
   for (const finding of findings) {
     const key = computeRootCauseFingerprint({
       cwe: finding.cwe,
-      // Root-cause fingerprint intentionally excludes file paths:
-      // same CWE + same title = same root cause even across different files.
+      filePaths: finding.file_paths,
       title: finding.title,
     });
 
@@ -73,10 +72,12 @@ export function deduplicateFindings(findings: SecurityFinding[]): SecurityFindin
     // Deterministic file path ordering
     const sortedPaths = [...group.filePaths].sort();
 
-    // Recompute stable vuln_id for the merged finding
+    // Recompute stable vuln_id for the merged finding using the primary
+    // finding's file paths only (not the merged set) so the ID does not
+    // change when new occurrences are discovered in different files.
     const stableVulnId = computeVulnId({
       cwe: group.primary.cwe,
-      filePaths: sortedPaths,
+      filePaths: group.primary.file_paths,
       title: group.primary.title,
     });
 

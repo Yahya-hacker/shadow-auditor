@@ -1,7 +1,17 @@
 import type { EnhancedFinding, EnhancedReport } from './finding-schema.js';
 import type { SecurityFinding, SecurityReport } from './report-schema.js';
+import type {
+  ArtifactChange,
+  Fix as SarifFix,
+  Invocation,
+  Log as SarifLog,
+  ReportingConfiguration,
+  ReportingDescriptor,
+  Result as SarifResult,
+  VersionControlDetails,
+} from 'sarif';
 
-type SarifLevel = 'error' | 'note' | 'warning';
+type SarifLevel = 'error' | 'none' | 'note' | 'warning';
 
 function toSarifLevel(severity: EnhancedFinding['severityLabel'] | SecurityFinding['severity_label']): SarifLevel {
   switch (severity) {
@@ -14,10 +24,13 @@ function toSarifLevel(severity: EnhancedFinding['severityLabel'] | SecurityFindi
       return 'warning';
     }
 
-    case 'Info':
-    case 'Low':
-    default: {
+    case 'Low': {
       return 'note';
+    }
+
+    case 'Info':
+    default: {
+      return 'none';
     }
   }
 }
@@ -34,7 +47,7 @@ function enhancedFindingMessage(finding: EnhancedFinding): string {
   return `${finding.title} (${finding.cwe}, CVSS 3.1: ${finding.cvssV31Score}, Confidence: ${(finding.confidence * 100).toFixed(0)}%)`;
 }
 
-export function generateSarifReport(report: SecurityReport): Record<string, unknown> {
+export function generateSarifReport(report: SecurityReport): SarifLog {
   const sortedFindings = [...report.findings].sort((a, b) => a.vuln_id.localeCompare(b.vuln_id));
   const uniqueRules = new Map<string, SecurityFinding>();
 
@@ -44,7 +57,10 @@ export function generateSarifReport(report: SecurityReport): Record<string, unkn
     }
   }
 
-  const rules = [...uniqueRules.values()].map((finding) => ({
+  const rules: ReportingDescriptor[] = [...uniqueRules.values()].map((finding) => ({
+    defaultConfiguration: {
+      level: toSarifLevel(finding.severity_label),
+    },
     id: finding.vuln_id,
     name: finding.title,
     shortDescription: {
@@ -52,7 +68,7 @@ export function generateSarifReport(report: SecurityReport): Record<string, unkn
     },
   }));
 
-  const results = sortedFindings.map((finding) => ({
+  const results: SarifResult[] = sortedFindings.map((finding) => ({
     level: toSarifLevel(finding.severity_label),
     locations: finding.file_paths.map((filePath) => ({
       physicalLocation: {
@@ -89,7 +105,7 @@ export function generateSarifReport(report: SecurityReport): Record<string, unkn
 /**
  * Generate SARIF 2.1.0 report from enhanced report format.
  */
-export function generateEnhancedSarifReport(report: EnhancedReport): Record<string, unknown> {
+export function generateEnhancedSarifReport(report: EnhancedReport): SarifLog {
   const sortedFindings = [...report.findings].sort((a, b) => a.vulnId.localeCompare(b.vulnId));
   const uniqueRules = new Map<string, EnhancedFinding>();
 
@@ -136,7 +152,7 @@ export function generateEnhancedSarifReport(report: EnhancedReport): Record<stri
     },
   }));
 
-  const results = sortedFindings.map((finding) => {
+  const results: SarifResult[] = sortedFindings.map((finding) => {
     const result: Record<string, unknown> = {
       level: toSarifLevel(finding.severityLabel),
       locations: finding.locations.map((loc) => ({
@@ -230,17 +246,26 @@ export function generateEnhancedSarifReport(report: EnhancedReport): Record<stri
         }));
     }
 
-    // Add fixes if code example provided
-    if (finding.remediation.codeExample) {
+    // Add fixes if code example provided and we have enough info
+    // to produce a valid SARIF artifactChange. Skip when only a
+    // summary is available (no specific file replacements).
+    if (finding.remediation.codeExample && finding.locations[0]?.filePath) {
+      const primaryFile = finding.locations[0].filePath;
+      const artifactChanges: ArtifactChange[] = [{
+        artifactLocation: {
+          uri: toPosixPath(primaryFile),
+        },
+        replacements: [],
+      }];
       result.fixes = [{
+        artifactChanges,
         description: {
           text: finding.remediation.summary,
         },
-        // Note: SARIF fixes require specific replacements, simplified here
-      }];
+      } as SarifFix];
     }
 
-    return result;
+    return result as unknown as SarifResult;
   });
 
   return {
@@ -250,7 +275,12 @@ export function generateEnhancedSarifReport(report: EnhancedReport): Record<stri
         invocations: [{
           endTimeUtc: report.metadata.generatedAt,
           executionSuccessful: true,
-          startTimeUtc: report.metadata.generatedAt,
+          // Compute startTimeUtc as endTime minus durationMs
+          startTimeUtc: report.metadata.durationMs != null
+            ? new Date(
+                new Date(report.metadata.generatedAt).getTime() - report.metadata.durationMs,
+              ).toISOString()
+            : report.metadata.generatedAt,
         }],
         properties: {
           runId: report.metadata.runId,

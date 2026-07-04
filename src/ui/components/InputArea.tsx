@@ -45,7 +45,7 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, onSubmit }) 
     ? { borderColor: colors.pending, borderStyle: 'double' as const }
     : getPanelStyle(isFocused);
 
-  const titlePrefix = isFocused ? 'Query' : 'Query';
+  const titlePrefix = 'Query';
 
   const placeholder = humanInputRequest
     ? humanInputRequest.type === 'confirmation'

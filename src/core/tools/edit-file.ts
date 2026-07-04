@@ -24,9 +24,13 @@ export function createEditFileTool(pathGuard: PathGuard) {
           return `[ERROR] Target code not found in "${filePath}". Read the file again and provide the exact snippet.`;
         }
 
+        // Request human confirmation. In LangGraph context this throws a Command
+        // (interrupting the graph at HumanIntervention). On resume, the tool is
+        // called again and this returns true. In non-LangGraph context (Vercel AI
+        // SDK swarm mode), returns the blocking confirmation result.
         const confirmed = await confirmFileEdit(filePath, targetCode, replacementCode);
         if (!confirmed) {
-          return `[DENIED] User denied patch for "${filePath}".`;
+          return `[DENIED] User denied file edit: "${filePath}".`;
         }
 
         const nextContent = content.replace(targetCode, replacementCode);

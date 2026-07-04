@@ -16,7 +16,7 @@ import type { SecurityFinding } from './report-schema.js';
 // Types
 // ---------------------------------------------------------------------------
 
-export type FailOnSeverity = 'critical' | 'high' | 'low' | 'medium' | 'none';
+export type FailOnSeverity = 'critical' | 'high' | 'info' | 'low' | 'medium' | 'none';
 
 export interface CiExitOptions {
   /** Severity level at which to exit non-zero. Default: "high". */
@@ -49,6 +49,7 @@ const SEVERITY_ORDER: Record<SecurityFinding['severity_label'], number> = {
 const FAIL_ON_TO_LABEL: Record<FailOnSeverity, null | SecurityFinding['severity_label']> = {
   critical: 'Critical',
   high: 'High',
+  info: 'Info',
   low: 'Low',
   medium: 'Medium',
   none: null,

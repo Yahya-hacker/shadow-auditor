@@ -5,7 +5,7 @@ import type { LanguageModel, ModelMessage, StepResult, ToolSet } from 'ai';
 import { HumanMessage } from '@langchain/core/messages';
 import * as path from 'node:path';
 
-import type { AgentStateType } from './graph/state.js';
+import type { AgentStateType, HumanInputRequest } from './graph/state.js';
 import type { MCPRawInvoker } from './mcp/types.js';
 import type { MissionObjective, MissionPhase, TransitionReason } from './orchestrator/mission-state.js';
 import type { TransitionContext } from './orchestrator/transitions.js';
@@ -30,11 +30,12 @@ import {
 } from './memory/semantic-index.js';
 import { resolveRuntimeSettings, type RuntimeSettings } from './model-capabilities.js';
 import { getLangchainModel, getModel } from './model-router.js';
+import { PersistentCheckpointSaver } from './orchestrator/checkpoint-saver.js';
 import { MissionEngine } from './orchestrator/mission-engine.js';
 import { computeCiExitCode, type FailOnSeverity, formatCiSummary } from './output/ci-exit.js';
 import { deduplicateFindings } from './output/dedup.js';
 import { validateAndRepairReport } from './output/report-validator.js';
-import { generateSarifReport } from './output/sarif.js';
+import { generateEnhancedSarifReport } from './output/sarif.js';
 import { createPathGuard } from './policy/path-guard.js';
 import { RunArtifacts } from './run-artifacts.js';
 import { type StreamActivity, streamWithContinuation } from './session.js';
@@ -55,7 +56,8 @@ export interface AgentSessionOptions {
 }
 
 export interface AgentStreamEvent {
-  kind: 'status' | 'swarm_state' | StreamActivity['kind'];
+  kind: 'human_input_required' | 'status' | 'swarm_state' | StreamActivity['kind'];
+  humanInputRequest?: HumanInputRequest;
   message: string;
   swarmState?: SwarmStateSnapshot;
   timestamp: string;
@@ -316,7 +318,14 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     // Compile the LangGraph workflow ONCE for reuse across messages
     this.langchainModel = getLangchainModel(this.config);
     const toolsArray = Object.entries(this.tools).map(([name, tool]) => ({ name, tool }));
+
+    // Create a persistent checkpointer for state management and human interrupts
+    const runDirectory = this.artifacts.getRunDirectory();
+    const checkpointer = new PersistentCheckpointSaver({ storagePath: runDirectory });
+    await checkpointer.initialize();
+
     this.compiledWorkflow = compileWorkflow({
+      checkpointer,
       model: this.langchainModel,
       providerHint: this.config.provider,
       tools: toolsArray,
@@ -617,6 +626,11 @@ Use your tools to inspect implementation details, verify assumptions, and produc
 
   /**
    * Send message through the single-agent LangGraph workflow.
+   *
+   * Uses a persistent thread ID so the checkpointer maintains conversation
+   * state across messages. This lets the model see prior turns and the
+   * initial system context (repo map, tool descriptions) that was seeded
+   * into the first invocation.
    */
   private async sendSingleAgentMessage(
     userMessage: string,
@@ -634,67 +648,155 @@ Use your tools to inspect implementation details, verify assumptions, and produc
         throw new Error('Workflow not compiled. Initialization may have failed.');
       }
 
-      // Reuse the same thread for conversation continuity
+      // Use a stable thread ID so the checkpointer can restore prior
+      // conversation state. The first message in each session seeds the
+      // system context (repo map + instructions) as a HumanMessage so the
+      // model receives it on every turn via the checkpointed history.
+      const threadId = `session_main`;
       this.threadCounter++;
       const config = {
-        configurable: { thread_id: `session_${this.threadCounter}` },
-        version: 'v2' as const,
+        configurable: { thread_id: threadId },
+        version: 'v3' as const,
       };
 
+      // On the first message, prepend the system context so it becomes part
+      // of the checkpointed state. Subsequent turns will load it from the
+      // checkpointer automatically.
+      const isFirstMessage = this.threadCounter === 1;
+      const inputMessages: HumanMessage[] = [];
+      if (isFirstMessage) {
+        // Seed the checkpointed state with the repo map and system context
+        const systemContext = this.messages
+          .map((m) => `[${m.role}]: ${toContentString(m.content)}`)
+          .join('\n\n');
+        if (systemContext) {
+          inputMessages.push(new HumanMessage({
+            content: `[SYSTEM CONTEXT — internal, do not echo to user]\n${systemContext}\n[/SYSTEM CONTEXT]\n\nUser request: ${userMessage}`,
+          }));
+        } else {
+          inputMessages.push(new HumanMessage({ content: userMessage }));
+        }
+      } else {
+        inputMessages.push(new HumanMessage({ content: userMessage }));
+      }
+
       const inputs = {
-        messages: [new HumanMessage({ content: userMessage })],
+        messages: inputMessages,
       };
 
       let fullResponse = '';
 
-      // Stream events from the LangGraph execution
+      // Stream events from the LangGraph execution.
+      // LangGraph v2 emits ProtocolEvent objects: { type: "event", method: "...", params: { ... } }
+      // Older LangChain versions emit: { event: "on_...", data: { ... }, run_id, name }
       const stream = await this.compiledWorkflow.streamEvents(inputs, config);
 
       for await (const event of stream) {
-        // Map LangGraph events to UI streams
-        if (event.event === 'on_chat_model_stream' && event.data?.chunk?.content) {
-          const content = event.data.chunk.content;
-          if (typeof content === 'string') {
-            onChunk(content);
-            fullResponse += content;
-          }
-        } else if (event.event === 'on_tool_start') {
-          emitEvent({
-            kind: 'tool_call',
-            message: `Executing tool: ${event.name}`,
-            toolCallId: event.run_id,
-            toolName: event.name,
-          });
+        try {
+          // ── LangGraph v2 ProtocolEvent format ──────────────────────────
+          if (event.type === 'event') {
+            const method = event.method;
+            const params = event.params ?? {};
+            const data = params.data;
+            const nodeName = params.node;
 
-          // Persist tool call event
-          if (this.artifacts) {
-            await this.artifacts.recordToolEvent({
-              data: event.data?.input ?? {},
-              event: 'call',
-              timestamp: new Date().toISOString(),
-              toolCallId: event.run_id ?? '',
-              toolName: event.name ?? '',
-            });
-          }
-        } else if (event.event === 'on_tool_end') {
-          emitEvent({
-            kind: 'tool_result',
-            message: `Completed tool: ${event.name}`,
-            toolCallId: event.run_id,
-            toolName: event.name,
-          });
+            // Stream message content chunks from 'messages' events.
+            // These carry AIMessageChunk objects whose content may be a
+            // plain string or an array of content blocks.
+            if (method === 'messages' && data) {
+              const msgData = data as Record<string, unknown>;
+              let content = msgData.content;
+              if (Array.isArray(content)) {
+                for (const block of content) {
+                  if (
+                    typeof block === 'object' &&
+                    block !== null &&
+                    (block as Record<string, unknown>).type === 'text'
+                  ) {
+                    const text = (block as Record<string, unknown>).text;
+                    if (typeof text === 'string') {
+                      onChunk(text);
+                      fullResponse += text;
+                    }
+                  }
+                }
+              } else if (typeof content === 'string') {
+                onChunk(content);
+                fullResponse += content;
+              }
+            }
 
-          // Persist tool result event
-          if (this.artifacts) {
-            await this.artifacts.recordToolEvent({
-              data: event.data?.output ?? {},
-              event: 'result',
-              timestamp: new Date().toISOString(),
-              toolCallId: event.run_id ?? '',
-              toolName: event.name ?? '',
-            });
+            // Track tool invocations and results from 'updates' events.
+            // Each node update carries the messages produced during that
+            // step, including AIMessages with tool_calls and ToolMessages
+            // with tool results.
+            if (method === 'updates' && data) {
+              const updates = data as Record<string, unknown>;
+              for (const [, value] of Object.entries(updates)) {
+                const nodeUpdate = value as Record<string, unknown>;
+                const msgs = nodeUpdate?.messages;
+                if (Array.isArray(msgs)) {
+                  for (const msg of msgs) {
+                    const msgObj = msg as Record<string, unknown>;
+                    // AIMessage with tool calls
+                    if (msgObj.tool_calls && Array.isArray(msgObj.tool_calls)) {
+                      for (const tc of msgObj.tool_calls as Array<Record<string, unknown>>) {
+                        emitEvent({
+                          kind: 'tool_call',
+                          message: `[${nodeName ?? 'agent'}] Executing tool: ${tc.name}`,
+                          toolCallId: tc.id as string,
+                          toolName: tc.name as string,
+                        });
+                      }
+                    }
+                    // ToolMessage with results
+                    if (
+                      msgObj.type === 'tool' ||
+                      (typeof (msgObj as any)._getType === 'function' && (msgObj as any)._getType() === 'tool')
+                    ) {
+                      emitEvent({
+                        kind: 'tool_result',
+                        message: `[${nodeName ?? 'agent'}] Completed tool: ${msgObj.name}`,
+                        toolCallId: msgObj.tool_call_id as string,
+                        toolName: msgObj.name as string,
+                      });
+                    }
+                  }
+                }
+              }
+            }
           }
+        } catch (streamError) {
+          // Don't let a single malformed event kill the entire stream.
+          // Log and continue processing subsequent events.
+          logToStderr(
+            `[streamEvents] Error processing event: ${
+              streamError instanceof Error ? streamError.message : String(streamError)
+            }`,
+          );
         }
+      }
+
+      // After the stream ends, check if the graph paused at HumanIntervention
+      // (interruptBefore). This happens when a tool threw a Command to request
+      // human confirmation. The stream completes gracefully (no error), but the
+      // checkpointed state has pendingHumanInput set.
+      const stateSnapshot = await this.compiledWorkflow.getState(config);
+      const pendingInput = stateSnapshot?.values?.pendingHumanInput;
+      if (pendingInput) {
+        emitEvent({
+          kind: 'human_input_required',
+          message: pendingInput.question,
+          humanInputRequest: {
+            context: pendingInput.context,
+            question: pendingInput.question,
+            type: pendingInput.type,
+          },
+        });
+
+        // Don't persist yet — the conversation is incomplete until the human
+        // responds. Return a marker so the TUI knows the run is paused.
+        return `[AWAITING_HUMAN_INPUT] ${pendingInput.question}`;
       }
 
       await this.persistMessages([{ content: userMessage, role: 'user' }]);
@@ -708,6 +810,176 @@ Use your tools to inspect implementation details, verify assumptions, and produc
         message: 'Workflow execution aborted due to error.',
       });
       return '[Workflow Failed]';
+    }
+  }
+
+  /**
+   * Resume a paused LangGraph workflow with the human's answer.
+   *
+   * Called by the TUI after the user responds to a `human_input_required`
+   * event. Injects the answer as a HumanMessage, clears pendingHumanInput,
+   * and re-runs the graph from the checkpoint. The stream processing is
+   * identical to sendSingleAgentMessage, including interrupt detection
+   * (a subsequent tool may also need confirmation).
+   */
+  async resumeWithHumanInput(
+    answer: boolean | string,
+    onChunk: (text: string) => void,
+    onEvent?: (event: AgentStreamEvent) => void,
+  ): Promise<string> {
+    await this.initialized;
+    if (!this.compiledWorkflow) {
+      throw new Error('Workflow not compiled.');
+    }
+
+    const emitEvent = (event: Omit<AgentStreamEvent, 'timestamp'>) => {
+      onEvent?.({ ...event, timestamp: new Date().toISOString() });
+    };
+
+    // Use the same stable thread ID as sendSingleAgentMessage so the
+    // checkpointer can find the paused state and resume from it.
+    const config = {
+      configurable: { thread_id: 'session_main' },
+      version: 'v3' as const,
+    };
+
+    const answerText = typeof answer === 'boolean'
+      ? (answer ? 'Yes, approved.' : 'No, denied.')
+      : answer;
+
+    const inputs = {
+      messages: [new HumanMessage({ content: answerText })],
+      pendingHumanInput: null,
+    };
+
+    emitEvent({
+      kind: 'status',
+      message: `Resuming with human input: ${answerText}`,
+    });
+
+    let fullResponse = '';
+
+    try {
+      const stream = await this.compiledWorkflow.streamEvents(inputs, config);
+
+      for await (const event of stream) {
+        try {
+          // ── LangGraph v2 ProtocolEvent format ──────────────────────────
+          if (event.type === 'event') {
+            const method = event.method;
+            const params = event.params ?? {};
+            const data = params.data;
+            const nodeName = params.node;
+
+            if (method === 'messages' && data) {
+              const msgData = data as Record<string, unknown>;
+              let content = msgData.content;
+              if (Array.isArray(content)) {
+                for (const block of content) {
+                  if (
+                    typeof block === 'object' &&
+                    block !== null &&
+                    (block as Record<string, unknown>).type === 'text'
+                  ) {
+                    const text = (block as Record<string, unknown>).text;
+                    if (typeof text === 'string') {
+                      onChunk(text);
+                      fullResponse += text;
+                    }
+                  }
+                }
+              } else if (typeof content === 'string') {
+                onChunk(content);
+                fullResponse += content;
+              }
+            }
+
+            if (method === 'updates' && data) {
+              const updates = data as Record<string, unknown>;
+              for (const [, value] of Object.entries(updates)) {
+                const nodeUpdate = value as Record<string, unknown>;
+                const msgs = nodeUpdate?.messages;
+                if (Array.isArray(msgs)) {
+                  for (const msg of msgs) {
+                    const msgObj = msg as Record<string, unknown>;
+                    if (msgObj.tool_calls && Array.isArray(msgObj.tool_calls)) {
+                      for (const tc of msgObj.tool_calls as Array<Record<string, unknown>>) {
+                        emitEvent({
+                          kind: 'tool_call',
+                          message: `[${nodeName ?? 'agent'}] Executing tool: ${tc.name}`,
+                          toolCallId: tc.id as string,
+                          toolName: tc.name as string,
+                        });
+                      }
+                    }
+                    if (
+                      msgObj.type === 'tool' ||
+                      (typeof (msgObj as any)._getType === 'function' && (msgObj as any)._getType() === 'tool')
+                    ) {
+                      emitEvent({
+                        kind: 'tool_result',
+                        message: `[${nodeName ?? 'agent'}] Completed tool: ${msgObj.name}`,
+                        toolCallId: msgObj.tool_call_id as string,
+                        toolName: msgObj.name as string,
+                      });
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch (streamError) {
+          logToStderr(
+            `[streamEvents] Error processing resume event: ${
+              streamError instanceof Error ? streamError.message : String(streamError)
+            }`,
+          );
+        }
+      }
+
+      // Check for another interrupt (nested confirmation)
+      const stateSnapshot = await this.compiledWorkflow.getState(config);
+      const pendingInput = stateSnapshot?.values?.pendingHumanInput;
+      if (pendingInput) {
+        emitEvent({
+          kind: 'human_input_required',
+          message: pendingInput.question,
+          humanInputRequest: {
+            context: pendingInput.context,
+            question: pendingInput.question,
+            type: pendingInput.type,
+          },
+        });
+        return `[AWAITING_HUMAN_INPUT] ${pendingInput.question}`;
+      }
+
+      await this.persistMessages([{ content: answerText, role: 'user' }]);
+      await this.persistMessages([{ content: fullResponse, role: 'assistant' }]);
+      return fullResponse;
+    } catch (error) {
+      this.runtimeWarnings.push(`Resume failed: ${error instanceof Error ? error.message : String(error)}`);
+      emitEvent({ kind: 'status', message: 'Resume aborted due to error.' });
+      return '[Resume Failed]';
+    }
+  }
+
+  /**
+   * Check if the workflow is currently paused awaiting human input.
+   */
+  async isPausedAwaitingHumanInput(): Promise<boolean> {
+    await this.initialized;
+    if (!this.compiledWorkflow) return false;
+
+    const config = {
+      configurable: { thread_id: 'session_main' },
+      version: 'v3' as const,
+    };
+
+    try {
+      const stateSnapshot = await this.compiledWorkflow.getState(config);
+      return stateSnapshot?.values?.pendingHumanInput != null;
+    } catch {
+      return false;
     }
   }
 

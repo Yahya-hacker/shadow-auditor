@@ -1,4 +1,4 @@
-import React, { createContext, useContext } from 'react';
+import React, { createContext, useContext, useMemo } from 'react';
 
 import type { AgentSession } from '../core/agent.js';
 
@@ -20,8 +20,13 @@ export function useAgentSessionRef(): React.MutableRefObject<AgentSession | null
 export const AgentSessionProvider: React.FC<{
   agentSessionRef: React.MutableRefObject<AgentSession | null>;
   children: React.ReactNode;
-}> = ({ agentSessionRef, children }) => (
-  <AgentSessionContext.Provider value={{ agentSessionRef }}>
-    {children}
-  </AgentSessionContext.Provider>
-);
+}> = ({ agentSessionRef, children }) => {
+  // Memoize the context value so consumers don't re-render when the
+  // provider's parent re-renders (e.g., App.tsx screen transitions).
+  const value = useMemo(() => ({ agentSessionRef }), [agentSessionRef]);
+  return (
+    <AgentSessionContext.Provider value={value}>
+      {children}
+    </AgentSessionContext.Provider>
+  );
+};

@@ -9,6 +9,26 @@ export interface SessionInitOptions {
   expertUnsafe?: boolean;
 }
 
+// Module-level cache for the repo map generation promise
+let repoMapPromiseCache: { path: string; promise: Promise<string> } | null = null;
+
+/**
+ * Start generating the repo map in the background.
+ * This can be called early (e.g., when target is selected) to avoid blocking
+ * the UI during session initialization.
+ */
+export function startRepoMapGeneration(targetPath: string): void {
+  // Only start if not already in progress for this path
+  if (repoMapPromiseCache && repoMapPromiseCache.path === targetPath) {
+    return;
+  }
+
+  repoMapPromiseCache = {
+    path: targetPath,
+    promise: import('../../utils/repo-map.js').then((m) => m.generateRepoMap(targetPath)),
+  };
+}
+
 export function useAgentSession() {
   const agentSessionRef = useRef<AgentSession | null>(null);
 
@@ -17,8 +37,14 @@ export function useAgentSession() {
     targetPath: string,
     options: SessionInitOptions,
   ) => {
-    const { generateRepoMap } = await import('../../utils/repo-map.js');
-    const map = await generateRepoMap(targetPath);
+    // Use cached repo map if available, otherwise generate it
+    let map: string;
+    if (repoMapPromiseCache && repoMapPromiseCache.path === targetPath) {
+      map = await repoMapPromiseCache.promise;
+    } else {
+      const { generateRepoMap } = await import('../../utils/repo-map.js');
+      map = await generateRepoMap(targetPath);
+    }
 
     const session = new AgentSession(config, map, targetPath, {
       diffScopeHint: options.diffScopeHint,

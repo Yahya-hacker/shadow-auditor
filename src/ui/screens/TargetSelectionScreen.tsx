@@ -1,7 +1,8 @@
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 
+import { startRepoMapGeneration } from '../hooks/useAgentSession.js';
 import { useAppStore } from '../store/appStore.js';
 import { colors, labels, spacing } from '../theme/chalkTheme.js';
 
@@ -35,16 +36,18 @@ export const TargetSelectionScreen: React.FC = () => {
   };
 
   const proceed = (target: string) => {
+    // Start repo map generation in the background before transitioning
+    startRepoMapGeneration(target);
     setSessionTarget(target);
     setScreen('initializing');
   };
 
-  useInput((_, key) => {
+  useInput(useCallback((_, key) => {
     if (key.escape && showCustom) {
       setShowCustom(false);
       setError('');
     }
-  });
+  }, [showCustom]));
 
   return (
     <Box flexDirection="column" paddingX={spacing.panelPadX}>

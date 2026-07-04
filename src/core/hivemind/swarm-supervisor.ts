@@ -273,6 +273,16 @@ export function buildSwarmSupervisor(options: {
     const { agentId, taskId } = state;
     const taskGraph = blackboard.getTaskGraph();
     if (!taskId || !agentId) {
+      // Guard against stale tasks with empty identifiers. If we know the
+      // taskId, fail it explicitly so dependents/deadlock logic can react.
+      if (taskId) {
+        taskGraph.failTask(taskId, 'executeTask received empty agentId — agent unavailable');
+      } else if (agentId) {
+        debugLog(`[SwarmCoordinator] executeTask received empty taskId for agent ${agentId}`);
+      } else {
+        debugLog('[SwarmCoordinator] executeTask received with empty taskId and agentId');
+      }
+
       return { blackboard: blackboardToState(blackboard) };
     }
 
@@ -388,7 +398,15 @@ function routeAfterEvaluate(state: GraphState): string {
       t.dependencies.every((d) => tasks.find((x) => x.taskId === d)?.status === 'completed'),
   );
 
-  if (hasInProgress || hasClaimable) {
+  // Blocked tasks have unmet dependencies — we must not terminate while
+  // they exist because a sibling task might resolve their blocker later.
+  const hasBlocked = tasks.some(
+    (t) =>
+      t.status === 'pending' &&
+      !t.dependencies.every((d) => tasks.find((x) => x.taskId === d)?.status === 'completed'),
+  );
+
+  if (hasInProgress || hasClaimable || hasBlocked) {
     return 'dispatch';
   }
 

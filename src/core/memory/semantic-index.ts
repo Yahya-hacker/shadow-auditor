@@ -15,10 +15,13 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import Parser from 'tree-sitter';
-import JavaScript from 'tree-sitter-javascript';
-import TypeScript from 'tree-sitter-typescript';
 
+import {
+  getLanguageForExt,
+  getSupportedExtensions,
+  isStructuredLanguage,
+  Parser,
+} from './tree-sitter-languages.js';
 import { VectorStore } from './vector-store.js';
 
 // ============================================================================
@@ -266,15 +269,11 @@ const IGNORED_DIRS = new Set([
   '__pycache__', 'build', 'coverage', 'dist', 'node_modules',
 ]);
 
-/** Supported file extensions with their languages */
-const LANGUAGE_MAP: Record<string, () => unknown> = {
-  '.js': () => JavaScript,
-  '.jsx': () => JavaScript,
-  '.ts': () => TypeScript.typescript,
-  '.tsx': () => TypeScript.tsx,
-};
+// Language support is now provided by tree-sitter-languages.ts.
+// The LANGUAGE_MAP, STRUCTURED_LANGUAGES, and languageNameForExt are
+// replaced by dynamic calls: getLanguageForExt(ext), isStructuredLanguage(key).
 
-/** AST node types that represent meaningful code boundaries */
+/** AST node types that represent meaningful code boundaries (JS/TS-specific) */
 const CHUNK_BOUNDARY_TYPES = new Set([
   'arrow_function',
   'class_declaration',
@@ -285,6 +284,34 @@ const CHUNK_BOUNDARY_TYPES = new Set([
   'lexical_declaration',
   'method_definition',
   'type_alias_declaration',
+]);
+
+/** Tree-sitter node types that represent function/method definitions across
+ *  common languages. Used by the generic cross-language chunker. */
+const FUNCTION_LIKE_TYPES = new Set([
+  'function_declaration', 'function_definition', 'function_item',
+  'method_declaration', 'method_definition', 'method',
+  'arrow_function', 'constructor_declaration',
+  'func_literal', 'function',
+]);
+
+/** Tree-sitter node types that represent class/struct/interface/module
+ *  definitions across common languages. Used by the generic chunker. */
+const CLASS_LIKE_TYPES = new Set([
+  'class_declaration', 'class_definition', 'class',
+  'struct_declaration', 'struct_item',
+  'interface_declaration', 'trait_item', 'impl_item',
+  'enum_declaration', 'module', 'type_declaration',
+]);
+
+/** Node types that should be skipped (not chunked) — imports, includes,
+ *  package declarations, and other boilerplate. */
+const SKIP_TYPES = new Set([
+  'import_declaration', 'import_statement', 'import_from_statement',
+  'include_statement', 'package_declaration', 'package_clause',
+  'use_declaration', 'require_statement', 'using_directive',
+  'comment', 'block_comment', 'line_comment',
+  'preproc_include', 'preproc_if', 'preproc_ifdef', 'preproc_def',
 ]);
 
 /**
@@ -310,7 +337,7 @@ async function collectSourceFiles(dirPath: string): Promise<string[]> {
         }
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name);
-        if (ext in LANGUAGE_MAP) {
+        if (getLanguageForExt(ext)) {
           results.push(fullPath);
         }
       }
@@ -319,6 +346,36 @@ async function collectSourceFiles(dirPath: string): Promise<string[]> {
 
   await walk(dirPath);
   return results.sort();
+}
+
+/**
+ * Chunk a non-structured file (JSON, YAML, Markdown, SQL, etc.) as a single
+ * whole-file fragment. These formats don't have function/class AST boundaries
+ * that map to meaningful semantic units, so fine-grained chunking is wasteful.
+ */
+function chunkWholeFile(
+  sourceCode: string,
+  filePath: string,
+  language: string,
+  maxChunkChars: number,
+): CodeChunk[] {
+  const lines = sourceCode.split('\n');
+  const content = sourceCode.length > maxChunkChars
+    ? sourceCode.slice(0, maxChunkChars) + '\n// ... truncated'
+    : sourceCode;
+
+  return [{
+    contentHash: crypto.createHash('sha256').update(sourceCode).digest('hex').slice(0, 16),
+    endLine: lines.length,
+    filePath,
+    id: `chunk_${crypto.createHash('sha256').update(`${filePath}:file`).digest('hex').slice(0, 16)}`,
+    language,
+    parentContext: '',
+    rawContent: content,
+    startLine: 1,
+    structuralType: 'file_fragment',
+    symbol: path.basename(filePath),
+  }];
 }
 
 /**
@@ -357,7 +414,112 @@ function extractClassHeader(node: Parser.SyntaxNode): string {
 }
 
 /**
+ * Generic cross-language chunker for structured languages other than JS/TS.
+ *
+ * Walks top-level named children and chunks at function-like and class-like
+ * boundaries. Uses common tree-sitter node type patterns that work across
+ * Python, Go, Rust, Java, C/C++, C#, Ruby, PHP, Swift, Kotlin, Scala,
+ * Haskell, Elixir, Elm, Lua, Zig, Solidity, Bash, and OCaml.
+ */
+function chunkGeneric(
+  root: Parser.SyntaxNode,
+  sourceCode: string,
+  filePath: string,
+  language: string,
+  maxChunkChars: number,
+): CodeChunk[] {
+  const chunks: CodeChunk[] = [];
+  const lines = sourceCode.split('\n');
+
+  function createChunk(
+    node: Parser.SyntaxNode,
+    structuralType: string,
+    symbol: string,
+  ): CodeChunk {
+    const rawContent = node.text;
+    const startLine = node.startPosition.row + 1;
+    const endLine = node.endPosition.row + 1;
+
+    return {
+      contentHash: crypto.createHash('sha256').update(rawContent).digest('hex').slice(0, 16),
+      endLine,
+      filePath,
+      id: `chunk_${crypto.createHash('sha256').update(`${filePath}:${startLine}:${endLine}`).digest('hex').slice(0, 16)}`,
+      language,
+      parentContext: '',
+      rawContent: rawContent.length > maxChunkChars
+        ? rawContent.slice(0, maxChunkChars) + '\n// ... truncated'
+        : rawContent,
+      startLine,
+      structuralType,
+      symbol,
+    };
+  }
+
+  // Walk top-level named children
+  for (const child of root.namedChildren) {
+    const childType = child.type;
+
+    // Skip imports, includes, comments
+    if (SKIP_TYPES.has(childType)) continue;
+
+    // Function-like nodes → chunk individually
+    if (FUNCTION_LIKE_TYPES.has(childType)) {
+      const name = child.childForFieldName('name')?.text ?? 'anonymous';
+      chunks.push(createChunk(child, 'function', name));
+      continue;
+    }
+
+    // Class-like nodes → chunk the whole definition
+    if (CLASS_LIKE_TYPES.has(childType)) {
+      const name = child.childForFieldName('name')?.text ?? 'Anonymous';
+      // For large classes, also chunk individual methods
+      const body = child.childForFieldName('body') ?? child.childForFieldName('declaration_list');
+      if (body && child.text.length > maxChunkChars) {
+        for (const member of body.namedChildren) {
+          if (FUNCTION_LIKE_TYPES.has(member.type)) {
+            const methodName = member.childForFieldName('name')?.text ?? 'anonymous';
+            chunks.push(createChunk(member, 'method', `${name}.${methodName}`));
+          }
+        }
+      }
+      chunks.push(createChunk(child, 'class', name));
+      continue;
+    }
+
+    // Any other significant node (declarations, assignments, etc.)
+    if (child.text.length > 20) {
+      const name = child.childForFieldName('name')?.text;
+      const symbol = name ?? childType;
+      chunks.push(createChunk(child, 'declaration', symbol));
+    }
+  }
+
+  // Fallback: if no chunks were found, capture the whole file
+  if (chunks.length === 0 && sourceCode.trim().length > 0) {
+    chunks.push({
+      contentHash: crypto.createHash('sha256').update(sourceCode).digest('hex').slice(0, 16),
+      endLine: lines.length,
+      filePath,
+      id: `chunk_${crypto.createHash('sha256').update(`${filePath}:file`).digest('hex').slice(0, 16)}`,
+      language,
+      parentContext: '',
+      rawContent: sourceCode.length > maxChunkChars
+        ? sourceCode.slice(0, maxChunkChars) + '\n// ... truncated'
+        : sourceCode,
+      startLine: 1,
+      structuralType: 'file_fragment',
+      symbol: path.basename(filePath),
+    });
+  }
+
+  return chunks;
+}
+
+/**
  * Chunk a parsed AST into semantically meaningful code blocks.
+ * Handles JS/TS with detailed AST knowledge. For other languages,
+ * delegates to the generic cross-language chunker.
  */
 function chunkAST(
   root: Parser.SyntaxNode,
@@ -639,8 +801,8 @@ export class SemanticIndex {
     this.ensureInitialized();
 
     const ext = path.extname(filePath);
-    const languageFactory = LANGUAGE_MAP[ext];
-    if (!languageFactory) {
+    const langInfo = getLanguageForExt(ext);
+    if (!langInfo) {
       return 0;
     }
 
@@ -655,17 +817,41 @@ export class SemanticIndex {
       return 0;
     }
 
+    // Binary file detection: scan for null bytes in the first 8KB.
+    // Tree-sitter parsers crash on binary input, so we skip aggressively.
+    const scanLength = Math.min(sourceCode.length, 8192);
+    if (sourceCode.slice(0, scanLength).includes('\0')) {
+      return 0;
+    }
+
     // Remove old chunks for this file
     this.invalidateFile(filePath);
 
-    // Parse and chunk
-    const language = languageFactory();
-    const languageName = ext === '.ts' || ext === '.tsx' ? 'typescript' : 'javascript';
+    const languageName = langInfo.name;
+    const isStructured = langInfo.isStructured;
 
     try {
+      let language: unknown;
+      try {
+        language = await langInfo.load();
+      } catch {
+        // Tree-sitter grammar package not installed or failed to load.
+        // Skip this file gracefully — the language won't be indexed.
+        return 0;
+      }
+
       this.parser.setLanguage(language as Parameters<Parser['setLanguage']>[0]);
       const tree = this.parser.parse(sourceCode);
-      const newChunks = chunkAST(tree.rootNode, sourceCode, filePath, languageName, this.maxChunkChars);
+
+      // Use language-specific AST chunking for JS/TS (detailed knowledge),
+      // generic cross-language chunking for other structured languages
+      // (Python, Go, Rust, Java, etc.), and whole-file chunks for
+      // data/config/markup formats.
+      const newChunks = isStructured
+        ? (langInfo.key === 'javascript' || langInfo.key === 'typescript')
+          ? chunkAST(tree.rootNode, sourceCode, filePath, languageName, this.maxChunkChars)
+          : chunkGeneric(tree.rootNode, sourceCode, filePath, languageName, this.maxChunkChars)
+        : chunkWholeFile(sourceCode, filePath, languageName, this.maxChunkChars);
 
       if (newChunks.length === 0) {
         return 0;
@@ -703,16 +889,17 @@ export class SemanticIndex {
 
       return newChunks.length;
     } catch (error) {
-      const errorMessage = (error as Error).message;
+      const errorMessage = error instanceof Error ? error.message : String(error);
 
       // If this is an embedding/API error, propagate it to the caller
       // so it can be handled once (not spammed per-file)
-      if (errorMessage.includes('embed error') || errorMessage.includes('Embedding')) {
+      if (errorMessage.includes('embed error')) {
         throw error;
       }
 
-      // Only log genuine parse errors (rare, worth knowing about)
-      // Suppress noise — the caller handles aggregate error reporting
+      // Parse errors: log once then suppress. The common case is a
+      // tree-sitter grammar version mismatch or a file with syntax the
+      // parser doesn't handle — neither is actionable per-file.
       return 0;
     }
   }

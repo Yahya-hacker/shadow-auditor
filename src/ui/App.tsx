@@ -54,9 +54,16 @@ export const App: React.FC<AppProps> = ({
     }
   }, [initialConfig, setConfig]);
 
-  useEffect(() => {
+  // Track if we should show setup after boot completes
+  const [pendingSetup, setPendingSetup] = useState(needsSetup);
+
+  // Handle boot sequence completion - transition to setup or target selection
+  const handleBootComplete = useCallback(() => {
+    setPendingSetup(false);
     if (needsSetup) {
       setScreen('setup');
+    } else {
+      setScreen('target');
     }
   }, [needsSetup, setScreen]);
 
@@ -134,7 +141,7 @@ export const App: React.FC<AppProps> = ({
   // Screen rendering
   switch (screen) {
     case 'boot': {
-      return <BootScreen />;
+      return <BootScreen onBootComplete={handleBootComplete} />;
     }
 
     case 'initializing': {

@@ -5,4 +5,14 @@
  * New code should import from `./theme/chalkTheme.js` directly.
  */
 
-export { chalkTheme, colors, initTheme, labels, rolePrefix, spacing } from './theme/chalkTheme.js';
+export {
+  chalkTheme,
+  colors,
+  getPanelStyle,
+  initTheme,
+  labels,
+  layout,
+  type PanelStyle,
+  rolePrefix,
+  spacing,
+} from './theme/chalkTheme.js';

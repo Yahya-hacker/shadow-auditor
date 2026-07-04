@@ -203,6 +203,9 @@ export async function loadConfig(): Promise<null | ShadowConfig> {
       return null;
     }
 
+    // Track if API key was in plaintext config (for warning)
+    const hadPlaintextApiKey = parsed.apiKey !== '';
+
     // API key is required for non-Ollama providers
     if (parsed.provider !== 'ollama' && !parsed.apiKey && secretStoreAdapter) {
       const secureApiKey = await secretStoreAdapter.getApiKey(parsed.provider);
@@ -215,11 +218,12 @@ export async function loadConfig(): Promise<null | ShadowConfig> {
       return null;
     }
 
-    if (parsed.provider !== 'ollama' && parsed.apiKey && !plaintextApiKeyWarningShown) {
+    // Only warn if the API key was actually stored in plaintext config
+    if (hadPlaintextApiKey && !plaintextApiKeyWarningShown) {
       plaintextApiKeyWarningShown = true;
       process.stderr.write(
         `[ShadowAuditor][WARN] API key is stored in plaintext at ${configPath}. ` +
-          'Consider using environment variables or registerSecretStoreAdapter(...) for keychain integration.\n',
+          'Consider using environment variables or the setup wizard for secure keychain storage.\n',
       );
     }
 

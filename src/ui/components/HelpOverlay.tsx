@@ -6,8 +6,10 @@ import { useAppStore } from '../store/appStore.js';
 import { colors, labels, spacing } from '../theme/chalkTheme.js';
 
 /**
- * Full keybinding reference overlay. Rendered in place of the chat body when
- * `helpOpen` is true (a modal focus-trap): `?` toggles it open, `Esc` closes.
+ * Full keybinding reference overlay. Rendered in place of the output area
+ * when `helpOpen` is true (a modal focus-trap): `?` toggles it open, `Esc`
+ * closes. Uses double borders + focusBorder color to match the spec's
+ * focused aesthetic.
  */
 export const HelpOverlay: React.FC = () => {
   const helpOpen = useAppStore((state) => state.helpOpen);
@@ -15,14 +17,15 @@ export const HelpOverlay: React.FC = () => {
 
   return (
     <Box
-      borderColor={colors.borderSecondary}
-      borderStyle="round"
+      borderColor={colors.focusBorder}
+      borderStyle="double"
       flexDirection="column"
+      flexGrow={1}
       paddingX={spacing.panelPadX}
       paddingY={spacing.panelPadY}
     >
       <Text bold color={colors.brand}>
-        ◈ {labels.appName} — Keybindings
+        {labels.appName} — Keybindings
       </Text>
       {helpKeybinds.map((kb) => (
         <Box gap={2} key={`${kb.keys}-${kb.desc}`}>

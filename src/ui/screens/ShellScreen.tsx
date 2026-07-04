@@ -1,5 +1,5 @@
 import { Box, useApp, useInput } from 'ink';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 
 import { useAgentSessionRef } from '../AgentSessionContext.js';
 import { FiltersPanel } from '../components/FiltersPanel.js';
@@ -221,33 +221,33 @@ function useHandleSubmit(
   exit: () => void,
 ): (command: string) => void {
   const agentSessionRef = useAgentSessionRef();
-  const addUserMessage = useAppStore((state) => state.addUserMessage);
-  const setInput = useAppStore((state) => state.setInput);
-  const clearActivity = useAppStore((state) => state.clearActivity);
-  const startStreaming = useAppStore((state) => state.startStreaming);
-  const appendStreamChunk = useAppStore((state) => state.appendStreamChunk);
-  const finishStreaming = useAppStore((state) => state.finishStreaming);
-  const addErrorMessage = useAppStore((state) => state.addErrorMessage);
-  const addActivityEvent = useAppStore((state) => state.addActivityEvent);
-  const setHumanInputRequest = useAppStore((state) => state.setHumanInputRequest);
 
-  return async (command: string) => {
+  // Use refs for stable callbacks — avoids re-creating the submit handler
+  // on every keystroke, which would cause Ink to re-process the TextInput.
+  const setIsProcessingRef = useRef(setIsProcessing);
+  setIsProcessingRef.current = setIsProcessing;
+  const exitRef = useRef(exit);
+  exitRef.current = exit;
+
+  return useCallback(async (command: string) => {
     const trimmed = command.trim();
     if (!trimmed) return;
 
     if ([':q', ':quit', 'exit', 'quit'].includes(trimmed.toLowerCase())) {
-      exit();
+      exitRef.current();
       return;
     }
 
+    // Read store actions via getState to avoid re-creating this callback
+    const store = useAppStore.getState();
+
     // If the agent is paused awaiting human input (LangGraph interrupt),
     // resume the graph with the user's answer instead of sending a new message.
-    const currentRequest = useAppStore.getState().humanInputRequest;
+    const currentRequest = store.humanInputRequest;
     if (currentRequest) {
-      setIsProcessing(true);
-      startStreaming();
+      setIsProcessingRef.current(true);
+      store.startStreaming();
       try {
-        // For confirmation-type interrupts, parse yes/no answers
         let answer: boolean | string;
         if (currentRequest.type === 'confirmation') {
           const lower = trimmed.toLowerCase();
@@ -258,50 +258,45 @@ function useHandleSubmit(
 
         await agentSessionRef.current?.resumeWithHumanInput(
           answer,
-          (chunk: string) => { appendStreamChunk(chunk); },
-          (event) => { addActivityEvent(event); },
+          (chunk: string) => { useAppStore.getState().appendStreamChunk(chunk); },
+          (event) => { useAppStore.getState().addActivityEvent(event); },
         );
-        setHumanInputRequest(null);
-        finishStreaming();
+        useAppStore.getState().setHumanInputRequest(null);
+        useAppStore.getState().finishStreaming();
       } catch (error) {
-        addErrorMessage(`Error: ${(error as Error).message}`);
-        finishStreaming();
+        useAppStore.getState().addErrorMessage(`Error: ${(error as Error).message}`);
+        useAppStore.getState().finishStreaming();
       } finally {
-        setIsProcessing(false);
+        setIsProcessingRef.current(false);
       }
       return;
     }
 
-    addUserMessage(trimmed);
-    setInput('');
-    setIsProcessing(true);
-    clearActivity();
-    startStreaming();
+    store.addUserMessage(trimmed);
+    store.setInput('');
+    setIsProcessingRef.current(true);
+    store.clearActivity();
+    store.startStreaming();
 
     try {
       await agentSessionRef.current?.sendMessage(
         trimmed,
-        (chunk: string) => {
-          appendStreamChunk(chunk);
-        },
-        (event) => {
-          addActivityEvent(event);
-        },
+        (chunk: string) => { useAppStore.getState().appendStreamChunk(chunk); },
+        (event) => { useAppStore.getState().addActivityEvent(event); },
       );
-      finishStreaming();
+      useAppStore.getState().finishStreaming();
     } catch (error) {
       const errMsg = (error as Error).message;
       if (errMsg.includes('API key') || errMsg.includes('401') || errMsg.includes('authentication')) {
-        addErrorMessage('Authentication failed. Run again with --reconfigure.');
+        useAppStore.getState().addErrorMessage('Authentication failed. Run again with --reconfigure.');
       } else {
-        addErrorMessage(`Error: ${errMsg}`);
+        useAppStore.getState().addErrorMessage(`Error: ${errMsg}`);
       }
-
-      finishStreaming();
+      useAppStore.getState().finishStreaming();
     } finally {
-      setIsProcessing(false);
+      setIsProcessingRef.current(false);
     }
-  };
+  }, [agentSessionRef]); // Only re-create if the ref changes (it never does)
 }
 
 /** Compact layout: single column with output + slim metadata sidebar */
@@ -341,29 +336,25 @@ export const ShellScreen: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const { exit } = useApp();
 
-  // Trigger "Synchronized Output" Mode (DEC Mode 2026)
-  // This commands the terminal emulator to buffer rendering and only swap
-  // the buffer when the frame is complete, eliminating flickering and
-  // overlapping text during high-speed token streaming.
-  useEffect(() => {
-    process.stdout.write('\x1b[?2026h');
-    return () => {
-      process.stdout.write('\x1b[?2026l');
+  const handleSubmit = useHandleSubmit(setIsProcessing, exit);
+
+  // Use getState() for actions to avoid re-subscribing on every keystroke.
+  // All store action references are stable (zustand guarantees this), so
+  // reading them once via getState and memoizing prevents the useInput
+  // callback from being recreated on every render.
+  const actions: KeyActions = useMemo(() => {
+    const s = useAppStore.getState();
+    return {
+      setFocus: s.setFocus,
+      setInput: s.setInput,
+      setScrollOffset: s.setScrollOffset,
+      setSearchActive: s.setSearchActive,
+      toggleHelp: s.toggleHelp,
+      togglePanel: s.togglePanel,
     };
   }, []);
 
-  const handleSubmit = useHandleSubmit(setIsProcessing, exit);
-
-  const actions: KeyActions = {
-    setFocus: useAppStore((state) => state.setFocus),
-    setInput: useAppStore((state) => state.setInput),
-    setScrollOffset: useAppStore((state) => state.setScrollOffset),
-    setSearchActive: useAppStore((state) => state.setSearchActive),
-    toggleHelp: useAppStore((state) => state.toggleHelp),
-    togglePanel: useAppStore((state) => state.togglePanel),
-  };
-
-  useInput((char, key) => {
+  useInput(useCallback((char, key) => {
     const state = useAppStore.getState();
     const keyArg: KeyLike = {
       downArrow: key.downArrow,
@@ -375,65 +366,72 @@ export const ShellScreen: React.FC = () => {
 
     // Help overlay is a focus trap: only `?` / Esc close it.
     if (state.helpOpen) {
-      if (keyArg.escape || char === '?') actions.toggleHelp();
+      if (keyArg.escape || char === '?') useAppStore.getState().toggleHelp();
       return;
     }
 
     // Search mode: Esc clears; the search TextInput handles typing.
     if (state.searchActive) {
-      if (keyArg.escape) actions.setSearchActive(false);
+      if (keyArg.escape) useAppStore.getState().setSearchActive(false);
       return;
     }
 
+    const a = actions;
     switch (state.focus) {
       case 'filters': {
-        handleFiltersFocusKey(char, keyArg, state, actions);
+        handleFiltersFocusKey(char, keyArg, state, a);
         break;
       }
 
       case 'output': {
-        handleOutputFocusKey(char, keyArg, state, actions);
+        handleOutputFocusKey(char, keyArg, state, a);
         break;
       }
 
       case 'panel': {
-        handlePanelFocusKey(char, keyArg, state, actions);
+        handlePanelFocusKey(char, keyArg, state, a);
         break;
       }
 
       case 'input':
       default: {
-        handleInputFocusKey(char, keyArg, state, actions);
+        handleInputFocusKey(char, keyArg, state, a);
         break;
       }
     }
-  });
+  }, [actions]));
 
-  return (
-    <Layout>
-      {(layout) => (
-        <Box flexDirection="column" height={layout.rows} width={layout.columns}>
-          {/* Row 1: Header (double border, 2-line content) */}
-          <Header />
+  // Wrap the Layout render-prop in useCallback so the function reference
+  // is stable across renders. Without this, every ShellScreen re-render
+  // creates a new children function, which forces Layout to re-invoke it
+  // and recreate the entire terminal UI subtree. Dependencies are the
+  // values actually used inside the function body.
+  const renderLayout = useCallback(
+    (layout: LayoutResult) => (
+      <Box flexDirection="column" height={layout.rows} width={layout.columns}>
+        {/* Row 1: Header (double border, 2-line content) */}
+        <Header />
 
-          {/* Row 2: Main Content (sidebar + output or compact) */}
-          <Box flexDirection="row" flexGrow={1}>
-            {helpOpen ? (
-              <Box flexGrow={1}>
-                <HelpOverlay />
-              </Box>
-            ) : isCompact ? (
-              <CompactLayout layout={layout} />
-            ) : (
-              <ExpandedLayout layout={layout} panelOpen={panelOpen} />
-            )}
-          </Box>
-
-          {/* Row 3: Status + Input */}
-          <StatusLine />
-          <InputArea isProcessing={isProcessing} onSubmit={handleSubmit} />
+        {/* Row 2: Main Content (sidebar + output or compact) */}
+        <Box flexDirection="row" flexGrow={1}>
+          {helpOpen ? (
+            <Box flexGrow={1}>
+              <HelpOverlay />
+            </Box>
+          ) : isCompact ? (
+            <CompactLayout layout={layout} />
+          ) : (
+            <ExpandedLayout layout={layout} panelOpen={panelOpen} />
+          )}
         </Box>
-      )}
-    </Layout>
+
+        {/* Row 3: Status + Input */}
+        <StatusLine />
+        <InputArea isProcessing={isProcessing} onSubmit={handleSubmit} />
+      </Box>
+    ),
+    [helpOpen, isCompact, panelOpen, isProcessing, handleSubmit],
   );
+
+  return <Layout>{renderLayout}</Layout>;
 };

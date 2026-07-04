@@ -14,6 +14,7 @@ import { type ToolSet } from 'ai';
 import { AgentState } from './state.js';
 import { ToolRetriever } from './tool-retriever.js';
 import { wrapTool } from './tools/langchain-wrapper.js';
+import { enableLangGraphContext } from '../../utils/human-in-loop.js';
 
 type GraphState = typeof AgentState.State;
 type ToolEntry = { name: string; tool: ToolSet[string] };
@@ -132,6 +133,19 @@ function routeAfterModelInvocation(
 }
 
 /**
+ * Routing function after ToolExecutor: if a tool set pendingHumanInput (via
+ * a Command throw), route to HumanIntervention so the graph pauses at
+ * interruptBefore. Otherwise, return to Supervisor to continue the loop.
+ */
+function routeFromToolExecutor(state: GraphState): string {
+  if (state.pendingHumanInput) {
+    return 'HumanIntervention';
+  }
+
+  return 'Supervisor';
+}
+
+/**
  * Routing function for the supervisor node.
  * After the supervisor runs, decide whether to:
  * - Execute tool calls (ToolExecutor)
@@ -180,6 +194,12 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
   }
 
   const bindTools = model.bindTools.bind(model);
+
+  // Enable LangGraph-specific confirmation behavior. When a tool requests
+  // human confirmation, it will throw a LangGraph Command (rather than using
+  // the blocking Promise pattern) so the graph pauses at HumanIntervention
+  // and the TUI can show the question without freezing.
+  enableLangGraphContext();
 
   // =========================================================================
   // All node functions are defined INSIDE compileWorkflow so they have
@@ -248,20 +268,38 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
     return { messages: [response] };
   }
 
+  /**
+   * HumanIntervention node: a passthrough that exists solely as an
+   * interruptBefore point. When a tool throws a Command to request human
+   * input (setting pendingHumanInput), the graph routes here. Because the
+   * compile call declares `interruptBefore: ['HumanIntervention']`, the graph
+   * pauses before entering this node, checkpointing state. The TUI detects the
+   * pause, shows the question, and resumes the graph with the human's answer.
+   */
+  async function humanInterventionNode(): Promise<Partial<GraphState>> {
+    // Passthrough — the actual human input is injected when the graph is
+    // resumed. On resume, pendingHumanInput is cleared and the human's answer
+    // is appended as a HumanMessage, so the Supervisor processes it naturally.
+    return { pendingHumanInput: null };
+  }
+
   const workflow = new StateGraph(AgentState)
     .addNode('SastAnalyzer', sastAnalyzerNode)
     .addNode('GraphTracer', graphTracerNode)
     .addNode('Verifier', verifierNode)
     .addNode('Supervisor', supervisorNode)
     .addNode('ToolExecutor', toolNode)
+    .addNode('HumanIntervention', humanInterventionNode)
     .addEdge(START, 'Supervisor')
     .addConditionalEdges('Supervisor', routeFromSupervisor)
     .addConditionalEdges('SastAnalyzer', routeFromSpecialist)
     .addConditionalEdges('GraphTracer', routeFromSpecialist)
     .addConditionalEdges('Verifier', routeFromSpecialist)
-    .addEdge('ToolExecutor', 'Supervisor');
+    .addConditionalEdges('ToolExecutor', routeFromToolExecutor)
+    .addEdge('HumanIntervention', 'Supervisor');
 
   return workflow.compile({
     checkpointer,
+    interruptBefore: ['HumanIntervention'],
   });
 }

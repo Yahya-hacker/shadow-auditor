@@ -66,7 +66,7 @@ export class ReportBuilder {
   private filesTotal = 0;
   private readonly findingIds = new Set<string>();
   private readonly findings: EnhancedFinding[] = [];
-  private readonly options: Required<ReportBuilderOptions>;
+  private readonly options: ReportBuilderOptions;
   private readonly rejectedFindings: Array<{
     finding: Partial<EnhancedFinding>;
     reason: string;
@@ -86,7 +86,7 @@ export class ReportBuilder {
       toolVersion: '1.0.0',
       verificationGates: undefined,
       ...options,
-    } as Required<ReportBuilderOptions>;
+    };
   }
   
   /**
@@ -171,7 +171,7 @@ export class ReportBuilder {
       scanMode: this.options.scanMode,
       schemaVersion: SCHEMA_VERSION,
       targetName: this.options.targetName,
-      toolVersion: this.options.toolVersion,
+      toolVersion: this.options.toolVersion ?? '1.0.0',
     };
     
     const summary = this.computeSummary();

@@ -11,6 +11,18 @@ type KnowledgeGraphState = Record<string, unknown>;
 type MemoryEntry = Record<string, unknown>;
 type StoreValue = Record<string, unknown>;
 
+/** Human-input request carried across the LangGraph checkpoint boundary.
+ * When a tool needs confirmation or a question answered, it sets this field
+ * via a Command and routes the graph to the HumanIntervention node (which
+ * is declared as an interruptBefore point). The graph pauses, the TUI shows
+ * the question, and when the user responds the graph is resumed with the
+ * answer injected as a HumanMessage and this field cleared to null. */
+export interface HumanInputRequest {
+  context?: string;
+  question: string;
+  type: 'confirmation' | 'question';
+}
+
 function mergeBlackboard(
   left: BlackboardState,
   right: Partial<BlackboardState>,
@@ -82,6 +94,14 @@ export const AgentState = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
     default: () => [],
     reducer: messagesStateReducer,
+  }),
+  // Human-input request: when a tool needs confirmation or a question, it
+  // sets this field via a Command throw and routes to HumanIntervention. The
+  // graph pauses at interruptBefore, the TUI shows the question, and the
+  // resume call clears this to null.
+  pendingHumanInput: Annotation<HumanInputRequest | null>({
+    default: () => null,
+    reducer: (_state, update) => update,
   }),
   // Transient per-task routing fields populated by Send() fan-out from the
   // swarm supervisor's `dispatch` conditional edge. Each parallel

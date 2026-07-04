@@ -171,8 +171,16 @@ export class PersistentCheckpointSaver extends BaseCheckpointSaver {
       const castWrites = writes as unknown as CheckpointPendingWrite[];
       stored.pendingWrites.push(...castWrites);
       await fs.writeFile(filePath, JSON.stringify(stored, null, 2), 'utf8');
-    } catch {
-      // If the checkpoint doesn't exist yet, writes have no home; this is a no-op.
+    } catch (error) {
+      // ENOENT means the checkpoint file doesn't exist yet; writes have no
+      // home, but this is a transient condition that LangGraph manages.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return;
+      }
+
+      // Any other error (disk full, permission denied, corrupt JSON) MUST
+      // propagate so the operator can investigate.
+      throw error;
     }
   }
 

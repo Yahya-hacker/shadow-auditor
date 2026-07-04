@@ -118,8 +118,12 @@ export const colors = {
   bright: activePalette.fgEmphasis,
   dim: activePalette.fgDim,
   error: activePalette.statusError,
+  focusBorder: '#3b82f6',
   info: activePalette.statusInfo,
   muted: activePalette.fgMuted,
+  panelDarkFg: '#f8fafc',
+  panelLightBg: '#e2e8f0',
+  panelLightFg: '#0f172a',
   pending: activePalette.statusWarning,
   success: activePalette.statusSuccess,
   system: activePalette.accentPrimary,
@@ -128,11 +132,38 @@ export const colors = {
 } as const;
 
 export const labels = {
-  appName: 'Shadow Auditor',
-  appTagline: 'Autonomous AI-Powered Security Analysis',
+  appName: 'ShadowAuditor',
+  appTagline: 'AI-Native SAST Platform',
   shellTitle: 'Interactive Security Analysis Shell',
-  version: 'v1.0.0',
+  version: 'v1.2.0',
 } as const;
+
+export const layout = {
+  COMPACT_THRESHOLD: 80,
+  HEADER_HEIGHT: 4, // 2 content lines + 2 border lines (Ink double border)
+  INPUT_HEIGHT: 4, // border + content + border + footer line
+  MIN_SIDEBAR_WIDTH: 18,
+  SIDEBAR_RATIO: 0.25,
+} as const;
+
+export type BorderStyleIdle = 'single';
+export type BorderStyleFocused = 'double';
+
+export interface PanelStyle {
+  borderColor: string;
+  borderStyle: BorderStyleFocused | BorderStyleIdle;
+}
+
+/**
+ * Get the appropriate border styling for a panel based on focus and theme.
+ * Idle panels use sharp corners (┌─┐), focused panels use heavy corners (╔═╗).
+ */
+export function getPanelStyle(isFocused: boolean, _isLight = false): PanelStyle {
+  return {
+    borderColor: isFocused ? colors.focusBorder : colors.border,
+    borderStyle: isFocused ? 'double' : 'single',
+  };
+}
 
 export const spacing = {
   inputPadX: 1,

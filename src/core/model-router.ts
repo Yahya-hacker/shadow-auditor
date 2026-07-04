@@ -104,6 +104,28 @@ export function getLangchainModel(config: ShadowConfig): BaseChatModel {
       return new ChatGoogleGenerativeAI({ apiKey, model }) as unknown as BaseChatModel;
     }
 
+    case 'mistral': {
+      // Use ChatOpenAI with Mistral's OpenAI-compatible API endpoint.
+      // If @langchain/mistralai is installed, import and use ChatMistralAI
+      // instead for better feature compatibility.
+      return new ChatOpenAI({
+        apiKey,
+        configuration: { baseURL: 'https://api.mistral.ai/v1' },
+        modelName: model,
+      }) as unknown as BaseChatModel;
+    }
+
+    case 'ollama': {
+      // Use ChatOpenAI with Ollama's OpenAI-compatible API endpoint
+      // (http://localhost:11434/v1). If @langchain/ollama is installed,
+      // import and use ChatOllama instead.
+      return new ChatOpenAI({
+        apiKey: '',
+        configuration: { baseURL: 'http://localhost:11434/v1' },
+        modelName: model,
+      }) as unknown as BaseChatModel;
+    }
+
     default: {
       if (isOpenAICompatibleProvider(normalizedProvider)) {
         const baseURL = getProviderBaseUrl(normalizedProvider, customBaseUrl);

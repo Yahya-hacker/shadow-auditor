@@ -1,8 +1,8 @@
 import { Box, Text } from 'ink';
-import React from 'react';
+import React, { memo } from 'react';
 
 import { useAppStore } from '../store/appStore.js';
-import { colors, spacing } from '../theme/chalkTheme.js';
+import { colors, layout, spacing } from '../theme/chalkTheme.js';
 
 const statusGlyph: Record<string, { color: string; glyph: string }> = {
   blocked: { color: colors.warning, glyph: '◧' },
@@ -21,77 +21,88 @@ const agentGlyph: Record<string, { color: string; glyph: string }> = {
   offline: { color: colors.dim, glyph: '◌' },
 };
 
+const lightFg = colors.panelLightFg;
+const lightBg = colors.panelLightBg;
+const panelInnerWidth = layout.MIN_SIDEBAR_WIDTH - 2;
+
 /**
- * Live swarm panel: agent roster, per-task progress, and claim/consensus
- * totals. Bound to the `swarmState` slice streamed from the supervisor's
- * evaluateConsensus node. Shown in the right column when toggled open (`P`).
+ * Live swarm panel adapted for sidebar placement.
+ *
+ * Uses light panel styling (backgroundColor on text nodes) to match
+ * FiltersPanel and MetadataPanel. In compact mode, the SwarmPanel is
+ * hidden (toggle `P` does nothing).
  */
-export const SwarmPanel: React.FC = () => {
+export const SwarmPanel: React.FC = memo(() => {
   const swarmState = useAppStore((state) => state.swarmState);
-  const focused = useAppStore((state) => state.focus) === 'panel';
 
   if (!swarmState) {
     return (
       <Box
         borderColor={colors.border}
-        borderStyle="round"
+        borderStyle="single"
         flexDirection="column"
         paddingX={spacing.panelPadX}
         paddingY={spacing.panelPadY}
       >
-        <Text bold color={colors.brand}>
-          ◈ Swarm
+        <Text backgroundColor={lightBg} bold color={lightFg}>
+          {'Swarm'.padEnd(panelInnerWidth)}
         </Text>
-        <Text color={colors.muted}>No active swarm run.</Text>
+        <Text backgroundColor={lightBg} color={lightFg}>
+          {'No active swarm run.'.padEnd(panelInnerWidth)}
+        </Text>
+        <Text backgroundColor={lightBg}>
+          {' '.repeat(panelInnerWidth)}
+        </Text>
       </Box>
     );
   }
 
   return (
     <Box
-      borderColor={focused ? colors.borderSecondary : colors.border}
-      borderStyle="round"
+      borderColor={colors.border}
+      borderStyle="single"
       flexDirection="column"
       paddingX={spacing.panelPadX}
       paddingY={spacing.panelPadY}
     >
-      <Text bold color={colors.brand}>
-        ◈ Swarm
+      <Text backgroundColor={lightBg} bold color={lightFg}>
+        {'Swarm'.padEnd(panelInnerWidth)}
       </Text>
 
-      <Text bold color={colors.bright}>
-        Agents
+      <Text backgroundColor={lightBg} bold color={lightFg}>
+        {'Agents'.padEnd(panelInnerWidth)}
       </Text>
       {swarmState.agents.map((agent) => {
         const g = agentGlyph[agent.status] ?? { color: colors.muted, glyph: '•' };
+        const line = `${g.glyph} ${agent.role} ${agent.status}`;
         return (
-          <Box gap={1} key={agent.agentId}>
-            <Text color={g.color}>{g.glyph}</Text>
-            <Text color={colors.info}>{agent.role}</Text>
-            <Text color={colors.muted}> {agent.status}</Text>
-          </Box>
+          <Text backgroundColor={lightBg} color={g.color} key={agent.agentId}>
+            {line.padEnd(panelInnerWidth)}
+          </Text>
         );
       })}
 
-      <Text bold color={colors.bright}>
-        Tasks
+      <Text backgroundColor={lightBg} bold color={lightFg}>
+        {'Tasks'.padEnd(panelInnerWidth)}
       </Text>
       {swarmState.tasks.map((task) => {
         const g = statusGlyph[task.status] ?? { color: colors.muted, glyph: '•' };
+        const line = `${g.glyph} ${task.taskType}`;
         return (
-          <Box gap={1} key={task.taskId}>
-            <Text color={g.color}>{g.glyph}</Text>
-            <Text color={colors.muted}>{task.taskType}</Text>
-            {task.requiredRole ? (
-              <Text color={colors.dim}> {task.requiredRole}</Text>
-            ) : null}
-          </Box>
+          <Text backgroundColor={lightBg} color={g.color} key={task.taskId}>
+            {line.padEnd(panelInnerWidth)}
+          </Text>
         );
       })}
 
-      <Text color={colors.dim}>
-        claims {swarmState.claims} · consensus {swarmState.consensus}
+      <Text backgroundColor={lightBg} color={colors.dim}>
+        {`claims ${swarmState.claims} · consensus ${swarmState.consensus}`.padEnd(panelInnerWidth)}
+      </Text>
+      <Text backgroundColor={lightBg}>
+        {' '.repeat(panelInnerWidth)}
       </Text>
     </Box>
   );
-};
+});
+
+SwarmPanel.displayName = 'SwarmPanel';

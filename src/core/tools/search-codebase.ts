@@ -48,6 +48,24 @@ function normalizeExtensionFilter(extension?: string): string | undefined {
   return normalized.startsWith('.') ? normalized : `.${normalized}`;
 }
 
+/**
+ * Detect potentially dangerous regex patterns that could cause ReDoS
+ * (Regular expression Denial of Service). Checks for nested quantifiers
+ * like (a+)+, (a*)*, (a+)*, (a*)+ which exhibit exponential backtracking.
+ */
+const REDOS_PATTERN =
+  /\([^)]*?(?:\+|\*)\s*\)\s*(?:\+|\*)/;
+
+function isReDosRisk(pattern: string): boolean {
+  // Max length guard (already limited by zod schema, but check defensively)
+  if (pattern.length > 200) {
+    return true;
+  }
+
+  // Check for nested quantifiers: (x+)+, (x*)*, (x+)*, (x*)+
+  return REDOS_PATTERN.test(pattern);
+}
+
 export function createSearchCodebaseTool(pathGuard: PathGuard) {
   return {
     description:
@@ -58,6 +76,12 @@ export function createSearchCodebaseTool(pathGuard: PathGuard) {
       let regex: RegExp;
 
       try {
+        // ReDoS guard: reject patterns with nested quantifiers before
+        // constructing the RegExp, preventing catastrophic backtracking.
+        if (isReDosRisk(regexPattern)) {
+          return `[ERROR] Regex pattern rejected: contains nested quantifiers which can cause catastrophic backtracking (ReDoS). Simplify your pattern.`;
+        }
+
         regex = new RegExp(regexPattern, 'gi');
       } catch (error) {
         return `[ERROR] Invalid regex pattern: ${(error as Error).message}`;
