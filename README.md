@@ -230,11 +230,11 @@ Shadow Auditor is provider-agnostic. Use any supported AI provider:
 
 | Provider | Models | Notes |
 |----------|--------|-------|
-| **Anthropic** | Claude 3.5 Sonnet, Claude 3 Opus | Security-optimized |
-| **OpenAI** | GPT-4o, GPT-4, o1, o3 | Broad capability |
-| **Google** | Gemini 1.5 Pro, Gemini 2.0 Flash | High throughput |
+| **Anthropic** | Claude 5 Fable, Claude 4.6/4.7/4.8 Opus | Security-optimized |
+| **OpenAI** | GPT-5, GPT-5.4, o1, o3 | Broad capability |
+| **Google** | Gemini 3.1 Pro, Gemini 3/3.5 Flash | High throughput |
 | **Mistral** | Mistral Large, Codestral | Cost-effective |
-| **DeepSeek** | DeepSeek-V3, DeepSeek-R1 | OpenAI-compatible |
+| **DeepSeek** | DeepSeek-V4-Pro, DeepSeek-R1 | OpenAI-compatible |
 | **Ollama** | Llama 3, Qwen 2.5, CodeQwen | Local, privacy-first |
 | **Custom** | Any OpenAI-compatible endpoint | Bring your own |
 
