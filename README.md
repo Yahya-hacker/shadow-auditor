@@ -33,7 +33,15 @@
 ```bash
 npm install -g shadow-auditor
 ```
-
+the npm command is not working anymore as i decided to remove it, i prefer publishing something clean and functional
+#### Local Development
+```bash
+git clone https://github.com/Yahya-hacker/shadow-auditor.git
+cd shadow-auditor
+npm install
+npm run build
+npm link
+```
 ### First Run
 
 ```bash
