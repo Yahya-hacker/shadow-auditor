@@ -1,8 +1,10 @@
 <div align="center">
   <img src="https://github.com/user-attachments/assets/df96b04f-7324-4a07-9100-ff81526e0d31" alt="Shadow Auditor">
 </div>
+#  IMPORTANT NOTICE: 
+**please note that the current version is very unstable and contain probably a lot of bugs, developping a project of this size is not easy specially when you work alone and you have other things to face, the development is currently more active on the "langgraph-migration" branch.
 
-# 🌑 Shadow Auditor: The Next Generation of Autonomous Security Testing
+#  Shadow Auditor: The Next Generation of Autonomous Security Testing
 
 > *In the realm of application security, silence is dangerous. Shadow Auditor hunts in the silence—mapping vast codebases, finding the vulnerabilities your static tools missed, and delivering evidence-backed findings that prove beyond doubt where the risk lies.*
 
@@ -47,7 +49,7 @@ Shadow Auditor automates the entire offensive security workflow:
 
 ## The Arsenal: Core Capabilities
 
-### 🏗️ Intelligent Codebase Mapping
+###  Intelligent Codebase Mapping
 
 Shadow Auditor doesn't dive blind. On startup, it:
 - **Parses your entire codebase** using Tree-sitter (with support for JavaScript, TypeScript, and expanding language support)
@@ -56,7 +58,7 @@ Shadow Auditor doesn't dive blind. On startup, it:
 
 This map stays in memory during your session, giving the AI instant context about where everything lives.
 
-### 🔍 Interactive Security Shell
+###  Interactive Security Shell
 
 Once the map is built, you drop into an **interactive analyst shell**:
 
@@ -70,7 +72,7 @@ Here you can:
 - **Get real-time streaming responses** — See the reasoning unfold as the agent hunts
 - **Review and approve findings** — Every proposed patch, file edit, or command execution requires explicit approval
 
-### 📊 Evidence-Backed Findings
+###  Evidence-Backed Findings
 
 Every vulnerability Shadow Auditor reports comes with:
 
@@ -80,7 +82,7 @@ Every vulnerability Shadow Auditor reports comes with:
 - **Stable vulnerability IDs** — Deterministic `SHADOW-<CWE>-<HEX8>` identifiers that never change for the same finding in the same commit
 - **Deduplication** — Multiple instances of the same root-cause vulnerability are grouped into a single finding
 
-### 🛠️ Remediation Proposals
+###  Remediation Proposals
 
 For each finding, Shadow Auditor can:
 
@@ -90,7 +92,7 @@ For each finding, Shadow Auditor can:
 
 You are always in control—patches are never applied without your explicit approval.
 
-### 🚀 Multi-Mode Audit Strategies
+###  Multi-Mode Audit Strategies
 
 Run Shadow Auditor in different modes depending on your needs:
 
@@ -101,7 +103,7 @@ shadow-auditor --mode full-report   # deep-sast + enriched remediation + executi
 shadow-auditor --mode patch-only    # Produce code patches, minimal narrative
 ```
 
-### 🔄 Incremental / Diff Scanning
+###  Incremental / Diff Scanning
 
 Security in CI doesn't mean auditing the whole codebase every time:
 
@@ -112,7 +114,7 @@ shadow-auditor --diff --since main    # Only files changed since 'main' branch
 
 This keeps CI fast while still catching vulnerabilities in newly changed code.
 
-### 📋 CI/CD Integration
+###  CI/CD Integration
 
 Run in automated pipelines with:
 
@@ -235,7 +237,7 @@ This ensures Shadow Auditor stays within your security policy.
 
 ## The Roadmap: From SAST to Full Security Operations
 
-### Version 1 (Current): SAST Foundation ✅
+### Version 1 (Current): SAST Foundation 
 
 - Structural codebase mapping
 - Interactive security shell
@@ -433,7 +435,6 @@ Includes:
 - `maxOutputTokens` — Output token limit (optional)
 - `maxToolSteps` — Max tool calls per query (optional)
 
-⚠️ **Note:** API keys are stored in plaintext for backward compatibility. A secure secret-store extension hook is planned for future releases.
 
 ---
 
@@ -445,7 +446,7 @@ Includes:
 
 ## License
 
-MIT
+ARR
 
 ---
 
