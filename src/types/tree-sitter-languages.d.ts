@@ -29,7 +29,7 @@ declare module 'tree-sitter-sql' { const lang: unknown; export default lang; }
 declare module 'tree-sitter-swift' { const lang: unknown; export default lang; }
 declare module 'tree-sitter-toml' { const lang: unknown; export default lang; }
 declare module 'tree-sitter-typescript' {
-  const ts: { typescript: unknown; tsx: unknown };
+  const ts: { tsx: unknown; typescript: unknown; };
   export default ts;
 }
 declare module 'tree-sitter-vue' { const lang: unknown; export default lang; }

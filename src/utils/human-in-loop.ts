@@ -16,6 +16,15 @@
  *
  * For non-LangGraph paths (Vercel AI SDK/swarm mode), the Command throw is
  * caught and the function falls back to the blocking confirmation pattern.
+ *
+ * ## Decision History
+ * Successful confirmations are tracked in a decision history. When the same
+ * type of operation is requested again on the same file, the confirmation
+ * is auto-approved — reducing interruption fatigue during long sessions.
+ *
+ * ## Timeout
+ * A configurable timeout (default: 5 minutes) auto-denies unanswered
+ * confirmation requests so the analysis doesn't stall indefinitely.
  */
 
 import { Command } from '@langchain/langgraph';
@@ -24,12 +33,8 @@ import { Command } from '@langchain/langgraph';
  * Tracks the signature of the currently pending confirmation request.
  * When the graph pauses and resumes, the same tool runs again, sees this
  * signature matches, and returns `true` (confirmed) instead of re-throwing.
- *
- * A different confirmation request (different title/message) will NOT match,
- * so if the human denies one confirmation and the supervisor calls a
- * different tool requiring confirmation, it will correctly request again.
  */
-let _pendingSignature: string | null = null;
+let _pendingSignature: null | string = null;
 
 /**
  * Controls whether to throw a LangGraph Command (LangGraph context) or
@@ -37,6 +42,23 @@ let _pendingSignature: string | null = null;
  * Set to `true` by the LangGraph workflow on initialization.
  */
 let _langGraphContext = false;
+
+/**
+ * Decision history: tracks previously approved operations so similar
+ * future operations can be auto-approved. Keyed by operation type + file.
+ * Max 50 entries to prevent unbounded memory growth.
+ */
+const _decisionHistory = new Map<string, { approved: boolean; timestamp: number }>();
+const MAX_DECISION_HISTORY = 50;
+
+/**
+ * Default timeout for human input requests (5 minutes).
+ * After this duration, unanswered requests are auto-denied.
+ */
+const DEFAULT_HUMAN_INPUT_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Current timeout timer handle, cleared on response. */
+let _timeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Enable LangGraph Command-based confirmation (called by graph bootstrap). */
 export function enableLangGraphContext(): void {
@@ -48,8 +70,98 @@ export function disableLangGraphContext(): void {
   _langGraphContext = false;
 }
 
-function createSignature(params: { title: string; message: string }): string {
+/**
+ * Reset all module-level state. Must be called when a new AgentSession is
+ * initialized to prevent stale signatures from a previous session (in the
+ * same process) from incorrectly matching confirmation requests.
+ */
+export function resetHumanInLoopState(): void {
+  _pendingSignature = null;
+  _langGraphContext = false;
+  _decisionHistory.clear();
+  if (_timeoutTimer) {
+    clearTimeout(_timeoutTimer);
+    _timeoutTimer = null;
+  }
+}
+
+function createSignature(params: { message: string; title: string }): string {
   return `${params.title}||${params.message}`;
+}
+
+/**
+ * Check decision history for a matching previous approval.
+ * Returns true if the same operation on the same file was previously approved
+ * within the last hour.
+ */
+function checkDecisionHistory(signature: string): boolean {
+  const entry = _decisionHistory.get(signature);
+  if (!entry || !entry.approved) return false;
+
+  // Only auto-approve decisions made within the last hour
+  const oneHour = 60 * 60 * 1000;
+  if (Date.now() - entry.timestamp > oneHour) {
+    _decisionHistory.delete(signature);
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Record a decision in the history for future auto-approval.
+ */
+function recordDecision(signature: string, approved: boolean): void {
+  // Prune if over limit
+  if (_decisionHistory.size >= MAX_DECISION_HISTORY) {
+    const oldest = [..._decisionHistory.entries()]
+      .sort(([, a], [, b]) => a.timestamp - b.timestamp)[0];
+    if (oldest) _decisionHistory.delete(oldest[0]);
+  }
+
+  _decisionHistory.set(signature, { approved, timestamp: Date.now() });
+}
+
+/**
+ * Start the auto-deny timeout. If the user doesn't respond within the
+ * timeout period, the pending request is auto-denied via the store.
+ */
+function startTimeout(signature: string): void {
+  if (_timeoutTimer) clearTimeout(_timeoutTimer);
+
+  _timeoutTimer = setTimeout(async () => {
+    // Only fire if the pending signature still matches (hasn't been cleared
+    // by a user response).
+    if (_pendingSignature !== signature) return;
+
+    _pendingSignature = null;
+    _timeoutTimer = null;
+
+    // Auto-deny via the Zustand store
+    try {
+      const { useAppStore } = await import('../ui/store/appStore.js');
+      const store = useAppStore.getState();
+      if (store.confirmation.open) {
+        store.confirmation.onConfirm(false);
+        store.closeConfirmation();
+      }
+      if (store.humanInputRequest) {
+        store.setHumanInputRequest(null);
+      }
+    } catch {
+      // Store may not be available in all contexts (e.g., tests)
+    }
+  }, DEFAULT_HUMAN_INPUT_TIMEOUT_MS);
+}
+
+/**
+ * Clear the timeout timer when the user responds.
+ */
+function clearTimeout_(): void {
+  if (_timeoutTimer) {
+    clearTimeout(_timeoutTimer);
+    _timeoutTimer = null;
+  }
 }
 
 /**
@@ -75,16 +187,28 @@ async function requestConfirmation(params: {
   // Return true so the caller proceeds with execution.
   if (_pendingSignature === sig) {
     _pendingSignature = null;
+    clearTimeout_();
+    recordDecision(sig, true);
+    return true;
+  }
+
+  // Check decision history: if the same operation was approved recently,
+  // auto-approve without interrupting the user.
+  if (checkDecisionHistory(sig)) {
     return true;
   }
 
   // First call — store the signature for resume detection.
   _pendingSignature = sig;
 
+  // Start auto-deny timeout
+  startTimeout(sig);
+
   if (_langGraphContext) {
     // LangGraph context: throw a Command. The graph runtime intercepts this,
     // applies the state update, and pauses at HumanIntervention.
     throw new Command({
+      goto: ['HumanIntervention'],
       update: {
         pendingHumanInput: {
           context: params.context,
@@ -92,15 +216,14 @@ async function requestConfirmation(params: {
           type: 'confirmation' as const,
         },
       },
-      goto: ['HumanIntervention'],
     });
   }
 
   // Non-LangGraph path (Vercel AI SDK / swarm mode): use blocking confirmation.
-  // Fall through to the blocking implementation since Command throws are not
-  // handled outside of LangGraph.
   const confirmed = await requestBlockingConfirmation(params);
   _pendingSignature = null;
+  clearTimeout_();
+  recordDecision(sig, confirmed);
   return confirmed;
 }
 

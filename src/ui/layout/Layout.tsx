@@ -70,8 +70,12 @@ function computeLayout(columns: number, rows: number): LayoutResult {
   // Output area gets remaining width
   const outputWidth = columns - sidebarWidth;
 
-  // Body height = total rows - header - input
-  const bodyHeight = rows - layout.HEADER_HEIGHT - layout.INPUT_HEIGHT;
+  // Body height = total rows - header - statusline - input - footer
+  const bodyHeight = rows
+    - layout.HEADER_HEIGHT
+    - layout.STATUS_HEIGHT
+    - layout.INPUT_HEIGHT
+    - layout.FOOTER_HEIGHT;
 
   return {
     bodyHeight: Math.max(0, bodyHeight),

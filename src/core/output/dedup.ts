@@ -40,9 +40,12 @@ export function deduplicateFindings(findings: SecurityFinding[]): SecurityFindin
   const groups = new Map<string, FindingGroup>();
 
   for (const finding of findings) {
+    // Group by CWE + title only. Findings with the same root cause in
+    // different files are the same vulnerability class and should be
+    // merged. File paths are unified below, but the vuln_id is computed
+    // from the primary finding's original paths for cross-scan stability.
     const key = computeRootCauseFingerprint({
       cwe: finding.cwe,
-      filePaths: finding.file_paths,
       title: finding.title,
     });
 

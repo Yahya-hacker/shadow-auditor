@@ -23,13 +23,13 @@ import type { AgentWorker } from './agent-worker.js';
 import type { Blackboard } from './blackboard.js';
 import type { AgentRole, BlackboardState, Task } from './hivemind-schema.js';
 
+import { debugLog } from '../../utils/debug-logger.js';
 import { AgentState } from '../graph/state.js';
 import {
   resolveWorkerModel,
   resolveWorkerTier,
   type SwarmModelOverrides,
 } from './swarm-model-router.js';
-import { debugLog } from '../../utils/debug-logger.js';
 
 type GraphState = typeof AgentState.State;
 

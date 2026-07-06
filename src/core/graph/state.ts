@@ -11,12 +11,14 @@ type KnowledgeGraphState = Record<string, unknown>;
 type MemoryEntry = Record<string, unknown>;
 type StoreValue = Record<string, unknown>;
 
-/** Human-input request carried across the LangGraph checkpoint boundary.
+/**
+ * Human-input request carried across the LangGraph checkpoint boundary.
  * When a tool needs confirmation or a question answered, it sets this field
  * via a Command and routes the graph to the HumanIntervention node (which
  * is declared as an interruptBefore point). The graph pauses, the TUI shows
  * the question, and when the user responds the graph is resumed with the
- * answer injected as a HumanMessage and this field cleared to null. */
+ * answer injected as a HumanMessage and this field cleared to null.
+ */
 export interface HumanInputRequest {
   context?: string;
   question: string;
@@ -109,6 +111,16 @@ export const AgentState = Annotation.Root({
   // run. They are not meaningful across supersteps and are undefined on the
   // main agent workflow graph.
   taskId: Annotation<string>({
+    default: () => '',
+    reducer: (_state, update) => update,
+  }),
+  // Working memory: a compact, running summary of analysis progress, key
+  // findings, current hypotheses, and files already examined. Updated after
+  // significant discoveries and injected into the system prompt so the model
+  // always has immediate access to the current state without re-reading the
+  // full conversation history. This is critical for long-running sessions
+  // where the message buffer gets trimmed.
+  workingMemory: Annotation<string>({
     default: () => '',
     reducer: (_state, update) => update,
   }),

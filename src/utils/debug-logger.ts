@@ -20,12 +20,14 @@ export function debugLog(message: string): void {
   if (now - lastLogTime < THROTTLE_MS) {
     return;
   }
+
   lastLogTime = now;
 
   try {
     if (!fs.existsSync(LOG_DIR)) {
       fs.mkdirSync(LOG_DIR, { recursive: true });
     }
+
     const timestamp = new Date().toISOString();
     fs.appendFileSync(LOG_FILE, `[${timestamp}] ${message}\n`, 'utf8');
   } catch {

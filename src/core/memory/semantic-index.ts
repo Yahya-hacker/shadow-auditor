@@ -286,32 +286,38 @@ const CHUNK_BOUNDARY_TYPES = new Set([
   'type_alias_declaration',
 ]);
 
-/** Tree-sitter node types that represent function/method definitions across
- *  common languages. Used by the generic cross-language chunker. */
+/**
+ * Tree-sitter node types that represent function/method definitions across
+ *  common languages. Used by the generic cross-language chunker.
+ */
 const FUNCTION_LIKE_TYPES = new Set([
-  'function_declaration', 'function_definition', 'function_item',
-  'method_declaration', 'method_definition', 'method',
-  'arrow_function', 'constructor_declaration',
-  'func_literal', 'function',
+  'arrow_function', 'constructor_declaration', 'func_literal',
+  'function', 'function_declaration', 'function_definition',
+  'function_item', 'method',
+  'method_declaration', 'method_definition',
 ]);
 
-/** Tree-sitter node types that represent class/struct/interface/module
- *  definitions across common languages. Used by the generic chunker. */
+/**
+ * Tree-sitter node types that represent class/struct/interface/module
+ *  definitions across common languages. Used by the generic chunker.
+ */
 const CLASS_LIKE_TYPES = new Set([
-  'class_declaration', 'class_definition', 'class',
-  'struct_declaration', 'struct_item',
-  'interface_declaration', 'trait_item', 'impl_item',
-  'enum_declaration', 'module', 'type_declaration',
+  'class', 'class_declaration', 'class_definition',
+  'enum_declaration', 'impl_item',
+  'interface_declaration', 'module', 'struct_declaration',
+  'struct_item', 'trait_item', 'type_declaration',
 ]);
 
-/** Node types that should be skipped (not chunked) — imports, includes,
- *  package declarations, and other boilerplate. */
+/**
+ * Node types that should be skipped (not chunked) — imports, includes,
+ *  package declarations, and other boilerplate.
+ */
 const SKIP_TYPES = new Set([
-  'import_declaration', 'import_statement', 'import_from_statement',
-  'include_statement', 'package_declaration', 'package_clause',
-  'use_declaration', 'require_statement', 'using_directive',
-  'comment', 'block_comment', 'line_comment',
-  'preproc_include', 'preproc_if', 'preproc_ifdef', 'preproc_def',
+  'block_comment', 'comment', 'import_declaration',
+  'import_from_statement', 'import_statement', 'include_statement',
+  'line_comment', 'package_clause', 'package_declaration',
+  'preproc_def', 'preproc_if', 'preproc_ifdef',
+  'preproc_include', 'require_statement', 'use_declaration', 'using_directive',
 ]);
 
 /**
@@ -483,6 +489,7 @@ function chunkGeneric(
           }
         }
       }
+
       chunks.push(createChunk(child, 'class', name));
       continue;
     }
@@ -916,7 +923,8 @@ export class SemanticIndex {
     let filesIndexed = 0;
     let chunksIndexed = 0;
 
-    for (const filePath of files) {
+    for (let i = 0; i < files.length; i++) {
+      const filePath = files[i];
       const chunks = await this.indexFile(filePath);
       chunksIndexed += chunks;
       filesIndexed++;
@@ -926,6 +934,13 @@ export class SemanticIndex {
         filesIndexed,
         totalFiles: files.length,
       });
+
+      // Yield the event loop every 10 files so the TUI can process
+      // keystrokes and re-render. Without this, indexing large
+      // repositories blocks the main thread for seconds at a time.
+      if (i % 10 === 9) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
     }
 
     // Persist everything

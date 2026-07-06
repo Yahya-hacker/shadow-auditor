@@ -1,14 +1,14 @@
 import React, { createContext, useContext, useMemo } from 'react';
 
-import type { AgentSession } from '../core/agent.js';
+import type { AgentSessionLike } from './hooks/useAgentSession.js';
 
 interface AgentSessionContextValue {
-  agentSessionRef: React.MutableRefObject<AgentSession | null>;
+  agentSessionRef: React.MutableRefObject<AgentSessionLike | null>;
 }
 
 export const AgentSessionContext = createContext<AgentSessionContextValue | null>(null);
 
-export function useAgentSessionRef(): React.MutableRefObject<AgentSession | null> {
+export function useAgentSessionRef(): React.MutableRefObject<AgentSessionLike | null> {
   const context = useContext(AgentSessionContext);
   if (!context) {
     throw new Error('useAgentSessionRef must be used within an AgentSessionProvider');
@@ -18,7 +18,7 @@ export function useAgentSessionRef(): React.MutableRefObject<AgentSession | null
 }
 
 export const AgentSessionProvider: React.FC<{
-  agentSessionRef: React.MutableRefObject<AgentSession | null>;
+  agentSessionRef: React.MutableRefObject<AgentSessionLike | null>;
   children: React.ReactNode;
 }> = ({ agentSessionRef, children }) => {
   // Memoize the context value so consumers don't re-render when the

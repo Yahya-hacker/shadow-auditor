@@ -20,7 +20,7 @@ interface BootScreenProps {
 export const BootScreen: React.FC<BootScreenProps> = ({ onBootComplete }) => {
   const setScreen = useAppStore((s) => s.setScreen);
   const setUserName = useAppStore((s) => s.setUserName);
-  const [phase, setPhase] = useState<'banner' | 'name' | 'greeting' | 'env'>('banner');
+  const [phase, setPhase] = useState<'banner' | 'env' | 'greeting' | 'name'>('banner');
   const [name, setName] = useState('');
 
   useEffect(() => {
@@ -59,12 +59,12 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onBootComplete }) => {
       {phase === 'name' && (
         <Box flexDirection="column">
           <Text color={colors.bright}>Can Shadow know what's your name or how to call you?</Text>
-          <TextInput value={name} onChange={setName} onSubmit={handleNameSubmit} placeholder="Enter your name..." />
+          <TextInput onChange={setName} onSubmit={handleNameSubmit} placeholder="Enter your name..." value={name} />
         </Box>
       )}
 
       {phase === 'greeting' && (
-        <Text color={colors.success} bold>Greetings, {name}. I am Shadow, your autonomous security companion.</Text>
+        <Text bold color={colors.success}>Greetings, {name}. I am Shadow, your autonomous security companion.</Text>
       )}
 
       {phase === 'env' && (

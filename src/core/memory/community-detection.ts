@@ -65,7 +65,7 @@ function computeModularity(
   return modularity;
 }
 
-export function detectCommunities(graph: LouvainGraph): CommunityAssignment {
+export async function detectCommunities(graph: LouvainGraph): Promise<CommunityAssignment> {
   if (graph.nodes.length === 0) {
     return { communities: new Map(), modularity: 0 };
   }
@@ -133,6 +133,11 @@ export function detectCommunities(graph: LouvainGraph): CommunityAssignment {
         improvedOverall = true;
       }
     }
+
+    // Yield the event loop after each Louvain pass so the TUI can
+    // process keystrokes and re-render. A single pass over a large
+    // graph can take hundreds of milliseconds of synchronous CPU.
+    await new Promise((resolve) => setImmediate(resolve));
   }
 
   const modularity = computeModularity(adjacency, communities, totalWeight);

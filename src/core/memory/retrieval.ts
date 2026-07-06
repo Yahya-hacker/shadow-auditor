@@ -30,8 +30,10 @@ export class Retrieval {
 
   /**
    * Detect communities in the knowledge graph using Louvain community detection.
+   * Async so the Louvain algorithm can yield the event loop between passes,
+   * preventing UI freezes during large-graph analysis.
    */
-  detectCommunities(): { communities: Map<string, number>; modularity: number } {
+  async detectCommunities(): Promise<{ communities: Map<string, number>; modularity: number }> {
     const edges: Array<[string, string]> = [];
     for (const edge of this.graph.getEdges()) {
       edges.push([edge.sourceEntityId, edge.targetEntityId]);

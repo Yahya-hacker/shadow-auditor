@@ -37,11 +37,30 @@ function getAgentStatus(swarmState: null | SwarmStateSnapshot): string {
  */
 export const Header: React.FC = memo(() => {
   const sessionPhase = useAppStore((state) => state.session.phase);
+  const streaming = useAppStore((state) => state.streaming);
   const swarmState = useAppStore((state) => state.swarmState);
   const isCompact = useAppStore((state) => state.isCompact);
+  const config = useAppStore((state) => state.config);
+  // Use the store's hitCount instead of scanning the messages array on every
+  // render, avoiding a re-render cascade whenever a new message arrives.
+  const findingCount = useAppStore((state) => state.hitCount);
 
-  const status = statusLabels[sessionPhase] ?? { color: colors.muted, label: sessionPhase };
+  // Derive status from streaming + session phase
+  const effectivePhase = streaming ? 'ready' : sessionPhase;
+  const status = statusLabels[effectivePhase] ?? { color: colors.muted, label: effectivePhase };
+
+  // Agent status: swarm agents OR local processing indicator
   const agentStatus = getAgentStatus(swarmState);
+  const agentLabel = streaming ? 'Processing...'
+    : swarmState ? agentStatus
+    : sessionPhase === 'ready' ? 'Ready'
+    : sessionPhase === 'error' ? 'Error'
+    : 'Idle';
+  const agentColor = streaming ? colors.pending
+    : swarmState ? colors.pending
+    : sessionPhase === 'ready' ? colors.success
+    : sessionPhase === 'error' ? colors.error
+    : colors.muted;
 
   return (
     <Box
@@ -57,16 +76,23 @@ export const Header: React.FC = memo(() => {
         <Text>
           <Text color={colors.muted}>[Status: </Text>
           <Text bold color={status.color}>{status.label}</Text>
+          {findingCount > 0 && (
+            <Text color={colors.muted}> | {findingCount} finding{findingCount !== 1 ? 's' : ''}</Text>
+          )}
           <Text color={colors.muted}>]</Text>
         </Text>
       </Box>
       <Box justifyContent="space-between">
         <Text color={colors.muted}>
-          {isCompact ? labels.appTagline : `${ASCII_LOGO_LINE2} ${labels.appTagline}`}
+          {isCompact
+            ? labels.appTagline
+            : config
+              ? `${config.provider}/${config.model}${config.auditMode ? ' · ' + config.auditMode : ''}`
+              : `${ASCII_LOGO_LINE2} ${labels.appTagline}`}
         </Text>
         <Text>
           <Text color={colors.muted}>[Agents: </Text>
-          <Text bold color={swarmState ? colors.pending : colors.muted}>{agentStatus}</Text>
+          <Text bold color={agentColor}>{agentLabel}</Text>
           <Text color={colors.muted}>]</Text>
         </Text>
       </Box>

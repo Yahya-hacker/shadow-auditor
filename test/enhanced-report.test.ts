@@ -95,7 +95,7 @@ function createValidEnhancedReport(): EnhancedReport {
   });
 }
 
-function toSarif(payload: Record<string, unknown>): SarifPayload {
+function toSarif(payload: import('sarif').Log | Record<string, unknown>): SarifPayload {
   return payload as unknown as SarifPayload;
 }
 

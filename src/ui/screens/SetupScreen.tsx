@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { ShadowConfig } from '../../utils/config.js';
 
-import { saveConfig } from '../../utils/config.js';
+import { loadConfig, saveConfig } from '../../utils/config.js';
 import { saveApiKey } from '../../utils/keychain.js';
 import {
   fetchApiModels,
@@ -92,6 +92,7 @@ export const SetupScreen: React.FC = () => {
       setError('Base URL is required');
       return;
     }
+
     try {
       const url = new URL(value);
       if (!url.hostname) {
@@ -102,6 +103,7 @@ export const SetupScreen: React.FC = () => {
       setError('Please enter a valid URL');
       return;
     }
+
     setCustomBaseUrl(value.trim());
     setError('');
     setStep('apiKey');
@@ -112,6 +114,7 @@ export const SetupScreen: React.FC = () => {
       setError('API key is required');
       return;
     }
+
     setApiKey(value.trim());
     setError('');
 
@@ -133,6 +136,7 @@ export const SetupScreen: React.FC = () => {
     } else {
       setModels(getProviderModels(provider) ?? []);
     }
+
     setStep('model');
   };
 
@@ -141,6 +145,7 @@ export const SetupScreen: React.FC = () => {
       setStep('customModel');
       return;
     }
+
     setModel(item.value);
     setStep('embedding');
   };
@@ -150,6 +155,7 @@ export const SetupScreen: React.FC = () => {
       setError('Model name is required');
       return;
     }
+
     setModel(value.trim());
     setError('');
     setStep('embedding');
@@ -195,8 +201,15 @@ export const SetupScreen: React.FC = () => {
     };
 
     await saveConfig(config);
+    // Reload config into store and set cwd as default target, then go
+    // through the normal initializing→shell flow to initialize the
+    // agent session (instead of jumping directly to shell).
+    const freshCfg = await loadConfig();
+    const s = useAppStore.getState();
+    if (freshCfg) s.setConfig(freshCfg);
+    s.setSessionTarget(process.cwd());
     setStep('done');
-    setTimeout(() => setScreen('shell'), 1500);
+    setTimeout(() => s.setScreen('initializing'), 1500);
   };
 
   useInput(useCallback((_, key) => {

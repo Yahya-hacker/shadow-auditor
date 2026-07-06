@@ -1,8 +1,11 @@
 import { Box, useApp, useInput } from 'ink';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useRef } from 'react';
+
+import type { AgentStreamEvent } from '../../core/agent.js';
 
 import { useAgentSessionRef } from '../AgentSessionContext.js';
 import { FiltersPanel } from '../components/FiltersPanel.js';
+import { Footer } from '../components/Footer.js';
 import { Header } from '../components/Header.js';
 import { HelpOverlay } from '../components/HelpOverlay.js';
 import { InputArea } from '../components/InputArea.js';
@@ -21,417 +24,273 @@ interface KeyLike {
   upArrow: boolean;
 }
 
-interface KeyActions {
-  setFocus: (focus: FocusTarget) => void;
-  setInput: (input: string) => void;
-  setScrollOffset: (offset: number) => void;
-  setSearchActive: (active: boolean) => void;
-  toggleHelp: () => void;
-  togglePanel: () => void;
+// ============================================================================
+// Key handlers — use getState() at call time, zero stale closures
+// ============================================================================
+
+function handleFiltersFocusKey(char: string, key: KeyLike): void {
+  if (key.tab || key.escape || char === 'i') useAppStore.getState().setFocus('input');
 }
 
-/** Key handling while the filters panel is focused. */
-function handleFiltersFocusKey(
-  char: string,
-  key: KeyLike,
-  _state: AppState,
-  actions: KeyActions,
-): void {
-  if (key.tab || key.escape || char === 'i') {
-    actions.setFocus('input');
-    
-  }
-
-  // j/k navigate filter items, Space toggles — handled by local state in
-  // FiltersPanel; global handler just needs focus routing.
-}
-
-/** Key handling while the output area is focused. */
-function handleOutputFocusKey(
-  char: string,
-  key: KeyLike,
-  state: AppState,
-  actions: KeyActions,
-): void {
-  if (key.upArrow) {
-    actions.setScrollOffset(state.scrollOffset + 1);
-    return;
-  }
-
-  if (key.downArrow) {
-    actions.setScrollOffset(Math.max(0, state.scrollOffset - 1));
-    return;
-  }
-
-  if (key.tab) {
-    actions.setFocus('filters');
-    return;
-  }
-
-  if (key.escape || char === 'i') {
-    actions.setFocus('input');
-    return;
-  }
-
+function handleOutputFocusKey(char: string, key: KeyLike): void {
+  const s = useAppStore.getState();
+  if (key.upArrow) { s.setScrollOffset(s.scrollOffset + 1); return; }
+  if (key.downArrow) { s.setScrollOffset(Math.max(0, s.scrollOffset - 1)); return; }
+  if (key.tab) { s.setFocus('filters'); return; }
+  if (key.escape || char === 'i') { s.setFocus('input'); return; }
   switch (char) {
-    case '/': {
-      actions.setSearchActive(true);
-      break;
-    }
-
-    case '?': {
-      actions.toggleHelp();
-      break;
-    }
-
-    case 'G': {
-      actions.setScrollOffset(0);
-      break;
-    }
-
-    case 'g': {
-      actions.setScrollOffset(Number.MAX_SAFE_INTEGER);
-      break;
-    }
-
-    case 'j': {
-      actions.setScrollOffset(Math.max(0, state.scrollOffset - 1));
-      break;
-    }
-
-    case 'k': {
-      actions.setScrollOffset(state.scrollOffset + 1);
-      break;
-    }
-
-    case 'P': {
-      actions.togglePanel();
-      break;
-    }
+    case '/': s.setSearchActive(true); break;
+    case '?': s.toggleHelp(); break;
+    case 'G': s.setScrollOffset(0); break;
+    case 'g': s.setScrollOffset(Number.MAX_SAFE_INTEGER); break;
+    case 'j': s.setScrollOffset(Math.max(0, s.scrollOffset - 1)); break;
+    case 'k': s.setScrollOffset(s.scrollOffset + 1); break;
+    case 'P': s.togglePanel(); break;
   }
 }
 
-/** Key handling while the swarm panel is focused (message TextInput unmounted). */
-function handlePanelFocusKey(char: string, key: KeyLike, state: AppState, actions: KeyActions): void {
-  if (key.upArrow) {
-    actions.setScrollOffset(state.scrollOffset + 1);
-    return;
-  }
-
-  if (key.downArrow) {
-    actions.setScrollOffset(Math.max(0, state.scrollOffset - 1));
-    return;
-  }
-
-  if (key.escape || key.tab || char === 'i') {
-    actions.setFocus('input');
-    return;
-  }
-
+function handlePanelFocusKey(char: string, key: KeyLike): void {
+  const s = useAppStore.getState();
+  if (key.upArrow) { s.setScrollOffset(s.scrollOffset + 1); return; }
+  if (key.downArrow) { s.setScrollOffset(Math.max(0, s.scrollOffset - 1)); return; }
+  if (key.escape || key.tab || char === 'i') { s.setFocus('input'); return; }
   switch (char) {
-    case '/': {
-      actions.setSearchActive(true);
-      break;
-    }
-
-    case '?': {
-      actions.toggleHelp();
-      break;
-    }
-
-    case 'G': {
-      actions.setScrollOffset(0);
-      break;
-    }
-
-    case 'g': {
-      actions.setScrollOffset(Number.MAX_SAFE_INTEGER);
-      break;
-    }
-
-    case 'j': {
-      actions.setScrollOffset(Math.max(0, state.scrollOffset - 1));
-      break;
-    }
-
-    case 'k': {
-      actions.setScrollOffset(state.scrollOffset + 1);
-      break;
-    }
-
-    case 'P': {
-      actions.togglePanel();
-      break;
-    }
+    case '/': s.setSearchActive(true); break;
+    case '?': s.toggleHelp(); break;
+    case 'G': s.setScrollOffset(0); break;
+    case 'g': s.setScrollOffset(Number.MAX_SAFE_INTEGER); break;
+    case 'j': s.setScrollOffset(Math.max(0, s.scrollOffset - 1)); break;
+    case 'k': s.setScrollOffset(s.scrollOffset + 1); break;
+    case 'P': s.togglePanel(); break;
   }
 }
 
-/** Key handling while the input is focused (TextInput capturing typing). */
-function handleInputFocusKey(char: string, key: KeyLike, state: AppState, actions: KeyActions): void {
-  if (key.upArrow) {
-    actions.setScrollOffset(state.scrollOffset + 1);
-    return;
-  }
-
-  if (key.downArrow) {
-    actions.setScrollOffset(Math.max(0, state.scrollOffset - 1));
-    return;
-  }
-
-  if (key.tab) {
-    // Cycle focus: input → output → filters → panel (if open) → input
-    actions.setFocus('output');
-    return;
-  }
-
-  // Command keys only fire on an empty input to avoid clashing with typing.
-  if (state.input.length > 0) return;
-
+function handleInputFocusKey(char: string, key: KeyLike): void {
+  const s = useAppStore.getState();
+  // When the input has text, only Tab should escape the input focus.
+  // Arrow keys and single-char shortcuts are left to TextInput.
+  if (key.tab) { s.setFocus('output'); return; }
+  if (s.input.length > 0) return;
+  // Input is empty — allow navigation shortcuts
+  if (key.upArrow) { s.setScrollOffset(s.scrollOffset + 1); return; }
+  if (key.downArrow) { s.setScrollOffset(Math.max(0, s.scrollOffset - 1)); return; }
   switch (char) {
-    case '/': {
-      actions.setInput('');
-      actions.setSearchActive(true);
-      break;
-    }
-
-    case '?': {
-      actions.toggleHelp();
-      break;
-    }
-
-    case 'G': {
-      actions.setScrollOffset(0);
-      break;
-    }
-
-    case 'g': {
-      actions.setScrollOffset(Number.MAX_SAFE_INTEGER);
-      break;
-    }
-
-    case 'P': {
-      actions.togglePanel();
-      break;
-    }
+    case '/': s.setInput(''); s.setSearchActive(true); break;
+    case '?': s.toggleHelp(); break;
+    case 'G': s.setScrollOffset(0); break;
+    case 'g': s.setScrollOffset(Number.MAX_SAFE_INTEGER); break;
+    case 'P': s.togglePanel(); break;
   }
 }
 
-function useHandleSubmit(
-  setIsProcessing: (value: boolean) => void,
-  exit: () => void,
-): (command: string) => void {
+// ============================================================================
+// Stream throttling — batch chunks at 100ms so React re-renders 10×/sec
+// instead of 100×/sec, leaving the event loop free for keystroke processing.
+// ============================================================================
+
+function createThrottledStream(intervalMs = 100) {
+  let chunkBuffer = '';
+  let eventBuffer: AgentStreamEvent[] = [];
+  let flushTimer: null | ReturnType<typeof setTimeout> = null;
+
+  const flush = () => {
+    flushTimer = null;
+    const store = useAppStore.getState();
+    if (chunkBuffer) {
+      store.appendStreamChunk(chunkBuffer);
+      chunkBuffer = '';
+    }
+    for (const evt of eventBuffer) store.addActivityEvent(evt);
+    eventBuffer = [];
+  };
+
+  return {
+    finish() {
+      if (flushTimer) clearTimeout(flushTimer);
+      flush();
+    },
+    onChunk(chunk: string) {
+      chunkBuffer += chunk;
+      if (!flushTimer) flushTimer = setTimeout(flush, intervalMs);
+    },
+    onEvent(event: AgentStreamEvent) {
+      eventBuffer.push(event);
+      if (!flushTimer) flushTimer = setTimeout(flush, intervalMs);
+    },
+  };
+}
+
+// ============================================================================
+// Submit handler — connects user input to agent session using throttled stream
+// ============================================================================
+
+function useHandleSubmit(exit: () => void): (command: string) => void {
   const agentSessionRef = useAgentSessionRef();
-
-  // Use refs for stable callbacks — avoids re-creating the submit handler
-  // on every keystroke, which would cause Ink to re-process the TextInput.
-  const setIsProcessingRef = useRef(setIsProcessing);
-  setIsProcessingRef.current = setIsProcessing;
   const exitRef = useRef(exit);
   exitRef.current = exit;
 
   return useCallback(async (command: string) => {
     const trimmed = command.trim();
     if (!trimmed) return;
-
     if ([':q', ':quit', 'exit', 'quit'].includes(trimmed.toLowerCase())) {
       exitRef.current();
       return;
     }
 
-    // Read store actions via getState to avoid re-creating this callback
     const store = useAppStore.getState();
-
-    // If the agent is paused awaiting human input (LangGraph interrupt),
-    // resume the graph with the user's answer instead of sending a new message.
+    store.setSessionPhase('ready'); // Agent is processing
     const currentRequest = store.humanInputRequest;
+
     if (currentRequest) {
-      setIsProcessingRef.current(true);
+      // Add the user's answer to the message history so it appears in the
+      // chat log. This mirrors the normal path's addUserMessage below.
+      // For confirmation-type interruptions, the ConfirmDialog also shows
+      // a SelectInput; typed input is an alternative text-based path that
+      // should produce the same visible result.
+      store.addUserMessage(trimmed);
+      store.setInput('');
       store.startStreaming();
+      const stream = createThrottledStream();
       try {
         let answer: boolean | string;
         if (currentRequest.type === 'confirmation') {
-          const lower = trimmed.toLowerCase();
-          answer = ['yes', 'y', 'approve', 'confirm', 'ok'].includes(lower);
+          // Normalize confirmation answers: yes/y/approve/confirm/ok → true
+          answer = ['approve', 'confirm', 'ok', 'y', 'yes'].includes(trimmed.toLowerCase());
         } else {
           answer = trimmed;
         }
-
-        await agentSessionRef.current?.resumeWithHumanInput(
-          answer,
-          (chunk: string) => { useAppStore.getState().appendStreamChunk(chunk); },
-          (event) => { useAppStore.getState().addActivityEvent(event); },
-        );
+        await agentSessionRef.current?.resumeWithHumanInput(answer, stream.onChunk, stream.onEvent);
+        stream.finish();
         useAppStore.getState().setHumanInputRequest(null);
         useAppStore.getState().finishStreaming();
       } catch (error) {
-        useAppStore.getState().addErrorMessage(`Error: ${(error as Error).message}`);
+        stream.finish();
+        const msg = (error as Error).message;
+        if (msg.includes('API key') || msg.includes('401') || msg.includes('authentication')) {
+          useAppStore.getState().addErrorMessage('Authentication failed. Run again with --reconfigure.');
+        } else {
+          useAppStore.getState().addErrorMessage(`Error: ${msg}`);
+        }
+        useAppStore.getState().setHumanInputRequest(null);
         useAppStore.getState().finishStreaming();
-      } finally {
-        setIsProcessingRef.current(false);
       }
       return;
     }
 
     store.addUserMessage(trimmed);
     store.setInput('');
-    setIsProcessingRef.current(true);
     store.clearActivity();
     store.startStreaming();
 
+    const stream = createThrottledStream();
     try {
-      await agentSessionRef.current?.sendMessage(
-        trimmed,
-        (chunk: string) => { useAppStore.getState().appendStreamChunk(chunk); },
-        (event) => { useAppStore.getState().addActivityEvent(event); },
-      );
+      const result = await agentSessionRef.current?.sendMessage(trimmed, stream.onChunk, stream.onEvent);
+      process.stderr.write(`[Shell] sendMessage returned: "${result?.slice(0, 80)}"\n`);
+      process.stderr.write(`[Shell] streamingText length before finish: ${useAppStore.getState().streamingText.length}\n`);
+      process.stderr.write(`[Shell] messages count before finish: ${useAppStore.getState().messages.length}\n`);
+      stream.finish();
+      process.stderr.write(`[Shell] streamingText after flush: ${useAppStore.getState().streamingText.length}\n`);
       useAppStore.getState().finishStreaming();
+      process.stderr.write(`[Shell] messages count after finishStreaming: ${useAppStore.getState().messages.length}\n`);
     } catch (error) {
-      const errMsg = (error as Error).message;
-      if (errMsg.includes('API key') || errMsg.includes('401') || errMsg.includes('authentication')) {
+      process.stderr.write(`[Shell] sendMessage ERROR: ${(error as Error).message}\n`);
+      stream.finish();
+      const msg = (error as Error).message;
+      if (msg.includes('API key') || msg.includes('401') || msg.includes('authentication')) {
         useAppStore.getState().addErrorMessage('Authentication failed. Run again with --reconfigure.');
       } else {
-        useAppStore.getState().addErrorMessage(`Error: ${errMsg}`);
+        useAppStore.getState().addErrorMessage(`Error: ${msg}`);
       }
       useAppStore.getState().finishStreaming();
-    } finally {
-      setIsProcessingRef.current(false);
     }
-  }, [agentSessionRef]); // Only re-create if the ref changes (it never does)
+  }, [agentSessionRef]);
 }
 
-/** Compact layout: single column with output + slim metadata sidebar */
-const CompactLayout: React.FC<{ layout: LayoutResult }> = ({ layout }) => (
+// ============================================================================
+// Layout sub-components — memoized
+// ============================================================================
+
+const CompactLayout = memo<{ layout: LayoutResult }>(({ layout }) => (
   <Box flexDirection="row" height={layout.bodyHeight} width={layout.columns}>
     <Box flexDirection="column" flexGrow={1}>
-      <OutputArea compact height={layout.bodyHeight} />
+      <OutputArea compact />
     </Box>
     <Box flexDirection="column" width={16}>
       <MetadataPanel compact />
     </Box>
   </Box>
-);
+));
+CompactLayout.displayName = 'CompactLayout';
 
-/** Expanded layout: sidebar (filters + metadata + swarm) + main output */
-const ExpandedLayout: React.FC<{ layout: LayoutResult; panelOpen: boolean }> = ({
-  layout,
-  panelOpen,
-}) => (
-  <Box flexDirection="row" height={layout.bodyHeight} width={layout.columns}>
-    <Box flexDirection="column" width={layout.sidebarWidth}>
-      <FiltersPanel />
-      <MetadataPanel />
-      {panelOpen && <SwarmPanel />}
+const ExpandedLayout = memo<{ layout: LayoutResult; panelOpen: boolean }>(
+  ({ layout, panelOpen }) => (
+    <Box flexDirection="row" height={layout.bodyHeight} width={layout.columns}>
+      <Box flexDirection="column" width={layout.sidebarWidth}>
+        <FiltersPanel />
+        <MetadataPanel />
+        {panelOpen && <SwarmPanel />}
+      </Box>
+      <Box flexDirection="column" flexGrow={1}>
+        <OutputArea />
+      </Box>
     </Box>
-    <Box flexDirection="column" flexGrow={1}>
-      <OutputArea height={layout.bodyHeight} />
-    </Box>
-  </Box>
+  ),
 );
+ExpandedLayout.displayName = 'ExpandedLayout';
+
+// ============================================================================
+// Main Shell Screen
+// ============================================================================
 
 export const ShellScreen: React.FC = () => {
-  const isStreaming = useAppStore((state) => state.streaming);
-  const panelOpen = useAppStore((state) => state.panelOpen);
-  const helpOpen = useAppStore((state) => state.helpOpen);
-  const isCompact = useAppStore((state) => state.isCompact);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const panelOpen = useAppStore((s) => s.panelOpen);
+  const helpOpen = useAppStore((s) => s.helpOpen);
+  const isCompact = useAppStore((s) => s.isCompact);
   const { exit } = useApp();
 
-  const handleSubmit = useHandleSubmit(setIsProcessing, exit);
+  const handleSubmit = useHandleSubmit(exit);
 
-  // Use getState() for actions to avoid re-subscribing on every keystroke.
-  // All store action references are stable (zustand guarantees this), so
-  // reading them once via getState and memoizing prevents the useInput
-  // callback from being recreated on every render.
-  const actions: KeyActions = useMemo(() => {
-    const s = useAppStore.getState();
-    return {
-      setFocus: s.setFocus,
-      setInput: s.setInput,
-      setScrollOffset: s.setScrollOffset,
-      setSearchActive: s.setSearchActive,
-      toggleHelp: s.toggleHelp,
-      togglePanel: s.togglePanel,
-    };
-  }, []);
-
-  useInput(useCallback((char, key) => {
+  // Keyboard — getState() at call time, no stale closures
+  useInput(useCallback((char: string, key: KeyLike) => {
     const state = useAppStore.getState();
-    const keyArg: KeyLike = {
-      downArrow: key.downArrow,
-      escape: key.escape,
-      return: key.return,
-      tab: key.tab,
-      upArrow: key.upArrow,
-    };
-
-    // Help overlay is a focus trap: only `?` / Esc close it.
     if (state.helpOpen) {
-      if (keyArg.escape || char === '?') useAppStore.getState().toggleHelp();
+      if (key.escape || char === '?') state.toggleHelp();
       return;
     }
-
-    // Search mode: Esc clears; the search TextInput handles typing.
     if (state.searchActive) {
-      if (keyArg.escape) useAppStore.getState().setSearchActive(false);
+      if (key.escape) state.setSearchActive(false);
       return;
     }
-
-    const a = actions;
     switch (state.focus) {
-      case 'filters': {
-        handleFiltersFocusKey(char, keyArg, state, a);
-        break;
-      }
-
-      case 'output': {
-        handleOutputFocusKey(char, keyArg, state, a);
-        break;
-      }
-
-      case 'panel': {
-        handlePanelFocusKey(char, keyArg, state, a);
-        break;
-      }
-
-      case 'input':
-      default: {
-        handleInputFocusKey(char, keyArg, state, a);
-        break;
-      }
+      case 'filters': handleFiltersFocusKey(char, key); break;
+      case 'output': handleOutputFocusKey(char, key); break;
+      case 'panel': handlePanelFocusKey(char, key); break;
+      default: handleInputFocusKey(char, key); break;
     }
-  }, [actions]));
+  }, []));
 
-  // Wrap the Layout render-prop in useCallback so the function reference
-  // is stable across renders. Without this, every ShellScreen re-render
-  // creates a new children function, which forces Layout to re-invoke it
-  // and recreate the entire terminal UI subtree. Dependencies are the
-  // values actually used inside the function body.
-  const renderLayout = useCallback(
-    (layout: LayoutResult) => (
-      <Box flexDirection="column" height={layout.rows} width={layout.columns}>
-        {/* Row 1: Header (double border, 2-line content) */}
-        <Header />
-
-        {/* Row 2: Main Content (sidebar + output or compact) */}
-        <Box flexDirection="row" flexGrow={1}>
-          {helpOpen ? (
-            <Box flexGrow={1}>
-              <HelpOverlay />
-            </Box>
-          ) : isCompact ? (
-            <CompactLayout layout={layout} />
-          ) : (
-            <ExpandedLayout layout={layout} panelOpen={panelOpen} />
-          )}
-        </Box>
-
-        {/* Row 3: Status + Input */}
-        <StatusLine />
-        <InputArea isProcessing={isProcessing} onSubmit={handleSubmit} />
+  // Layout children — memoized with useCallback so Layout only re-invokes
+  // children when the deps that affect structure actually change (helpOpen,
+  // isCompact, panelOpen, handleSubmit). Internal components (Header,
+  // OutputArea, etc.) are independently memoized, so keystroke-driven
+  // store changes (e.g. `input`) don't cascade into a full tree repaint.
+  const renderLayout = useCallback((layout: LayoutResult) => (
+    <Box flexDirection="column" height={layout.rows} width={layout.columns}>
+      <Header />
+      <Box flexDirection="row" flexGrow={1}>
+        {helpOpen ? (
+          <Box flexGrow={1}><HelpOverlay /></Box>
+        ) : isCompact ? (
+          <CompactLayout layout={layout} />
+        ) : (
+          <ExpandedLayout layout={layout} panelOpen={panelOpen} />
+        )}
       </Box>
-    ),
-    [helpOpen, isCompact, panelOpen, isProcessing, handleSubmit],
-  );
+      <StatusLine />
+      <InputArea onSubmit={handleSubmit} />
+      <Footer />
+    </Box>
+  ), [helpOpen, isCompact, panelOpen, handleSubmit]);
 
   return <Layout>{renderLayout}</Layout>;
 };

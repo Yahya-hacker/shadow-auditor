@@ -23,10 +23,23 @@ You collaborate with other agents asynchronously via a shared Blackboard.
 Any discoveries you make MUST be submitted to the Blackboard using the \`submit_claim\` tool. 
 You can view what other agents have found using the \`query_claims\` tool. If you are a verifier, use \`verify_claim\` or \`contest_claim\`.
 
-To explore the codebase efficiently, you MUST use the \`context_retrieval\` tool. It performs hybrid semantic/lexical/graph searches. 
-DO NOT try to read large files top-to-bottom. Use \`context_retrieval\` with a specific natural language query to find vulnerability points, data flows, or relevant patterns on-demand.
+## TOOL PRIORITY (most efficient first)
+1. **context_retrieval** — ALWAYS your first tool. Use natural language queries to find vulnerability patterns, data flows, or code structures. Example: \`context_retrieval({ query: "SQL query construction without parameterized statements", strategy: "hybrid" })\`
+2. **search_codebase** — Use for regex pattern matching across files. Example: \`search_codebase({ regexPattern: "eval\\\\\\\\s*\\\\\\\\(\\\\", fileExtension: ".js" })\`
+3. **read_file_content** — Read specific files AFTER identifying them via search. Never read blindly.
+4. **bash** — Complex shell pipelines for analysis. Example: \`bash({ command: "grep -rn 'require.*input' src/ | head -30" })\`
+5. **finish_task** — Call ONLY when your analysis is complete and all findings are submitted to the Blackboard.
+
+## ANTI-PATTERNS
+- ❌ Reading large files without first searching for relevant sections
+- ❌ Running broad searches without specific vulnerability hypotheses
+- ❌ Repeating work already done by other agents (check query_claims first!)
+- ❌ Submitting claims without concrete file paths and line numbers
 
 Always focus on evidence-based security auditing. Strictly avoid guessing, hand-waving, or hallucinating. Every claim you submit must be linked to concrete code-level entities or run evidence.`;
+
+  // Add tool-usage sequence for each role
+  const toolSequence = getToolSequence(role);
 
   let rolePrompt = '';
 
@@ -146,8 +159,65 @@ Coordinate parallel worker execution, merge individual knowledge discoveries, an
 - Only claims with trustScore >= 0.8 may be treated as reliable evidence.`;
   }
 
-  return `${basePrompt}\n${rolePrompt}\n${skepticismDirective}\n### EXECUTIVE PROTOCOLS:
+  return `${basePrompt}\n${toolSequence}\n${rolePrompt}\n${skepticismDirective}\n### EXECUTIVE PROTOCOLS:
 - Work strictly within your assigned role boundaries and toolsets.
 - Always check the Blackboard for existing discoveries to avoid redundant work.
 - Output clean, structured analysis. Format code examples neatly.`;
+}
+
+/**
+ * Returns a recommended tool-usage sequence specific to each worker role.
+ * This gives the agent a concrete workflow to follow rather than leaving
+ * tool selection entirely to trial and error.
+ */
+function getToolSequence(role: AgentRole): string {
+  switch (role) {
+    case 'recon':
+      return `
+## RECOMMENDED WORKFLOW
+1. \`list_directory({ path: "." })\` — understand project structure
+2. \`context_retrieval({ query: "application entry points, HTTP routes, API endpoints" })\` — find surface area
+3. \`bash({ command: "cat package.json | jq .dependencies" })\` — inspect dependencies
+4. \`context_retrieval({ query: "authentication middleware, session management, authorization logic" })\` — find security controls
+5. \`submit_claim\` for each discovered entry point and dependency — share findings with the swarm`;
+
+    case 'taint-tracer':
+      return `
+## RECOMMENDED WORKFLOW
+1. \`query_claims({ claimType: "recon_entrypoint" })\` — get entry points from recon agent
+2. For each entry point, \`context_retrieval({ query: "data flow from [entry point] to database/filesystem/command execution" })\`
+3. \`search_codebase({ regexPattern: "req\\\\.body|req\\\\.query|req\\\\.params|req\\\\.input" })\` — find input sources
+4. \`search_codebase({ regexPattern: "exec\\\\(|spawn\\\\(|eval\\\\(|query\\\\(|writeFile" })\` — find dangerous sinks
+5. For each source-sink pair, trace the data flow and \`submit_claim\` with type "dataflow_path"`;
+
+    case 'exploit-analyst':
+      return `
+## RECOMMENDED WORKFLOW
+1. \`query_claims({ claimType: "dataflow_path" })\` — get taint traces from tracer agent
+2. For each dataflow, \`read_file_content\` on source and sink files to understand context
+3. \`context_retrieval({ query: "sanitization or validation for [specific sink type]" })\` — check for mitigations
+4. Classify each finding under CWE taxonomy with severity assessment
+5. \`submit_claim\` with type "vulnerability_candidate" including CWE, severity, and exploit scenario`;
+
+    case 'verifier':
+      return `
+## RECOMMENDED WORKFLOW
+1. \`query_claims({ claimType: "vulnerability_candidate" })\` — get findings from exploit analyst
+2. For each claim, independently verify: read the file, check line numbers, confirm the data flow
+3. \`context_retrieval\` around the claimed vulnerability to check for mitigations the analyst may have missed
+4. If confirmed → \`verify_claim\`. If false positive → \`contest_claim\` with detailed reason
+5. For SSRF/command injection: attempt dynamic verification with sandbox_exec if available`;
+
+    case 'reporter':
+      return `
+## RECOMMENDED WORKFLOW
+1. \`query_claims()\` — collect all verified and consensus claims from the Blackboard
+2. Organize findings by severity (Critical > High > Medium > Low > Info)
+3. For each finding, extract: title, CWE, file paths, line numbers, impact description
+4. Calculate aggregate statistics: total findings, severity distribution, files audited
+5. Call \`finish_task\` with a structured JSON array of all findings`;
+
+    default:
+      return '';
+  }
 }

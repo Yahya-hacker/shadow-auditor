@@ -25,90 +25,65 @@ interface MetadataPanelProps {
  * Light panel styling for visual contrast against the dark output area.
  */
 export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = false }) => {
-  const hitCount = useAppStore((state) => state.hitCount);
-  const focusScope = useAppStore((state) => state.focusScope);
-  const streaming = useAppStore((state) => state.streaming);
-  const sessionPhase = useAppStore((state) => state.session.phase);
-  const config = useAppStore((state) => state.config);
-  const swarmState = useAppStore((state) => state.swarmState);
+  const streaming = useAppStore((s) => s.streaming);
+  const config = useAppStore((s) => s.config);
+  const sessionPhase = useAppStore((s) => s.session.phase);
+  const targetPath = useAppStore((s) => s.session.targetPath);
+  const swarmState = useAppStore((s) => s.swarmState);
+  const focusScope = useAppStore((s) => s.focusScope);
+  // Use the store's hitCount instead of scanning the messages array on every
+  // render, avoiding a re-render cascade whenever a new message arrives.
+  const hitCount = useAppStore((s) => s.hitCount);
   const [elapsed, setElapsed] = useState(0);
 
-  // Increment elapsed time while streaming
   useEffect(() => {
     if (!streaming) return;
-    const interval = setInterval(() => {
-      setElapsed((prev) => prev + 1);
-    }, 1000);
+    setElapsed(0);
+    const interval = setInterval(() => { setElapsed((p) => p + 1); }, 1000);
     return () => clearInterval(interval);
-  }, [streaming]);
-
-  // Reset elapsed when streaming starts
-  useEffect(() => {
-    if (streaming) setElapsed(0);
   }, [streaming]);
 
   const lightFg = colors.panelLightFg;
   const lightBg = colors.panelLightBg;
   const panelInnerWidth = compact ? 14 : layout.MIN_SIDEBAR_WIDTH - 2;
 
-  const statusLabel = streaming ? 'Running' : sessionPhase === 'idle' ? 'Ready' : 'Loading';
-  const statusColor = streaming ? colors.pending : sessionPhase === 'idle' ? colors.success : colors.pending;
+  const statusLabel = streaming ? 'Running' : sessionPhase === 'ready' ? 'Ready' : sessionPhase === 'error' ? 'Error' : 'Idle';
+  const statusColor = streaming ? colors.pending : sessionPhase === 'ready' ? colors.success : sessionPhase === 'error' ? colors.error : colors.muted;
 
-  const provider = config?.provider ?? 'unknown';
-  const model = config?.model ?? 'unknown';
+  const provider = config?.provider ?? '—';
+  const model = config?.model ?? '—';
+  const auditMode = config?.auditMode ?? '—';
+  const targetLabel = targetPath
+    ? targetPath.split('/').slice(-1)[0] || targetPath
+    : focusScope;
 
   if (compact) {
     return (
-      <Box
-        borderColor={colors.border}
-        borderStyle="single"
-        flexDirection="column"
-        paddingX={1}
-      >
-        <Text backgroundColor={lightBg} color={lightFg}>
-          {'Status: '.padEnd(panelInnerWidth)}
-        </Text>
-        <Text backgroundColor={lightBg} bold color={statusColor}>
-          {statusLabel.padEnd(panelInnerWidth)}
-        </Text>
-        <Text backgroundColor={lightBg} color={lightFg}>
-          {`Hits: ${hitCount}`.padEnd(panelInnerWidth)}
-        </Text>
+      <Box borderColor={colors.border} borderStyle="single" flexDirection="column" paddingX={1}>
+        <Text backgroundColor={lightBg} color={lightFg}>{'Status:'.padEnd(panelInnerWidth)}</Text>
+        <Text backgroundColor={lightBg} bold color={statusColor}>{statusLabel.padEnd(panelInnerWidth)}</Text>
+        <Text backgroundColor={lightBg} color={lightFg}>{`Hits: ${hitCount}`.padEnd(panelInnerWidth)}</Text>
       </Box>
     );
   }
 
   return (
-    <Box
-      borderColor={colors.border}
-      borderStyle="single"
-      flexDirection="column"
-      paddingX={1}
-    >
-      <Text backgroundColor={lightBg} bold color={lightFg}>
-        {'Metadata'.padEnd(panelInnerWidth)}
-      </Text>
-      <Text backgroundColor={lightBg} color={lightFg}>
-        {`Hits: ${hitCount}`.padEnd(panelInnerWidth)}
-      </Text>
-      <Text backgroundColor={lightBg} color={lightFg}>
-        {`Time: ${elapsed.toFixed(1)}s`.padEnd(panelInnerWidth)}
-      </Text>
-      <Text backgroundColor={lightBg} color={lightFg}>
-        {`Focus: ${focusScope}`.padEnd(panelInnerWidth)}
-      </Text>
-      <Text backgroundColor={lightBg} color={lightFg}>
-        {`${provider}/${model}`.padEnd(panelInnerWidth)}
-      </Text>
+    <Box borderColor={colors.border} borderStyle="single" flexDirection="column" paddingX={1}>
+      <Text backgroundColor={lightBg} bold color={lightFg}>Scan</Text>
+      <Text backgroundColor={lightBg} color={lightFg}>{`${provider}/${model}`.padEnd(panelInnerWidth)}</Text>
+      <Text backgroundColor={lightBg} color={lightFg}>{`Mode: ${auditMode}`.padEnd(panelInnerWidth)}</Text>
+      <Text backgroundColor={lightBg} color={lightFg}>{`Target: ${targetLabel}`.padEnd(panelInnerWidth)}</Text>
+      <Text backgroundColor={lightBg} color={lightFg}>{' '.repeat(panelInnerWidth)}</Text>
+      <Text backgroundColor={lightBg} bold color={lightFg}>Session</Text>
+      <Text backgroundColor={lightBg} color={lightFg}>{`Status: ${statusLabel}`.padEnd(panelInnerWidth)}</Text>
+      <Text backgroundColor={lightBg} color={lightFg}>{`Findings: ${hitCount}`.padEnd(panelInnerWidth)}</Text>
+      <Text backgroundColor={lightBg} color={lightFg}>{`Time: ${elapsed.toFixed(0)}s`.padEnd(panelInnerWidth)}</Text>
+      <Text backgroundColor={lightBg} color={lightFg}>{' '.repeat(panelInnerWidth)}</Text>
       {swarmState && (
         <Text backgroundColor={lightBg} color={colors.focusBorder}>
-          {`Tasks: ${swarmState.taskStats.completed ?? 0}/${Object.values(swarmState.taskStats).reduce((a, b) => a + b, 0)}`.padEnd(panelInnerWidth)}
+          {`Swarm: ${swarmState.agents.length} agents, ${swarmState.claims} claims`.slice(0, panelInnerWidth).padEnd(panelInnerWidth)}
         </Text>
       )}
-      {/* Fill remaining space */}
-      <Text backgroundColor={lightBg}>
-        {' '.repeat(panelInnerWidth)}
-      </Text>
     </Box>
   );
 });

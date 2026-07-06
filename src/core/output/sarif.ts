@@ -1,15 +1,16 @@
-import type { EnhancedFinding, EnhancedReport } from './finding-schema.js';
-import type { SecurityFinding, SecurityReport } from './report-schema.js';
 import type {
   ArtifactChange,
-  Fix as SarifFix,
   Invocation,
-  Log as SarifLog,
   ReportingConfiguration,
   ReportingDescriptor,
+  Fix as SarifFix,
+  Log as SarifLog,
   Result as SarifResult,
   VersionControlDetails,
 } from 'sarif';
+
+import type { EnhancedFinding, EnhancedReport } from './finding-schema.js';
+import type { SecurityFinding, SecurityReport } from './report-schema.js';
 
 type SarifLevel = 'error' | 'none' | 'note' | 'warning';
 
@@ -20,12 +21,12 @@ function toSarifLevel(severity: EnhancedFinding['severityLabel'] | SecurityFindi
       return 'error';
     }
 
-    case 'Medium': {
-      return 'warning';
-    }
-
     case 'Low': {
       return 'note';
+    }
+
+    case 'Medium': {
+      return 'warning';
     }
 
     case 'Info':
@@ -276,11 +277,11 @@ export function generateEnhancedSarifReport(report: EnhancedReport): SarifLog {
           endTimeUtc: report.metadata.generatedAt,
           executionSuccessful: true,
           // Compute startTimeUtc as endTime minus durationMs
-          startTimeUtc: report.metadata.durationMs != null
-            ? new Date(
+          startTimeUtc: report.metadata.durationMs == null
+            ? report.metadata.generatedAt
+            : new Date(
                 new Date(report.metadata.generatedAt).getTime() - report.metadata.durationMs,
-              ).toISOString()
-            : report.metadata.generatedAt,
+              ).toISOString(),
         }],
         properties: {
           runId: report.metadata.runId,
@@ -289,9 +290,12 @@ export function generateEnhancedSarifReport(report: EnhancedReport): SarifLog {
         results,
         tool: {
           driver: {
+            fullName: 'Shadow Auditor — AI-Native SAST',
             informationUri: 'https://github.com/Yahya-hacker/shadow-auditor',
             name: 'shadow-auditor',
+            organization: 'Shadow Auditor',
             rules,
+            semanticVersion: report.metadata.toolVersion,
             version: report.metadata.toolVersion,
           },
         },

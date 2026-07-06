@@ -4,7 +4,7 @@ import { describe, it } from 'mocha';
 import { detectCommunities } from '../../src/core/memory/community-detection.js';
 
 describe('Community detection', () => {
-  it('assigns every node to a community', () => {
+  it('assigns every node to a community', async () => {
     const nodes = ['a', 'b', 'c', 'd', 'e'];
     const edges: Array<[string, string]> = [
       ['a', 'b'],
@@ -13,15 +13,15 @@ describe('Community detection', () => {
       ['d', 'e'],
     ];
 
-    const result = detectCommunities({ edges, nodes });
+    const result = await detectCommunities({ edges, nodes });
     expect(result.communities.size).to.equal(nodes.length);
     for (const node of nodes) {
       expect(result.communities.has(node)).to.be.true;
     }
   });
 
-  it('handles an empty graph', () => {
-    const result = detectCommunities({ edges: [], nodes: [] });
+  it('handles an empty graph', async () => {
+    const result = await detectCommunities({ edges: [], nodes: [] });
     expect(result.modularity).to.equal(0);
     expect(result.communities.size).to.equal(0);
   });

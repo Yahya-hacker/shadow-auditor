@@ -1,13 +1,13 @@
 import * as path from 'node:path';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 
 import type { ShadowConfig } from '../utils/config.js';
 
-import { AgentSession } from '../core/agent.js';
 import { enforceLicenseGate } from '../core/policy/license-guard.js';
 import { buildDiffScopeHint, getChangedFiles } from '../core/tools/git-diff.js';
 import { AgentSessionProvider } from './AgentSessionContext.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
+import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { useAgentSession } from './hooks/useAgentSession.js';
 import { BootScreen } from './screens/BootScreen.js';
 import { InitializingScreen } from './screens/InitializingScreen.js';
@@ -43,9 +43,12 @@ export const App: React.FC<AppProps> = ({
   const setScreen = useAppStore((state) => state.setScreen);
   const sessionTarget = useAppStore((state) => state.session.targetPath);
   const setSessionError = useAppStore((state) => state.setSessionError);
+  const setSessionPhase = useAppStore((state) => state.setSessionPhase);
   const setLicenseGate = useAppStore((state) => state.setLicenseGate);
   const addErrorMessage = useAppStore((state) => state.addErrorMessage);
   const setSessionTarget = useAppStore((state) => state.setSessionTarget);
+  const setFocusScope = useAppStore((state) => state.setFocusScope);
+  const userName = useAppStore((state) => state.userName);
   const { agentSessionRef, initSession } = useAgentSession();
 
   useEffect(() => {
@@ -67,16 +70,19 @@ export const App: React.FC<AppProps> = ({
     }
   }, [needsSetup, setScreen]);
 
-  // Initialize session once target is selected
+  // Initialize session once target is selected.
+  // Uses the store's config (not the initialConfig prop) because
+  // SetupScreen may have saved a new config mid-session.
   useEffect(() => {
-    if (screen !== 'initializing' || !sessionTarget || !initialConfig) return;
+    const storedConfig = useAppStore.getState().config;
+    if (screen !== 'initializing' || !sessionTarget || !storedConfig) return;
 
     let cancelled = false;
 
     const init = async () => {
       try {
         const effectiveConfig: ShadowConfig = {
-          ...initialConfig,
+          ...storedConfig,
           ...(mode ? { auditMode: mode as ShadowConfig['auditMode'] } : {}),
           ...(ciEnabled ? { ci: { enabled: true, failOn: (failOn ?? 'high') as 'critical' | 'high' | 'low' | 'medium' | 'none' } } : {}),
           ...(diffEnabled ? { diff: { baseRef: since ?? 'HEAD~1', enabled: true } } : {}),
@@ -102,15 +108,19 @@ export const App: React.FC<AppProps> = ({
         await initSession(effectiveConfig, sessionTarget, {
           diffScopeHint,
           expertUnsafe,
+          userName: userName || undefined,
         });
 
         if (cancelled) return;
 
+        setSessionPhase('ready');
+        setFocusScope(path.basename(sessionTarget) || sessionTarget);
         setScreen('shell');
       } catch (error) {
         if (cancelled) return;
         const message = (error as Error).message;
         setSessionError(message);
+        setSessionPhase('error');
         addErrorMessage(`Failed to initialize: ${message}`);
         setScreen('shell');
       }
@@ -124,7 +134,6 @@ export const App: React.FC<AppProps> = ({
   }, [
     screen,
     sessionTarget,
-    initialConfig,
     mode,
     ciEnabled,
     diffEnabled,
@@ -159,7 +168,9 @@ export const App: React.FC<AppProps> = ({
     case 'shell': {
       return (
         <AgentSessionProvider agentSessionRef={agentSessionRef}>
-          <ShellScreen />
+          <ErrorBoundary>
+            <ShellScreen />
+          </ErrorBoundary>
           <ConfirmDialog />
         </AgentSessionProvider>
       );

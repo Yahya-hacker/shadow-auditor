@@ -76,7 +76,7 @@ export interface AppState {
   // Human input request from the agent (when the LangGraph graph interrupts
   // at HumanIntervention). Set when the TUI receives a human_input_required
   // event; cleared when the user responds and the graph is resumed.
-  humanInputRequest: null | HumanInputRequest;
+  humanInputRequest: HumanInputRequest | null;
   // Input
   input: string;
   // Compact mode (derived from terminal width < COMPACT_THRESHOLD)
@@ -112,7 +112,7 @@ export interface AppState {
   setFocusScope: (scope: string) => void;
   setHelpOpen: (open: boolean) => void;
   setHitCount: (count: number) => void;
-  setHumanInputRequest: (request: null | HumanInputRequest) => void;
+  setHumanInputRequest: (request: HumanInputRequest | null) => void;
 
   setInput: (input: string) => void;
   setIsCompact: (compact: boolean) => void;
@@ -164,15 +164,21 @@ export const useAppStore = create<AppState>((set, get) => ({
       const timestamp = new Date(event.timestamp).toLocaleTimeString();
       let text = `${timestamp} • ${event.message}`;
       if (event.toolName) text += ` [${event.toolName}]`;
-      const counter = state.activity.length + 1;
+      // Use timestamp + random suffix for unique IDs, avoiding collisions
+      // when multiple events are flushed in the same tick (throttled batch).
+      const uniqueId = `a-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       return {
-        activity: [...state.activity, { id: `a-${counter}`, kind: event.kind, text }].slice(-MAX_ACTIVITY),
+        activity: [...state.activity, { id: uniqueId, kind: event.kind, text }].slice(-MAX_ACTIVITY),
       };
     }),
   addAgentMessage: (text) =>
-    set((state) => ({
-      messages: [...state.messages, { id: `a-${Date.now()}`, role: 'agent' as const, text }].slice(-MAX_MESSAGES),
-    })),
+    set((state) => {
+      const isHit = text.includes('[Hit]') || text.includes('[Alert]');
+      return {
+        hitCount: isHit ? state.hitCount + 1 : state.hitCount,
+        messages: [...state.messages, { id: `a-${Date.now()}`, role: 'agent' as const, text }].slice(-MAX_MESSAGES),
+      };
+    }),
   addErrorMessage: (text) =>
     set((state) => ({
       messages: [...state.messages, { id: `e-${Date.now()}`, role: 'error' as const, text }].slice(-MAX_MESSAGES),
@@ -212,11 +218,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     title: '',
   },
   elapsedTime: 0,
-  filters: { 'auto_agent': true, 'crit:high': false, 'doc_type:pdf': false },
+  filters: { 'auto_agent': false, 'crit:high': false, 'doc_type:pdf': false },
   finishStreaming: () =>
     set((state) => {
       if (state.streamingText) {
+        const isHit = state.streamingText.includes('[Hit]') || state.streamingText.includes('[Alert]');
         return {
+          hitCount: isHit ? state.hitCount + 1 : state.hitCount,
           messages: [...state.messages, { id: `a-${Date.now()}`, role: 'agent' as const, text: state.streamingText }].slice(-MAX_MESSAGES),
           streaming: false,
           streamingText: '',

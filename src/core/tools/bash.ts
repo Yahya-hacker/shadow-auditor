@@ -25,7 +25,14 @@ export function createBashTool(options: BashToolOptions) {
       'Supports piping with read-only analysis tools: grep, sed, jq, awk, find, cat, head, tail, wc, sort, uniq, cut, tr, diff, file, stat. ' +
       'All commands run sandboxed in the target workspace directory. ' +
       'Prefer list_directory and search_codebase for simple tasks; use bash for complex piped analysis. ' +
-      'Commands that could modify the filesystem require user confirmation.',
+      'Commands that could modify the filesystem require user confirmation.\n\n' +
+      'USAGE EXAMPLES:\n' +
+      '- "grep -rn "eval\\\\s*(" src/ | head -20" — find eval() calls with context\n' +
+      '- "find . -name "*.sql" -exec grep -l "SELECT.*+" {} \\;" — find SQL files with concatenation\n' +
+      '- "cat package.json | jq .dependencies" — inspect project dependencies\n' +
+      '- "npm audit --json 2>/dev/null | jq .vulnerabilities" — check known CVEs\n' +
+      'CHAIN: After finding matches with bash, use read_file_content with startLine/endLine to inspect specific files.\n' +
+      'AVOID: Don\'t use bash for simple searches that search_codebase can handle faster.',
     async execute({ command, timeout = 30 }: { command: string; timeout?: number }) {
       const trimmed = command.trim();
 
@@ -54,35 +61,54 @@ export function createBashTool(options: BashToolOptions) {
         });
 
         const elapsedMs = Date.now() - startMs;
-        let output = `// ─── BASH: ${trimmed} [${startedAt}] (${elapsedMs}ms) ───\n`;
+        const stdoutTrimmed = stdout.trim();
+        const stderrTrimmed = stderr.trim();
 
-        if (stdout.trim()) {
-          output += `\n[STDOUT]\n${stdout.trim()}`;
+        const lines: string[] = [
+          `── bash ── ${trimmed.slice(0, 60)}${trimmed.length > 60 ? '...' : ''} ── ${elapsedMs}ms ──`,
+        ];
+
+        if (stdoutTrimmed) {
+          // Truncate very long output
+          const maxLines = 100;
+          const outLines = stdoutTrimmed.split('\n');
+          if (outLines.length > maxLines) {
+            lines.push(outLines.slice(0, maxLines).join('\n'));
+            lines.push(`... ${outLines.length - maxLines} more lines omitted`);
+            lines.push(`💡 Pipe through head/tail or use more specific grep patterns to narrow results.`);
+          } else {
+            lines.push(stdoutTrimmed);
+          }
         }
 
-        if (stderr.trim()) {
-          output += `\n\n[STDERR]\n${stderr.trim()}`;
+        if (stderrTrimmed) {
+          lines.push(`[STDERR]`);
+          lines.push(stderrTrimmed.split('\n').slice(0, 20).join('\n'));
         }
 
-        if (!stdout.trim() && !stderr.trim()) {
-          output += '\n[INFO] Command completed with no output.';
+        if (!stdoutTrimmed && !stderrTrimmed) {
+          lines.push('[INFO] Command completed with no output.');
         }
 
-        return output;
+        return lines.join('\n');
       } catch (error: unknown) {
         const elapsedMs = Date.now() - startMs;
         const execError = error as { code?: number; message: string; stderr?: string; stdout?: string };
-        let output = `// ─── BASH FAILED: ${trimmed} [${startedAt}] (${elapsedMs}ms) ───\n\n[ERROR] ${execError.message}`;
+
+        const lines: string[] = [
+          `── bash ── FAILED: ${trimmed.slice(0, 60)}${trimmed.length > 60 ? '...' : ''} ── ${elapsedMs}ms ──`,
+          `[ERROR] ${execError.message}`,
+        ];
 
         if (execError.stdout?.trim()) {
-          output += `\n\n[STDOUT]\n${execError.stdout.trim()}`;
+          lines.push(`[STDOUT]\n${execError.stdout.trim().split('\n').slice(0, 30).join('\n')}`);
         }
 
         if (execError.stderr?.trim()) {
-          output += `\n\n[STDERR]\n${execError.stderr.trim()}`;
+          lines.push(`[STDERR]\n${execError.stderr.trim().split('\n').slice(0, 20).join('\n')}`);
         }
 
-        return output;
+        return lines.join('\n');
       }
     },
     inputSchema: z.object({

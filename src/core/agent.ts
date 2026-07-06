@@ -34,11 +34,12 @@ import { PersistentCheckpointSaver } from './orchestrator/checkpoint-saver.js';
 import { MissionEngine } from './orchestrator/mission-engine.js';
 import { computeCiExitCode, type FailOnSeverity, formatCiSummary } from './output/ci-exit.js';
 import { deduplicateFindings } from './output/dedup.js';
+import { ReportBuilder } from './output/report-builder.js';
 import { validateAndRepairReport } from './output/report-validator.js';
 import { generateEnhancedSarifReport } from './output/sarif.js';
 import { createPathGuard } from './policy/path-guard.js';
 import { RunArtifacts } from './run-artifacts.js';
-import { type StreamActivity, streamWithContinuation } from './session.js';
+import { type StreamActivity } from './session.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { createBashTool } from './tools/bash.js';
 import { createContextRetrievalTool } from './tools/context-retrieval.js';
@@ -53,11 +54,13 @@ export interface AgentSessionOptions {
   /** Diff scope hint from incremental mode (pre-built string) */
   diffScopeHint?: string;
   expertUnsafe?: boolean;
+  /** Name of the user — injected into the system prompt for personalization. */
+  userName?: string;
 }
 
 export interface AgentStreamEvent {
-  kind: 'human_input_required' | 'status' | 'swarm_state' | StreamActivity['kind'];
   humanInputRequest?: HumanInputRequest;
+  kind: 'human_input_required' | 'status' | 'swarm_state' | StreamActivity['kind'];
   message: string;
   swarmState?: SwarmStateSnapshot;
   timestamp: string;
@@ -151,12 +154,14 @@ export class AgentSession {
   private missionEngine: MissionEngine | null = null;
   private model: LanguageModel;
   private runtime: RuntimeSettings;
+  private reportBuilder: null | ReportBuilder = null;
   private runtimeWarnings: string[] = [];
   private semanticIndex: null | SemanticIndex = null;
   private swarmCoordinator: null | SwarmCoordinator = null;
   private systemPrompt = '';
   private threadCounter = 0;
   private tools: ToolSet = {};
+  private userName: string;
 
   constructor(
     private readonly config: ShadowConfig,
@@ -167,6 +172,7 @@ export class AgentSession {
     this.model = getModel(config);
     this.expertUnsafe = options.expertUnsafe ?? config.expertUnsafe ?? false;
     this.diffScopeHint = options.diffScopeHint ?? '';
+    this.userName = options.userName ?? 'User';
     this.runtime = resolveRuntimeSettings(
       config,
       (warning: string) => {
@@ -202,6 +208,270 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     ];
 
     this.initialized = this.initialize();
+  }
+
+  /**
+   * Check if the workflow is currently paused awaiting human input.
+   */
+  async isPausedAwaitingHumanInput(): Promise<boolean> {
+    await this.initialized;
+    if (!this.compiledWorkflow) return false;
+
+    const config = {
+      configurable: { thread_id: 'session_main' },
+      version: 'v3' as const,
+    };
+
+    try {
+      const stateSnapshot = await this.compiledWorkflow.getState(config);
+      return stateSnapshot?.values?.pendingHumanInput != null;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Generate the final security report from all collected findings.
+   *
+   * Runs the complete report pipeline: deduplication, SARIF generation,
+   * JSON export, and Markdown export. Returns paths to all generated files.
+   */
+  async generateReport(): Promise<{
+    jsonPath?: string;
+    markdownPath?: string;
+    sarifPath?: string;
+  } | null> {
+    await this.initialized;
+    if (!this.reportBuilder || !this.artifacts) return null;
+
+    // Set coverage stats before building
+    const indexedFiles = this.semanticIndex?.getIndexedFilePaths().length ?? 0;
+    this.reportBuilder.setCoverage(indexedFiles);
+
+    const generated = await this.reportBuilder.generate();
+    logToStderr(`[Report] Generated: ${[
+      generated.jsonPath,
+      generated.markdownPath,
+      generated.sarifPath,
+    ].filter(Boolean).join(', ')}`);
+
+    // Persist report metadata to artifacts
+    await this.artifacts.recordMessage({
+      content: {
+        reportId: generated.report.metadata.reportId,
+        summary: generated.report.summary,
+        totalFindings: generated.report.findings.length,
+      },
+      role: 'system',
+      timestamp: new Date().toISOString(),
+    });
+
+    return {
+      jsonPath: generated.jsonPath,
+      markdownPath: generated.markdownPath,
+      sarifPath: generated.sarifPath,
+    };
+  }
+
+  /**
+   * Get the report builder (for adding findings during analysis).
+   */
+  getReportBuilder(): ReportBuilder | null {
+    return this.reportBuilder;
+  }
+
+  /**
+   * Resume a paused LangGraph workflow with the human's answer.
+   *
+   * Called by the TUI after the user responds to a `human_input_required`
+   * event. Injects the answer as a HumanMessage, clears pendingHumanInput,
+   * and re-runs the graph from the checkpoint. The stream processing is
+   * identical to sendSingleAgentMessage, including interrupt detection
+   * (a subsequent tool may also need confirmation).
+   */
+  async resumeWithHumanInput(
+    answer: boolean | string,
+    onChunk: (text: string) => void,
+    onEvent?: (event: AgentStreamEvent) => void,
+  ): Promise<string> {
+    await this.initialized;
+    if (!this.compiledWorkflow) {
+      throw new Error('Workflow not compiled.');
+    }
+
+    const emitEvent = (event: Omit<AgentStreamEvent, 'timestamp'>) => {
+      onEvent?.({ ...event, timestamp: new Date().toISOString() });
+    };
+
+    // Use the same stable thread ID as sendSingleAgentMessage so the
+    // checkpointer can find the paused state and resume from it.
+    const config = {
+      configurable: { thread_id: 'session_main' },
+      version: 'v3' as const,
+    };
+
+    const answerText = typeof answer === 'boolean'
+      ? (answer ? 'Yes, approved.' : 'No, denied.')
+      : answer;
+
+    const inputs = {
+      messages: [new HumanMessage({ content: answerText })],
+      pendingHumanInput: null,
+    };
+
+    emitEvent({
+      kind: 'status',
+      message: `Resuming with human input: ${answerText}`,
+    });
+
+    let fullResponse = '';
+    let eventsProcessed = 0;
+
+    try {
+      const stream = await this.compiledWorkflow.streamEvents(inputs, config);
+
+      for await (const event of stream) {
+        try {
+          // ── LangGraph v2 ProtocolEvent format ──────────────────────────
+          if (event.type === 'event') {
+            const method = event.method;
+            const params = event.params ?? {};
+            const data = params.data;
+            const nodeName = params.node;
+
+            if (method === 'messages' && data) {
+              eventsProcessed++;
+              const msgData = data as Record<string, unknown>;
+	              const msgEvent = msgData.event as string | undefined;
+
+	              if (msgEvent === 'content-block-delta') {
+	                const delta = msgData.delta as Record<string, unknown> | undefined;
+	                if (delta && typeof delta === 'object') {
+	                  if (delta.type === 'text-delta' && typeof delta.text === 'string') {
+	                    onChunk(delta.text);
+	                    fullResponse += delta.text;
+	                  }
+	                }
+	              } else if (msgEvent === 'content-block-start' || msgEvent === 'content-block-finish') {
+	                const content = msgData.content as Record<string, unknown> | undefined;
+	                if (
+	                  content &&
+	                  typeof content === 'object' &&
+	                  content.type === 'text' &&
+	                  typeof content.text === 'string' &&
+	                  content.text
+	                ) {
+	                  if (!fullResponse.includes(content.text)) {
+	                    onChunk(content.text);
+	                    fullResponse += content.text;
+	                  }
+	                }
+	              }
+	            }
+
+	            if (method === 'updates' && data) {
+	              const updates = data as Record<string, unknown>;
+	              for (const [, value] of Object.entries(updates)) {
+	                const nodeUpdate = value as Record<string, unknown>;
+	                const msgs = nodeUpdate?.messages;
+	                if (Array.isArray(msgs)) {
+	                  for (const msg of msgs) {
+	                    const msgObj = msg as Record<string, unknown>;
+	                    if (msgObj.tool_calls && Array.isArray(msgObj.tool_calls)) {
+	                      for (const tc of msgObj.tool_calls as Array<Record<string, unknown>>) {
+	                        emitEvent({
+	                          kind: 'tool_call',
+	                          message: `[${nodeName ?? 'agent'}] Executing tool: ${tc.name}`,
+	                          toolCallId: tc.id as string,
+	                          toolName: tc.name as string,
+	                        });
+	                      }
+	                    }
+
+	                    if (
+	                      msgObj.type === 'tool' ||
+	                      (typeof (msgObj as any)._getType === 'function' && (msgObj as any)._getType() === 'tool')
+	                    ) {
+	                      emitEvent({
+	                        kind: 'tool_result',
+	                        message: `[${nodeName ?? 'agent'}] Completed tool: ${msgObj.name}`,
+	                        toolCallId: msgObj.tool_call_id as string,
+	                        toolName: msgObj.name as string,
+	                      });
+	                    }
+	                  }
+	                }
+	              }
+	            }
+          }
+        } catch (streamError) {
+          logToStderr(
+            `[streamEvents] Error processing resume event: ${
+              streamError instanceof Error ? streamError.message : String(streamError)
+            }`,
+          );
+        }
+      }
+
+      // Check for another interrupt (nested confirmation)
+
+      // Detect silent failures in resume path too.
+      if (eventsProcessed === 0 && !fullResponse) {
+        logToStderr(
+          `[resumeWithHumanInput] WARNING: No processable events in resumed stream.`,
+        );
+        emitEvent({
+          kind: 'status',
+          message: 'No response received on resume. Check provider logs.',
+        });
+      }
+
+      const stateSnapshot = await this.compiledWorkflow.getState(config);
+      const pendingInput = stateSnapshot?.values?.pendingHumanInput;
+      if (pendingInput) {
+        emitEvent({
+          humanInputRequest: {
+            context: pendingInput.context,
+            question: pendingInput.question,
+            type: pendingInput.type,
+          },
+          kind: 'human_input_required',
+          message: pendingInput.question,
+        });
+        return `[AWAITING_HUMAN_INPUT] ${pendingInput.question}`;
+      }
+
+      await this.persistMessages([{ content: answerText, role: 'user' }]);
+      await this.persistMessages([{ content: fullResponse, role: 'assistant' }]);
+      return fullResponse;
+    } catch (error) {
+      this.runtimeWarnings.push(`Resume failed: ${error instanceof Error ? error.message : String(error)}`);
+      emitEvent({ kind: 'status', message: 'Resume aborted due to error.' });
+
+      // The graph may have paused at HumanIntervention again (nested
+      // confirmation) before the stream error occurred. Check the
+      // checkpointed state so the TUI can show the nested question.
+      try {
+        const stateSnapshot = await this.compiledWorkflow!.getState(config);
+        const pendingInput = stateSnapshot?.values?.pendingHumanInput;
+        if (pendingInput) {
+          emitEvent({
+            humanInputRequest: {
+              context: pendingInput.context,
+              question: pendingInput.question,
+              type: pendingInput.type,
+            },
+            kind: 'human_input_required',
+            message: pendingInput.question,
+          });
+          return `[AWAITING_HUMAN_INPUT] ${pendingInput.question}`;
+        }
+      } catch {
+        // getState itself failed — the checkpoint may be corrupt.
+      }
+
+      return '[Resume Failed]';
+    }
   }
 
   /**
@@ -286,6 +556,18 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       targetPath: resolvedTargetPath,
       warnings: [...this.runtimeWarnings],
     });
+
+    // Initialize the report builder — findings collected during analysis
+    // will be fed through deduplication and SARIF/JSON/Markdown generation.
+    this.reportBuilder = new ReportBuilder({
+      outputDir: this.artifacts.getRunDirectory(),
+      runId: path.basename(this.artifacts.getRunDirectory()),
+      scanMode: this.config.auditMode,
+      targetName: path.basename(resolvedTargetPath),
+      toolVersion: '1.0.0',
+    });
+    this.reportBuilder.setStartTime(Date.now());
+
     await this.initializeMissionRuntime(resolvedTargetPath);
 
     // Initialize semantic indexing after MissionEngine (needs KnowledgeGraph for HybridRetriever)
@@ -313,6 +595,10 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       auditMode: this.config.auditMode ?? this.runtime.capabilities.preferredAuditMode,
       diffScope: this.diffScopeHint || undefined,
       mcpEnabled: Object.keys(mcpTools).length > 0,
+      userName: this.userName,
+      // Working memory starts empty; it's updated dynamically by the
+      // workflow nodes as analysis progresses.
+      workingMemory: '',
     });
 
     // Compile the LangGraph workflow ONCE for reuse across messages
@@ -328,6 +614,7 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       checkpointer,
       model: this.langchainModel,
       providerHint: this.config.provider,
+      systemPrompt: this.systemPrompt,
       tools: toolsArray,
     });
 
@@ -643,57 +930,33 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       message: 'Processing mission sequence...',
     });
 
+    // Declare outside try so they're accessible in catch for state recovery.
+    const threadId = `session_main`;
+    this.threadCounter++;
+    const lcConfig = {
+      configurable: { thread_id: threadId },
+      version: 'v3' as const,
+    };
+    const inputs = {
+      messages: [new HumanMessage({ content: userMessage })],
+    };
+
     try {
       if (!this.compiledWorkflow) {
         throw new Error('Workflow not compiled. Initialization may have failed.');
       }
 
-      // Use a stable thread ID so the checkpointer can restore prior
-      // conversation state. The first message in each session seeds the
-      // system context (repo map + instructions) as a HumanMessage so the
-      // model receives it on every turn via the checkpointed history.
-      const threadId = `session_main`;
-      this.threadCounter++;
-      const config = {
-        configurable: { thread_id: threadId },
-        version: 'v3' as const,
-      };
-
-      // On the first message, prepend the system context so it becomes part
-      // of the checkpointed state. Subsequent turns will load it from the
-      // checkpointer automatically.
-      const isFirstMessage = this.threadCounter === 1;
-      const inputMessages: HumanMessage[] = [];
-      if (isFirstMessage) {
-        // Seed the checkpointed state with the repo map and system context
-        const systemContext = this.messages
-          .map((m) => `[${m.role}]: ${toContentString(m.content)}`)
-          .join('\n\n');
-        if (systemContext) {
-          inputMessages.push(new HumanMessage({
-            content: `[SYSTEM CONTEXT — internal, do not echo to user]\n${systemContext}\n[/SYSTEM CONTEXT]\n\nUser request: ${userMessage}`,
-          }));
-        } else {
-          inputMessages.push(new HumanMessage({ content: userMessage }));
-        }
-      } else {
-        inputMessages.push(new HumanMessage({ content: userMessage }));
-      }
-
-      const inputs = {
-        messages: inputMessages,
-      };
-
       let fullResponse = '';
+      let eventsProcessed = 0;
 
       // Stream events from the LangGraph execution.
       // LangGraph v2 emits ProtocolEvent objects: { type: "event", method: "...", params: { ... } }
       // Older LangChain versions emit: { event: "on_...", data: { ... }, run_id, name }
-      const stream = await this.compiledWorkflow.streamEvents(inputs, config);
+      const stream = await this.compiledWorkflow.streamEvents(inputs, lcConfig);
 
       for await (const event of stream) {
         try {
-          // ── LangGraph v2 ProtocolEvent format ──────────────────────────
+        // ── LangGraph v2 ProtocolEvent format ──────────────────────────
           if (event.type === 'event') {
             const method = event.method;
             const params = event.params ?? {};
@@ -701,36 +964,51 @@ Use your tools to inspect implementation details, verify assumptions, and produc
             const nodeName = params.node;
 
             // Stream message content chunks from 'messages' events.
-            // These carry AIMessageChunk objects whose content may be a
-            // plain string or an array of content blocks.
+            // v3 ProtocolEvent MessagesData is a discriminated union on
+            // `event`: "message-start", "content-block-start",
+            // "content-block-delta", "content-block-finish",
+            // "message-finish", "error".
             if (method === 'messages' && data) {
+              eventsProcessed++;
               const msgData = data as Record<string, unknown>;
-              let content = msgData.content;
-              if (Array.isArray(content)) {
-                for (const block of content) {
-                  if (
-                    typeof block === 'object' &&
-                    block !== null &&
-                    (block as Record<string, unknown>).type === 'text'
-                  ) {
-                    const text = (block as Record<string, unknown>).text;
-                    if (typeof text === 'string') {
-                      onChunk(text);
-                      fullResponse += text;
-                    }
-                  }
-                }
-              } else if (typeof content === 'string') {
-                onChunk(content);
-                fullResponse += content;
-              }
-            }
+	              const msgEvent = msgData.event as string | undefined;
 
-            // Track tool invocations and results from 'updates' events.
-            // Each node update carries the messages produced during that
-            // step, including AIMessages with tool_calls and ToolMessages
-            // with tool results.
-            if (method === 'updates' && data) {
+	              if (msgEvent === 'content-block-delta') {
+	                // Streaming text chunks arrive via text-delta deltas.
+	                const delta = msgData.delta as Record<string, unknown> | undefined;
+	                if (delta && typeof delta === 'object') {
+	                  if (delta.type === 'text-delta' && typeof delta.text === 'string') {
+	                    onChunk(delta.text);
+	                    fullResponse += delta.text;
+	                  }
+	                }
+	              } else if (msgEvent === 'content-block-start' || msgEvent === 'content-block-finish') {
+	                // Finalized text content block (content-block-finish) or
+	                // initial block from non-streaming providers.
+	                const content = msgData.content as Record<string, unknown> | undefined;
+	                if (
+	                  content &&
+	                  typeof content === 'object' &&
+	                  content.type === 'text' &&
+	                  typeof content.text === 'string' &&
+	                  content.text
+	                ) {
+	                  // Avoid emitting duplicates: if deltas already streamed
+	                  // this content, fullResponse already contains it.
+	                  if (!fullResponse.includes(content.text)) {
+	                    onChunk(content.text);
+	                    fullResponse += content.text;
+	                  }
+	                }
+	              }
+	              // "message-start", "message-finish", "error" are metadata-only
+	            }
+
+	            // Track tool invocations and results from 'updates' events.
+	            // Each node update carries the messages produced during that
+	            // step, including AIMessages with tool_calls and ToolMessages
+	            // with tool results.
+	            if (method === 'updates' && data) {
               const updates = data as Record<string, unknown>;
               for (const [, value] of Object.entries(updates)) {
                 const nodeUpdate = value as Record<string, unknown>;
@@ -749,6 +1027,7 @@ Use your tools to inspect implementation details, verify assumptions, and produc
                         });
                       }
                     }
+
                     // ToolMessage with results
                     if (
                       msgObj.type === 'tool' ||
@@ -781,17 +1060,33 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       // (interruptBefore). This happens when a tool threw a Command to request
       // human confirmation. The stream completes gracefully (no error), but the
       // checkpointed state has pendingHumanInput set.
-      const stateSnapshot = await this.compiledWorkflow.getState(config);
+
+      // Detect silent failures: if the stream produced zero processable events
+      // (no messages, no tool calls, nothing), the model may have failed
+      // silently or the provider returned an unrecognized event format.
+      if (eventsProcessed === 0 && !fullResponse) {
+        logToStderr(
+          `[sendSingleAgentMessage] WARNING: No processable events in stream. ` +
+          'The provider may have returned an unrecognized response format, ' +
+          'or the model failed silently.',
+        );
+        emitEvent({
+          kind: 'status',
+          message: 'No response received from the model. Check provider logs.',
+        });
+      }
+
+      const stateSnapshot = await this.compiledWorkflow.getState(lcConfig);
       const pendingInput = stateSnapshot?.values?.pendingHumanInput;
       if (pendingInput) {
         emitEvent({
-          kind: 'human_input_required',
-          message: pendingInput.question,
           humanInputRequest: {
             context: pendingInput.context,
             question: pendingInput.question,
             type: pendingInput.type,
           },
+          kind: 'human_input_required',
+          message: pendingInput.question,
         });
 
         // Don't persist yet — the conversation is incomplete until the human
@@ -809,177 +1104,32 @@ Use your tools to inspect implementation details, verify assumptions, and produc
         kind: 'status',
         message: 'Workflow execution aborted due to error.',
       });
-      return '[Workflow Failed]';
-    }
-  }
 
-  /**
-   * Resume a paused LangGraph workflow with the human's answer.
-   *
-   * Called by the TUI after the user responds to a `human_input_required`
-   * event. Injects the answer as a HumanMessage, clears pendingHumanInput,
-   * and re-runs the graph from the checkpoint. The stream processing is
-   * identical to sendSingleAgentMessage, including interrupt detection
-   * (a subsequent tool may also need confirmation).
-   */
-  async resumeWithHumanInput(
-    answer: boolean | string,
-    onChunk: (text: string) => void,
-    onEvent?: (event: AgentStreamEvent) => void,
-  ): Promise<string> {
-    await this.initialized;
-    if (!this.compiledWorkflow) {
-      throw new Error('Workflow not compiled.');
-    }
-
-    const emitEvent = (event: Omit<AgentStreamEvent, 'timestamp'>) => {
-      onEvent?.({ ...event, timestamp: new Date().toISOString() });
-    };
-
-    // Use the same stable thread ID as sendSingleAgentMessage so the
-    // checkpointer can find the paused state and resume from it.
-    const config = {
-      configurable: { thread_id: 'session_main' },
-      version: 'v3' as const,
-    };
-
-    const answerText = typeof answer === 'boolean'
-      ? (answer ? 'Yes, approved.' : 'No, denied.')
-      : answer;
-
-    const inputs = {
-      messages: [new HumanMessage({ content: answerText })],
-      pendingHumanInput: null,
-    };
-
-    emitEvent({
-      kind: 'status',
-      message: `Resuming with human input: ${answerText}`,
-    });
-
-    let fullResponse = '';
-
-    try {
-      const stream = await this.compiledWorkflow.streamEvents(inputs, config);
-
-      for await (const event of stream) {
-        try {
-          // ── LangGraph v2 ProtocolEvent format ──────────────────────────
-          if (event.type === 'event') {
-            const method = event.method;
-            const params = event.params ?? {};
-            const data = params.data;
-            const nodeName = params.node;
-
-            if (method === 'messages' && data) {
-              const msgData = data as Record<string, unknown>;
-              let content = msgData.content;
-              if (Array.isArray(content)) {
-                for (const block of content) {
-                  if (
-                    typeof block === 'object' &&
-                    block !== null &&
-                    (block as Record<string, unknown>).type === 'text'
-                  ) {
-                    const text = (block as Record<string, unknown>).text;
-                    if (typeof text === 'string') {
-                      onChunk(text);
-                      fullResponse += text;
-                    }
-                  }
-                }
-              } else if (typeof content === 'string') {
-                onChunk(content);
-                fullResponse += content;
-              }
-            }
-
-            if (method === 'updates' && data) {
-              const updates = data as Record<string, unknown>;
-              for (const [, value] of Object.entries(updates)) {
-                const nodeUpdate = value as Record<string, unknown>;
-                const msgs = nodeUpdate?.messages;
-                if (Array.isArray(msgs)) {
-                  for (const msg of msgs) {
-                    const msgObj = msg as Record<string, unknown>;
-                    if (msgObj.tool_calls && Array.isArray(msgObj.tool_calls)) {
-                      for (const tc of msgObj.tool_calls as Array<Record<string, unknown>>) {
-                        emitEvent({
-                          kind: 'tool_call',
-                          message: `[${nodeName ?? 'agent'}] Executing tool: ${tc.name}`,
-                          toolCallId: tc.id as string,
-                          toolName: tc.name as string,
-                        });
-                      }
-                    }
-                    if (
-                      msgObj.type === 'tool' ||
-                      (typeof (msgObj as any)._getType === 'function' && (msgObj as any)._getType() === 'tool')
-                    ) {
-                      emitEvent({
-                        kind: 'tool_result',
-                        message: `[${nodeName ?? 'agent'}] Completed tool: ${msgObj.name}`,
-                        toolCallId: msgObj.tool_call_id as string,
-                        toolName: msgObj.name as string,
-                      });
-                    }
-                  }
-                }
-              }
-            }
-          }
-        } catch (streamError) {
-          logToStderr(
-            `[streamEvents] Error processing resume event: ${
-              streamError instanceof Error ? streamError.message : String(streamError)
-            }`,
-          );
+      // The graph may have paused at HumanIntervention before the stream
+      // error occurred (e.g., a tool threw a Command, then the stream
+      // connection broke). Check the checkpointed state so the TUI can
+      // still show the question instead of silently discarding the pause.
+      try {
+        const stateSnapshot = await this.compiledWorkflow!.getState(lcConfig);
+        const pendingInput = stateSnapshot?.values?.pendingHumanInput;
+        if (pendingInput) {
+          emitEvent({
+            humanInputRequest: {
+              context: pendingInput.context,
+              question: pendingInput.question,
+              type: pendingInput.type,
+            },
+            kind: 'human_input_required',
+            message: pendingInput.question,
+          });
+          return `[AWAITING_HUMAN_INPUT] ${pendingInput.question}`;
         }
+      } catch {
+        // getState itself failed — the checkpoint may be corrupt. Continue
+        // to return the failure marker below.
       }
 
-      // Check for another interrupt (nested confirmation)
-      const stateSnapshot = await this.compiledWorkflow.getState(config);
-      const pendingInput = stateSnapshot?.values?.pendingHumanInput;
-      if (pendingInput) {
-        emitEvent({
-          kind: 'human_input_required',
-          message: pendingInput.question,
-          humanInputRequest: {
-            context: pendingInput.context,
-            question: pendingInput.question,
-            type: pendingInput.type,
-          },
-        });
-        return `[AWAITING_HUMAN_INPUT] ${pendingInput.question}`;
-      }
-
-      await this.persistMessages([{ content: answerText, role: 'user' }]);
-      await this.persistMessages([{ content: fullResponse, role: 'assistant' }]);
-      return fullResponse;
-    } catch (error) {
-      this.runtimeWarnings.push(`Resume failed: ${error instanceof Error ? error.message : String(error)}`);
-      emitEvent({ kind: 'status', message: 'Resume aborted due to error.' });
-      return '[Resume Failed]';
-    }
-  }
-
-  /**
-   * Check if the workflow is currently paused awaiting human input.
-   */
-  async isPausedAwaitingHumanInput(): Promise<boolean> {
-    await this.initialized;
-    if (!this.compiledWorkflow) return false;
-
-    const config = {
-      configurable: { thread_id: 'session_main' },
-      version: 'v3' as const,
-    };
-
-    try {
-      const stateSnapshot = await this.compiledWorkflow.getState(config);
-      return stateSnapshot?.values?.pendingHumanInput != null;
-    } catch {
-      return false;
+      return '[Workflow Failed]';
     }
   }
 

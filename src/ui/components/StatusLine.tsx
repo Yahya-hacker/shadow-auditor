@@ -46,33 +46,33 @@ SwarmStatus.displayName = 'SwarmStatus';
  * version with just the essential info.
  */
 export const StatusLine: React.FC = memo(() => {
-  const config = useAppStore((state) => state.config);
-  const targetPath = useAppStore((state) => state.session.targetPath);
-  const swarmState = useAppStore((state) => state.swarmState);
-  const isCompact = useAppStore((state) => state.isCompact);
+  const config = useAppStore((s) => s.config);
+  const targetPath = useAppStore((s) => s.session.targetPath);
+  const swarmState = useAppStore((s) => s.swarmState);
+  const isCompact = useAppStore((s) => s.isCompact);
+  const focusScope = useAppStore((s) => s.focusScope);
 
-  const provider = config?.provider ?? 'unknown';
-  const model = config?.model ?? 'unknown';
+  const provider = config?.provider;
+  const model = config?.model;
   const auditMode = config?.auditMode;
+  const targetLabel = targetPath
+    ? targetPath.split('/').slice(-1)[0] || targetPath
+    : focusScope;
 
   return (
     <Box borderColor={colors.border} borderStyle="single" paddingX={1}>
       <Box flexGrow={1}>
-        <Text bold color={colors.brand}>
-          Shadow
-        </Text>
-        <Text color={colors.muted}> │ </Text>
-        {isCompact ? (
+        <Text bold color={colors.brand}>Shadow</Text>
+        {provider && (
           <>
-            <Text color={colors.info}>{provider}/{model}</Text>
-          </>
-        ) : (
-          <>
+            <Text color={colors.muted}> │ </Text>
             <Text color={colors.info}>{provider}</Text>
+          </>
+        )}
+        {model && (
+          <>
             <Text color={colors.muted}> │ </Text>
             <Text color={colors.bright}>{model}</Text>
-            <Text color={colors.muted}> │ </Text>
-            <Text color={colors.muted}>{targetPath}</Text>
           </>
         )}
         {auditMode && (
@@ -81,12 +81,16 @@ export const StatusLine: React.FC = memo(() => {
             <Text color={colors.pending}>{auditMode}</Text>
           </>
         )}
+        {targetLabel && targetLabel !== 'Global' && (
+          <>
+            <Text color={colors.muted}> │ </Text>
+            <Text color={colors.muted}>{targetLabel}</Text>
+          </>
+        )}
         {config?.expertUnsafe && (
           <>
             <Text color={colors.muted}> │ </Text>
-            <Text bold color={colors.error}>
-              EXPERT-UNSAFE
-            </Text>
+            <Text bold color={colors.error}>EXPERT-UNSAFE</Text>
           </>
         )}
       </Box>

@@ -53,11 +53,31 @@ export function wrapTool(aiTool: AITool, name: string, options: WrapToolOptions 
     description,
     async func(input: unknown) {
       const result = await aiTool.execute?.(input as never, {} as never);
-      if (typeof result === 'string') {
-        return result;
+      const raw = typeof result === 'string' ? result : JSON.stringify(result);
+
+      // Post-process large tool results to prevent context overflow.
+      // Tools like read_file and search_codebase can return massive outputs
+      // that waste tokens and distract the model. We truncate with a summary
+      // and add continuation hints for pagination.
+      const MAX_TOOL_RESULT_CHARS = 8000;
+      if (raw.length > MAX_TOOL_RESULT_CHARS) {
+        const truncated = raw.slice(0, MAX_TOOL_RESULT_CHARS);
+        const omitted = raw.length - MAX_TOOL_RESULT_CHARS;
+        const lineCount = raw.split('\n').length;
+        const truncatedLines = truncated.split('\n').length;
+
+        return [
+          truncated,
+          '',
+          `── ✂️ TRUNCATED (${omitted} chars, ~${lineCount - truncatedLines} lines omitted) ──`,
+          `Full result: ${raw.length} chars, ${lineCount} lines total.`,
+          `💡 TIP: Use more specific queries or file path filters to narrow results.`,
+          `    For search_codebase: add fileExtension filter or more precise regex.`,
+          `    For read_file: use context_retrieval to find relevant sections instead.`,
+        ].join('\n');
       }
 
-      return JSON.stringify(result);
+      return raw;
     },
     name: normalizeToolName(name, options.providerHint),
     schema,

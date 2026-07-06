@@ -140,10 +140,12 @@ export const labels = {
 
 export const layout = {
   COMPACT_THRESHOLD: 80,
-  HEADER_HEIGHT: 4, // 2 content lines + 2 border lines (Ink double border)
-  INPUT_HEIGHT: 4, // border + content + border + footer line
+  FOOTER_HEIGHT: 1,   // single-line status bar at the very bottom
+  HEADER_HEIGHT: 4,   // 2 content lines + 2 border lines (Ink double border)
+  INPUT_HEIGHT: 4,    // border + content + border + footer line
   MIN_SIDEBAR_WIDTH: 18,
   SIDEBAR_RATIO: 0.25,
+  STATUS_HEIGHT: 1,   // single-line status bar above input
 } as const;
 
 export type BorderStyleIdle = 'single';

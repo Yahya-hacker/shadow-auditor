@@ -7,10 +7,27 @@ import { AgentSession } from '../../core/agent.js';
 export interface SessionInitOptions {
   diffScopeHint?: string;
   expertUnsafe?: boolean;
+  /** Name of the user, collected during onboarding, passed to the AI. */
+  userName?: string;
+}
+
+/** Shared interface for both direct and worker-backed agent sessions. */
+export interface AgentSessionLike {
+  sendMessage(
+    userMessage: string,
+    onChunk: (text: string) => void,
+    onEvent?: (event: import('../../core/agent.js').AgentStreamEvent) => void,
+  ): Promise<string>;
+  resumeWithHumanInput(
+    answer: boolean | string,
+    onChunk: (text: string) => void,
+    onEvent?: (event: import('../../core/agent.js').AgentStreamEvent) => void,
+  ): Promise<string>;
+  isPausedAwaitingHumanInput(): boolean | Promise<boolean>;
 }
 
 // Module-level cache for the repo map generation promise
-let repoMapPromiseCache: { path: string; promise: Promise<string> } | null = null;
+let repoMapPromiseCache: null | { path: string; promise: Promise<string> } = null;
 
 /**
  * Start generating the repo map in the background.
@@ -30,7 +47,7 @@ export function startRepoMapGeneration(targetPath: string): void {
 }
 
 export function useAgentSession() {
-  const agentSessionRef = useRef<AgentSession | null>(null);
+  const agentSessionRef = useRef<AgentSessionLike | null>(null);
 
   const initSession = useCallback(async (
     config: ShadowConfig,
@@ -49,6 +66,7 @@ export function useAgentSession() {
     const session = new AgentSession(config, map, targetPath, {
       diffScopeHint: options.diffScopeHint,
       expertUnsafe: options.expertUnsafe,
+      userName: options.userName,
     });
 
     agentSessionRef.current = session;

@@ -55,6 +55,20 @@ export default class Shell extends Command {
   async run(): Promise<void> {
     const { flags } = await this.parse(Shell);
 
+    // ── Production error handlers ───────────────────────────────────
+    // Catch unhandled rejections and uncaught exceptions so the process
+    // exits with a non-zero code and a clear error message instead of
+    // silently crashing or hanging.
+    process.on('unhandledRejection', (reason) => {
+      process.stderr.write(`[ShadowAuditor] FATAL: Unhandled rejection: ${reason}\n`);
+      process.exit(1);
+    });
+    process.on('uncaughtException', (error) => {
+      process.stderr.write(`[ShadowAuditor] FATAL: Uncaught exception: ${error.message}\n`);
+      if (error.stack) process.stderr.write(`${error.stack}\n`);
+      process.exit(1);
+    });
+
     registerSecretStoreAdapter(new KeychainAdapter());
 
     let config: import('../utils/config.js').ShadowConfig | null = null;
