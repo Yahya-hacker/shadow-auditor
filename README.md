@@ -1,10 +1,12 @@
 <div align="center">
   <img src="https://github.com/user-attachments/assets/df96b04f-7324-4a07-9100-ff81526e0d31" alt="Shadow Auditor">
 </div>
-#  IMPORTANT NOTICE: 
-**please note that the current version is very unstable and contain probably a lot of bugs, developping a project of this size is not easy specially when you work alone and you have other things to face, the development is currently more active on the "langgraph-migration" branch.
 
-#  Shadow Auditor: The Next Generation of Autonomous Security Testing
+#   IMPORTANT NOTICE :
+ 
+**please note that the current version is very unstable and contain probably a lot of bugs, developping a project of this size is not easy specially when you work alone and you have other things to face, the development is currently more active on the "langgraph-migration" branch.**
+
+#   Shadow Auditor: The Next Generation of Autonomous Security Testing
 
 > *In the realm of application security, silence is dangerous. Shadow Auditor hunts in the silence—mapping vast codebases, finding the vulnerabilities your static tools missed, and delivering evidence-backed findings that prove beyond doubt where the risk lies.*
 
