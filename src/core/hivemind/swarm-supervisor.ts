@@ -266,8 +266,13 @@ export function buildSwarmSupervisor(options: {
   /**
    * executeTask node (one per Send): run a single claimed task on its worker.
    * Each completion is a checkpoint boundary, so per-task progress survives
-   * crashes. Failures are recorded via failTask so dependents/deadlock logic
-   * can react.
+   * crashes.
+   *
+   * Implements Lazy Hydration: if the worker is not found in the in-memory
+   * Map (which is empty after a process restart or checkpoint resume), the
+   * worker is re-instantiated on the fly from the persisted Blackboard agent
+   * registration. This prevents the old behavior where all in-progress tasks
+   * would silently freeze because `findWorkerByAgentId` returned undefined.
    */
   async function executeTask(state: GraphState): Promise<Partial<GraphState>> {
     const { agentId, taskId } = state;
@@ -287,7 +292,25 @@ export function buildSwarmSupervisor(options: {
     }
 
     const task = taskGraph.getTask(taskId);
-    const worker = coordinator.findWorkerByAgentId(agentId);
+    let worker = coordinator.findWorkerByAgentId(agentId);
+
+    // ── Lazy Hydration ──────────────────────────────────────────────────
+    // On process restart or checkpoint resume, the in-memory workers Map is
+    // empty, but the Blackboard persists agent registrations. Re-create the
+    // worker on the fly so in-progress tasks don't silently freeze.
+    if (!worker) {
+      const registeredAgent = blackboard.getActiveAgents().find((a) => a.agentId === agentId);
+      if (registeredAgent) {
+        debugLog(`[SwarmCoordinator] Lazy-hydrating worker for agent ${agentId} (${registeredAgent.role}) after resume`);
+        try {
+          await ensureWorkerForAgent(registeredAgent.agentId, registeredAgent.role);
+          worker = coordinator.findWorkerByAgentId(agentId);
+        } catch (err) {
+          debugLog(`[SwarmCoordinator] Lazy hydration failed for agent ${agentId}: ${err}`);
+        }
+      }
+    }
+
     if (!task || !worker) {
       if (task) {
         taskGraph.failTask(taskId, `Worker ${agentId} unavailable`);

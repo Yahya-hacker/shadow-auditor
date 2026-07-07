@@ -1,4 +1,7 @@
-import { Box, Text } from 'ink';
+/**
+ * StatusLine — single-line status bar with provider/model info and swarm progress.
+ */
+
 import React, { memo } from 'react';
 
 import type { SwarmStateSnapshot } from '../../core/hivemind/swarm-supervisor.js';
@@ -22,34 +25,25 @@ const SwarmStatus: React.FC<{ snapshot: SwarmStateSnapshot }> = memo(({ snapshot
         const count = stats[status] ?? 0;
         if (count === 0) return null;
         return (
-          <Text key={status}>
-            <Text color={color}>{glyph}</Text>
-            <Text color={colors.muted}>{count} </Text>
-          </Text>
+          <text key={status}>
+            <text style={{ color }}>{glyph}</text>
+            <text style={{ color: colors.muted }}>{count} </text>
+          </text>
         );
       })}
-      <Text color={colors.muted}>│ </Text>
-      <Text color={colors.info}>claims {snapshot.claims}</Text>
-      <Text color={colors.muted}> │ </Text>
-      <Text color={colors.borderSecondary}>◍{snapshot.consensus}</Text>
+      <text style={{ color: colors.muted }}>│ </text>
+      <text style={{ color: colors.info }}>claims {snapshot.claims}</text>
+      <text style={{ color: colors.muted }}> │ </text>
+      <text style={{ color: colors.borderSecondary }}>◍{snapshot.consensus}</text>
     </>
   );
 });
-
 SwarmStatus.displayName = 'SwarmStatus';
 
-/**
- * Single-line status bar with swarm task glyphs.
- *
- * In expanded mode: renders a full status line with provider/model/mode
- * and swarm progress on the right. In compact mode: renders an abbreviated
- * version with just the essential info.
- */
 export const StatusLine: React.FC = memo(() => {
   const config = useAppStore((s) => s.config);
   const targetPath = useAppStore((s) => s.session.targetPath);
   const swarmState = useAppStore((s) => s.swarmState);
-  const isCompact = useAppStore((s) => s.isCompact);
   const focusScope = useAppStore((s) => s.focusScope);
 
   const provider = config?.provider;
@@ -60,42 +54,42 @@ export const StatusLine: React.FC = memo(() => {
     : focusScope;
 
   return (
-    <Box borderColor={colors.border} borderStyle="single" paddingX={1}>
-      <Box flexGrow={1}>
-        <Text bold color={colors.brand}>Shadow</Text>
+    <box border={{ color: colors.border, style: 'single' }} paddingX={1}>
+      <box flexGrow={1}>
+        <text style={{ color: colors.brand, fontWeight: 'bold' }}>Shadow</text>
         {provider && (
           <>
-            <Text color={colors.muted}> │ </Text>
-            <Text color={colors.info}>{provider}</Text>
+            <text style={{ color: colors.muted }}> │ </text>
+            <text style={{ color: colors.info }}>{provider}</text>
           </>
         )}
         {model && (
           <>
-            <Text color={colors.muted}> │ </Text>
-            <Text color={colors.bright}>{model}</Text>
+            <text style={{ color: colors.muted }}> │ </text>
+            <text style={{ color: colors.bright }}>{model}</text>
           </>
         )}
         {auditMode && (
           <>
-            <Text color={colors.muted}> │ </Text>
-            <Text color={colors.pending}>{auditMode}</Text>
+            <text style={{ color: colors.muted }}> │ </text>
+            <text style={{ color: colors.pending }}>{auditMode}</text>
           </>
         )}
         {targetLabel && targetLabel !== 'Global' && (
           <>
-            <Text color={colors.muted}> │ </Text>
-            <Text color={colors.muted}>{targetLabel}</Text>
+            <text style={{ color: colors.muted }}> │ </text>
+            <text style={{ color: colors.muted }}>{targetLabel}</text>
           </>
         )}
         {config?.expertUnsafe && (
           <>
-            <Text color={colors.muted}> │ </Text>
-            <Text bold color={colors.error}>EXPERT-UNSAFE</Text>
+            <text style={{ color: colors.muted }}> │ </text>
+            <text style={{ color: colors.error, fontWeight: 'bold' }}>EXPERT-UNSAFE</text>
           </>
         )}
-      </Box>
+      </box>
       {swarmState && <SwarmStatus snapshot={swarmState} />}
-    </Box>
+    </box>
   );
 });
 

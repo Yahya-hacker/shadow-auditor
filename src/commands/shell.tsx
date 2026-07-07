@@ -1,5 +1,6 @@
 import { Command, Flags } from '@oclif/core';
-import { render } from 'ink';
+import { createCliRenderer } from '@opentui/core';
+import { createRoot } from '@opentui/react';
 import React from 'react';
 
 import App from '../ui/App.js';
@@ -56,9 +57,6 @@ export default class Shell extends Command {
     const { flags } = await this.parse(Shell);
 
     // ── Production error handlers ───────────────────────────────────
-    // Catch unhandled rejections and uncaught exceptions so the process
-    // exits with a non-zero code and a clear error message instead of
-    // silently crashing or hanging.
     process.on('unhandledRejection', (reason) => {
       process.stderr.write(`[ShadowAuditor] FATAL: Unhandled rejection: ${reason}\n`);
       process.exit(1);
@@ -76,7 +74,19 @@ export default class Shell extends Command {
       config = await loadConfig();
     }
 
-    const { waitUntilExit } = render(
+    // ── SIGINT handler — ensure clean exit ──────────────────────────
+    let exiting = false;
+    process.on('SIGINT', () => {
+      if (exiting) return;
+      exiting = true;
+      process.stdout.write('\n');
+      process.exit(0);
+    });
+
+    // ── OpenTUI renderer replaces Ink's render() ────────────────────
+    const renderer = await createCliRenderer();
+    const root = createRoot(renderer);
+    root.render(
       <App
         ciEnabled={flags.ci}
         config={config}
@@ -87,11 +97,12 @@ export default class Shell extends Command {
         needsSetup={!config || flags.reconfigure}
         since={flags.since}
       />,
-      {
-        exitOnCtrlC: true,
-      },
     );
 
-    await waitUntilExit();
+    // Keep the process alive — OpenTUI manages its own event loop.
+    // Exit on Ctrl+C is handled natively by the terminal.
+    await new Promise<void>(() => {
+      // Never resolves — the renderer owns the process lifecycle.
+    });
   }
 }

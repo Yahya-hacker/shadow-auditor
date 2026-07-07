@@ -1,4 +1,7 @@
-import { Box, Text } from 'ink';
+/**
+ * LicensePaywallScreen — PRO feature gate.
+ */
+
 import React from 'react';
 
 import { useAppStore } from '../store/appStore.js';
@@ -12,63 +15,69 @@ export const LicensePaywallScreen: React.FC = () => {
   }
 
   return (
-    <Box flexDirection="column" padding={spacing.panelPadY} paddingX={spacing.panelPadX}>
-      <Box
-        borderColor={colors.warning}
-        borderStyle="round"
+    <box
+      flexDirection="column"
+      padding={spacing.panelPadY}
+      paddingX={spacing.panelPadX}
+    >
+      <box
+        border={{ color: colors.warning, style: 'round' }}
         flexDirection="column"
         paddingX={spacing.panelPadX}
         paddingY={spacing.panelPadY}
       >
-        <Text bold color={colors.warning}>
+        <text style={{ color: colors.warning, fontWeight: 'bold' }}>
           ⚡ PRO FEATURE REQUIRED
-        </Text>
-        <Box marginTop={1}>
-          <Text>
+        </text>
+        <box marginTop={1}>
+          <text>
             The feature{' '}
-            <Text bold color={colors.agent}>
+            <text style={{ color: colors.agent, fontWeight: 'bold' }}>
               {gateResult.feature}
-            </Text>{' '}
+            </text>{' '}
             requires a{' '}
-            <Text bold color={colors.brand}>
+            <text style={{ color: colors.brand, fontWeight: 'bold' }}>
               {gateResult.requiredTier?.toUpperCase()}
-            </Text>{' '}
+            </text>{' '}
             license.
-          </Text>
-        </Box>
-        <Box marginTop={1}>
-          <Text color={colors.muted}>
+          </text>
+        </box>
+        <box marginTop={1}>
+          <text style={{ color: colors.muted }}>
             Your current tier:{' '}
-            <Text bold>{gateResult.currentTier?.toUpperCase() ?? 'FREE'}</Text>
-          </Text>
-        </Box>
-      </Box>
+            <text style={{ fontWeight: 'bold' }}>
+              {gateResult.currentTier?.toUpperCase() ?? 'FREE'}
+            </text>
+          </text>
+        </box>
+      </box>
 
-      <Box flexDirection="column" marginTop={1} paddingX={spacing.inputPadX}>
-        <Text bold color={colors.success}>
+      <box flexDirection="column" marginTop={1} paddingX={spacing.inputPadX}>
+        <text style={{ color: colors.success, fontWeight: 'bold' }}>
           🔑 Upgrade to unlock:
-        </Text>
-        <Text color={colors.muted}>  • Deep SAST analysis with full taint tracing</Text>
-        <Text color={colors.muted}>  • Comprehensive PDF/Markdown security reports</Text>
-        <Text color={colors.muted}>  • CI/CD integration with exit codes</Text>
-        <Text color={colors.muted}>  • Priority support</Text>
-      </Box>
+        </text>
+        <text style={{ color: colors.muted }}>  • Deep SAST analysis with full taint tracing</text>
+        <text style={{ color: colors.muted }}>  • Comprehensive PDF/Markdown security reports</text>
+        <text style={{ color: colors.muted }}>  • CI/CD integration with exit codes</text>
+        <text style={{ color: colors.muted }}>  • Priority support</text>
+      </box>
 
-      <Box marginTop={1} paddingX={spacing.inputPadX}>
-        <Text>
+      <box marginTop={1} paddingX={spacing.inputPadX}>
+        <text>
           👉{' '}
-          <Text bold color={colors.agent} underline>
+          <text style={{ color: colors.agent, fontWeight: 'bold', textDecoration: 'underline' }}>
             {gateResult.upgradeUrl}
-          </Text>
-        </Text>
-      </Box>
+          </text>
+        </text>
+      </box>
 
-      <Box marginTop={1} paddingX={spacing.inputPadX}>
-        <Text color={colors.dim}>
+      <box marginTop={1} paddingX={spacing.inputPadX}>
+        <text style={{ color: colors.dim }}>
           Already purchased? Run{' '}
-          <Text bold>shadow-auditor --reconfigure</Text> to enter your license key.
-        </Text>
-      </Box>
-    </Box>
+          <text style={{ fontWeight: 'bold' }}>shadow-auditor --reconfigure</text>{' '}
+          to enter your license key.
+        </text>
+      </box>
+    </box>
   );
 };

@@ -79,13 +79,43 @@ export class OrchestratorEngine {
     }
 
     if (qualified.length === 1) {
-      // Single proposal: no conflicts possible, accept it directly
+      // Single proposal: verify before accepting. A rejected verification
+      // means the patch is broken (e.g. syntax error) and must NOT be
+      // accepted blindly — that would push destructive code to CI/CD.
       const proposal = qualified[0]!;
       const verification = verifySynthesizedPatch(proposal.patchDiff, {
         languageIdioms: this.options.languageIdioms,
         interfaceBridges: this.options.interfaceBridges,
         strictMode: this.options.strictMode,
       });
+
+      // Strict gate: a rejected patch must never be accepted.
+      if (verification.overallVerdict === 'rejected') {
+        const rejectionReasons = verification.errors.length > 0
+          ? verification.errors.join('; ')
+          : 'Patch failed logical verification checks.';
+        return {
+          synthesisId: `synth_${crypto.randomBytes(8).toString('hex')}`,
+          status: 'rejected',
+          unifiedDiff: '',
+          acceptedProposals: [],
+          mergedProposals: [],
+          rejectedProposals: proposals.map((p) => p.proposalId),
+          conflicts: [],
+          resolvedConflicts: [],
+          unresolvedConflicts: [],
+          filesModified: [],
+          summary: `Single proposal from ${proposal.agentRole} rejected after verification failure. ${rejectionReasons}`,
+          verification: {
+            passed: false,
+            overallVerdict: verification.overallVerdict,
+            checks: verification.checks,
+            warnings: verification.warnings,
+            errors: verification.errors,
+          },
+          createdAt: new Date().toISOString(),
+        };
+      }
 
       const synthesisId = `synth_${crypto.randomBytes(8).toString('hex')}`;
       return {

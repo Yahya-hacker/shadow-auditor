@@ -12,6 +12,7 @@ import {
 } from '@langchain/langgraph';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
 import { type ToolSet } from 'ai';
+import { z } from 'zod';
 
 import { enableLangGraphContext, resetHumanInLoopState } from '../../utils/human-in-loop.js';
 import { AgentState } from './state.js';
@@ -38,14 +39,66 @@ const MAX_CONTEXT_MESSAGES = 40;
 // that compresses older messages into workingMemory.
 const SUMMARIZE_THRESHOLD = 30;
 
-/** Compute a stable hash of the last K AI messages to detect loops. */
+/**
+ * Structured output schema for the Supervisor's routing decision.
+ * The Supervisor produces a JSON object with the next node to execute
+ * and a rationale — making multi-agent delegation real, deterministic,
+ * and traceable (replaces the old static fallback to SastAnalyzer).
+ */
+const supervisorRoutingSchema = z.object({
+  next_node: z.enum([
+    'ToolExecutor',
+    'SastAnalyzer',
+    'GraphTracer',
+    'Verifier',
+    'Reflector',
+    'END',
+  ]).describe('The next node to execute in the analysis pipeline.'),
+  rationale: z.string().describe('Why this node was chosen based on the current state.'),
+});
+
+/**
+ * Compute a stable hash of the last K AI messages to detect loops.
+ *
+ * Hashes tool call signatures (name + JSON args) rather than text content
+ * so that repetitive failing tool calls are detected even when the LLM
+ * varies its monologue wording each time ("trying again...", "adjusting...").
+ * Falls back to text content only when there are no tool calls (e.g. final
+ * text responses).
+ */
 function computeStateHash(state: GraphState): string {
   const recentAI = state.messages
     .filter((m) => m instanceof AIMessage)
-    .slice(-5)
-    .map((m) => (m as AIMessage).content)
-    .join('');
-  return crypto.createHash('sha256').update(recentAI).digest('hex').slice(0, 12);
+    .slice(-5) as AIMessage[];
+
+  // Collect tool call signatures: tool name + stringified arguments.
+  const signatures: string[] = [];
+  for (const msg of recentAI) {
+    // Standard LangChain tool_calls
+    if (Array.isArray(msg.tool_calls)) {
+      for (const tc of msg.tool_calls) {
+        signatures.push(`${tc.name}:${JSON.stringify(tc.args)}`);
+      }
+    }
+    // Provider-specific additional_kwargs.tool_calls
+    const kwargsCalls = msg.additional_kwargs?.tool_calls;
+    if (Array.isArray(kwargsCalls)) {
+      for (const tc of kwargsCalls as Array<{ function?: { name?: string; arguments?: string } }>) {
+        const name = tc.function?.name ?? 'unknown';
+        const args = tc.function?.arguments ?? '{}';
+        signatures.push(`${name}:${args}`);
+      }
+    }
+  }
+
+  // If there are tool calls, hash only the signatures — this catches
+  // infinite tool loops regardless of textual justifications. Otherwise
+  // fall back to text content (e.g. for final response loops).
+  const hashInput = signatures.length > 0
+    ? signatures.join('|')
+    : recentAI.map((m) => m.content).join('');
+
+  return crypto.createHash('sha256').update(hashInput).digest('hex').slice(0, 12);
 }
 
 /** Track state hashes to detect loops across supersteps. */
@@ -62,11 +115,26 @@ function checkRepetitiveLoop(state: GraphState): boolean {
  * Trim message history to the sliding window size. When messages exceed
  * SUMMARIZE_THRESHOLD, older messages are compressed into a summary that
  * is stored in workingMemory — so critical findings survive trimming.
+ *
+ * The structured `auditedFiles` and `discoveredFindings` arrays are preserved
+ * as-is; only old text messages are compressed. This prevents the SAST agent
+ * from "forgetting" which files it has already audited and entering an
+ * infinite re-reading loop.
  */
-function trimContext(state: GraphState): { messages: BaseMessage[]; updatedMemory: string } {
+function trimContext(state: GraphState): {
+  messages: BaseMessage[];
+  updatedMemory: string;
+  auditedFiles: string[];
+  discoveredFindings: string[];
+} {
   const messages = state.messages;
   if (messages.length <= MAX_CONTEXT_MESSAGES) {
-    return { messages, updatedMemory: state.workingMemory };
+    return {
+      messages,
+      updatedMemory: state.workingMemory,
+      auditedFiles: state.auditedFiles,
+      discoveredFindings: state.discoveredFindings,
+    };
   }
 
   // Keep first message (system context) + last N-1 messages
@@ -74,33 +142,54 @@ function trimContext(state: GraphState): { messages: BaseMessage[]; updatedMemor
   const recent = messages.slice(-(MAX_CONTEXT_MESSAGES - 1));
   const dropped = messages.slice(1, -(MAX_CONTEXT_MESSAGES - 1));
 
-  // Summarize the dropped messages into a compact form
-  const summary = summarizeDroppedMessages(dropped);
+  // Summarize dropped messages, using structured state as authoritative source
+  const summary = summarizeDroppedMessages(dropped, state.auditedFiles);
   const updatedMemory = state.workingMemory
     ? `${state.workingMemory}\n\n[Auto-summarized earlier context]:\n${summary}`
     : `[Auto-summarized earlier context]:\n${summary}`;
 
-  return { messages: [first, ...recent], updatedMemory };
+  // Structured state survives trimming intact
+  return {
+    messages: [first!, ...recent],
+    updatedMemory,
+    auditedFiles: state.auditedFiles,
+    discoveredFindings: state.discoveredFindings,
+  };
 }
 
 /**
  * Compress dropped messages into a concise summary for working memory.
- * Extracts key findings, file references, and hypotheses from older messages
- * so they survive context trimming.
+ *
+ * Uses the structured `auditedFiles` from state as the authoritative source
+ * for file tracking — the old regex-only approach was fragile against LLM
+ * formatting variations (markdown tables, different emoji, etc.). The regex
+ * is now only a fallback when structured state is not available.
  */
-function summarizeDroppedMessages(messages: BaseMessage[]): string {
+function summarizeDroppedMessages(
+  messages: BaseMessage[],
+  auditedFiles: string[] = [],
+): string {
   const findings: string[] = [];
-  const filesExamined = new Set<string>();
+  const filesExamined = new Set<string>(auditedFiles); // Start from authoritative state
   const toolCalls: string[] = [];
 
   for (const msg of messages) {
     const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
 
-    // Extract file paths mentioned in the message
+    // Fallback regex extraction for files — complements the structured state
     const fileMatches = content.match(/(?:File:|📄|📁|FILE:)\s*([^\s,\n]+)/gi);
     if (fileMatches) {
       for (const m of fileMatches) {
         const cleaned = m.replace(/(?:File:|📄|📁|FILE:)\s*/i, '').trim();
+        if (cleaned.length > 2 && cleaned.length < 200) filesExamined.add(cleaned);
+      }
+    }
+
+    // Also try generic file path patterns as additional fallback
+    const genericFiles = content.match(/(?:`|['"]|\b)([\w./-]+\.(?:ts|tsx|js|jsx|py|go|java|rs|php|rb|c|h|cpp|cxx|hpp|vue|svelte|swift|kt|kts|sql|yaml|yml|json|xml|toml)(?:`|['"]|\b))/gi);
+    if (genericFiles) {
+      for (const f of genericFiles) {
+        const cleaned = f.replace(/[`'"]/g, '').trim();
         if (cleaned.length > 2 && cleaned.length < 200) filesExamined.add(cleaned);
       }
     }
@@ -140,8 +229,15 @@ function summarizeDroppedMessages(messages: BaseMessage[]): string {
  * Update working memory after a model response. Extracts key findings,
  * file references, and hypotheses from the latest AI message and appends
  * them to the running summary.
+ *
+ * Now also populates the structured `auditedFiles` and `discoveredFindings`
+ * arrays in the state, which survive context trimming — the old regex-based
+ * approach was fragile against LLM formatting variations.
  */
-function updateWorkingMemory(state: GraphState, newMessage: BaseMessage): string {
+function updateWorkingMemory(
+  state: GraphState,
+  newMessage: BaseMessage,
+): { memory: string; auditedFiles: string[]; discoveredFindings: string[] } {
   const content = typeof newMessage.content === 'string'
     ? newMessage.content
     : JSON.stringify(newMessage.content);
@@ -154,22 +250,44 @@ function updateWorkingMemory(state: GraphState, newMessage: BaseMessage): string
   const cweMatches = content.match(/CWE-\d{1,4}[^\n]*/g);
 
   const newEntries: string[] = [];
+  const newFindings: string[] = [];
+  const newAuditedFiles: string[] = [];
 
   if (hitMatches?.length) {
     newEntries.push(`Findings: ${hitMatches.map((h) => h.trim()).join('; ')}`);
+    newFindings.push(...hitMatches.map((h) => h.trim()));
   }
   if (alertMatches?.length) {
     newEntries.push(`Alerts: ${alertMatches.map((a) => a.trim()).join('; ')}`);
+    newFindings.push(...alertMatches.map((a) => a.trim()));
   }
   if (cweMatches?.length && !hitMatches?.length) {
     newEntries.push(`CWE references: ${[...new Set(cweMatches)].join(', ')}`);
+    newFindings.push(...cweMatches);
   }
 
-  // Extract file paths
-  const fileRefs = content.match(/(?:`?)[\w./-]+\.(?:ts|tsx|js|jsx|py|go|java|rs|php|rb|c|h|cpp)(?:`?)/gi);
-  if (fileRefs?.length && !memory.includes('Files examined:')) {
-    const uniqueFiles = [...new Set(fileRefs)].slice(0, 10);
-    newEntries.push(`Files referenced: ${uniqueFiles.join(', ')}`);
+  // Extract file paths using a more robust pattern than the old fragile regex.
+  // Match common file extensions in code contexts (backtick-wrapped, paths, etc.)
+  const filePattern = /(?:`|['"]|\b)([\w./-]+\.(?:ts|tsx|js|jsx|py|go|java|rs|php|rb|c|h|cpp|cxx|hpp|vue|svelte|swift|kt|kts|cs|fs|fsx|sql|yaml|yml|json|xml|toml|cfg|ini|env|dockerfile|makefile)(?:`|['"]|\b))/gi;
+  const fileRefs = content.match(filePattern);
+  if (fileRefs?.length) {
+    const cleaned = fileRefs.map((f) => f.replace(/[`'"]/g, '').trim()).filter((f) => f.length > 2);
+    newAuditedFiles.push(...cleaned);
+    if (!memory.includes('Files examined:')) {
+      const uniqueFiles = [...new Set(cleaned)].slice(0, 10);
+      newEntries.push(`Files referenced: ${uniqueFiles.join(', ')}`);
+    }
+  }
+
+  // Also detect files referenced with explicit markers (File:, FILE:, 📄, 📁)
+  // as a complement to the structured pattern above.
+  const markerPattern = /(?:File:|📄|📁|FILE:)\s*([^\s,\n]+)/gi;
+  let markerMatch;
+  while ((markerMatch = markerPattern.exec(content)) !== null) {
+    const cleaned = markerMatch[1]!.replace(/[`'"]/g, '').trim();
+    if (cleaned.length > 2 && cleaned.length < 200 && !newAuditedFiles.includes(cleaned)) {
+      newAuditedFiles.push(cleaned);
+    }
   }
 
   if (newEntries.length > 0) {
@@ -185,7 +303,11 @@ function updateWorkingMemory(state: GraphState, newMessage: BaseMessage): string
     memory = lines.slice(-15).join('\n'); // Keep last 15 entries
   }
 
-  return memory;
+  return {
+    memory,
+    auditedFiles: newAuditedFiles,
+    discoveredFindings: newFindings,
+  };
 }
 
 /**
@@ -244,6 +366,21 @@ Output one of:
 - "RETRY: <specific feedback>" — response needs improvement, with concrete suggestions
 
 Be concise. If passing, just say PASS. If not, give 1-2 sentences of specific feedback.`,
+
+  supervisor: `You are the Supervisor orchestrator for a multi-agent security analysis system.
+
+Your role is to examine the current analysis state and decide which specialized agent should handle the next step:
+
+- **SastAnalyzer**: Static analysis — identify injection vulnerabilities, auth flaws, insecure data handling, input validation gaps, race conditions. Route here when raw code needs security scanning.
+- **GraphTracer**: Data-flow tracing — trace data from sources (user input, external data) to sinks (eval, exec, SQL, file ops). Route here when you need to understand how data moves through the code.
+- **Verifier**: Finding verification — independently validate candidate vulnerabilities against code evidence. Route here when findings need confirmation before reporting.
+- **ToolExecutor**: Route here ONLY when you determine that the current specialist needs tool access (file reads, code search, etc.) — note that specialists bind their own tools.
+- **Reflector**: Quality review — route a completed analysis for quality assurance before finalizing.
+- **END**: Terminate when analysis is complete, all findings are verified, and quality review has passed.
+
+Respond with a JSON object containing:
+- "next_node": the node to execute next
+- "rationale": a brief explanation of your decision`,
 };
 
 export interface CompileWorkflowOptions {
@@ -354,25 +491,37 @@ function routeFromToolExecutor(state: GraphState): string {
 
 /**
  * Routing function for the supervisor node.
- * After the supervisor runs, decide whether to:
- * - Execute tool calls (ToolExecutor)
- * - Route to SAST analysis for deeper investigation (SastAnalyzer)
- * - Terminate the graph (END)
+ *
+ * Reads the `nextNode` field set by the Supervisor's structured output.
+ * This makes multi-agent delegation real, deterministic, and traceable —
+ * the Supervisor's LLM decides which specialist (SastAnalyzer, GraphTracer,
+ * Verifier) handles the current analysis state, replacing the old static
+ * fallback that always defaulted to SastAnalyzer.
  */
 function routeFromSupervisor(state: GraphState): string {
-  const lastMessage = state.messages.at(-1);
+  const nextNode = state.nextNode;
 
-  if (lastMessage instanceof AIMessage && hasToolCalls(lastMessage)) {
-    if (checkRepetitiveLoop(state)) return END;
-    return 'ToolExecutor';
+  // Guard: if nextNode was set to END via the structured output, terminate.
+  if (nextNode === END || !nextNode) {
+    return END;
   }
 
+  // Validate: only route to known nodes.
+  const validNodes = new Set([
+    'ToolExecutor', 'SastAnalyzer', 'GraphTracer', 'Verifier', 'Reflector',
+  ]);
+  if (!validNodes.has(nextNode)) {
+    return END;
+  }
+
+  // Enforce iteration limit as a safety net.
   const iterations = getMessageIterationCount(state);
   if (iterations >= MAX_ITERATIONS) return END;
 
-  if (lastMessage instanceof AIMessage) return 'Reflector';
+  // Anti-loop check: if we've been cycling through the same state, stop.
+  if (checkRepetitiveLoop(state)) return END;
 
-  return 'SastAnalyzer';
+  return nextNode;
 }
 
 /**
@@ -386,30 +535,38 @@ function routeFromSpecialist(state: GraphState): string {
 
 /**
  * Routing function after the Reflector reviews output quality.
- * If PASS → END (or back to Supervisor for further work).
- * If RETRY → back to Supervisor with improvement hints.
+ *
+ * The Reflector node invokes the model WITHOUT tools (pure review), so
+ * hasToolCalls is always false — the previous code's tool-call check was
+ * dead code. Simplified to a clean binary:
+ *   PASS  → END (analysis complete)
+ *   RETRY → Supervisor (with critique in message history)
+ *   Exhausted iterations → END
  */
 function routeFromReflector(state: GraphState): string {
   const lastMessage = state.messages.at(-1);
 
-  // Check if the reflector's verdict is PASS
   if (lastMessage instanceof AIMessage) {
     const content = typeof lastMessage.content === 'string'
       ? lastMessage.content
       : '';
-    if (content.startsWith('PASS') || content.includes('PASS')) {
-      // Check if there are tool calls pending
-      if (hasToolCalls(lastMessage)) {
-        return 'ToolExecutor';
-      }
+
+    // PASS: analysis is complete and well-evidenced
+    if (content.startsWith('PASS') || content.includes('\nPASS')) {
       return END;
+    }
+
+    // RETRY: analysis needs improvement — go back to Supervisor with
+    // the reflector's critique appended to the message history.
+    if (content.startsWith('RETRY') || content.includes('\nRETRY')) {
+      return 'Supervisor';
     }
   }
 
   const iterations = getMessageIterationCount(state);
   if (iterations >= MAX_ITERATIONS) return END;
 
-  // RETRY or unclear: go back to Supervisor with feedback
+  // Unclear or unrecognized verdict: return to Supervisor for re-evaluation
   return 'Supervisor';
 }
 
@@ -448,14 +605,24 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
   }
 
   /**
-   * Trim context and summarize if needed. Returns the messages to use
-   * and an updated working memory string.
+   * Trim context and summarize if needed. Returns the messages to use,
+   * updated working memory, and the structured state arrays.
    */
-  function prepareContext(state: GraphState): { messages: BaseMessage[]; updatedMemory: string } {
+  function prepareContext(state: GraphState): {
+    messages: BaseMessage[];
+    updatedMemory: string;
+    auditedFiles: string[];
+    discoveredFindings: string[];
+  } {
     if (state.messages.length > SUMMARIZE_THRESHOLD) {
       return trimContext(state);
     }
-    return { messages: state.messages, updatedMemory: state.workingMemory };
+    return {
+      messages: state.messages,
+      updatedMemory: state.workingMemory,
+      auditedFiles: state.auditedFiles,
+      discoveredFindings: state.discoveredFindings,
+    };
   }
 
   /**
@@ -465,13 +632,18 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
     state: GraphState,
     config?: RunnableConfig,
   ): Promise<Partial<GraphState>> {
-    const { messages, updatedMemory } = prepareContext(state);
+    const { messages, updatedMemory, auditedFiles, discoveredFindings } = prepareContext(state);
     const modelWithTools = await bindModel(state, config);
     const systemMessages = buildDynamicSystemPrompt(systemMsg, NODE_PROMPTS.sastAnalyzer, updatedMemory);
     const messagesWithSystem = [...systemMessages, ...messages];
     const response = await modelWithTools.invoke(messagesWithSystem, config);
-    const newMemory = updateWorkingMemory(state, response);
-    return { messages: [response], workingMemory: newMemory || updatedMemory };
+    const memResult = updateWorkingMemory(state, response);
+    return {
+      messages: [response],
+      workingMemory: memResult.memory || updatedMemory,
+      auditedFiles: [...new Set([...auditedFiles, ...memResult.auditedFiles])],
+      discoveredFindings: [...new Set([...discoveredFindings, ...memResult.discoveredFindings])],
+    };
   }
 
   /**
@@ -481,13 +653,18 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
     state: GraphState,
     config?: RunnableConfig,
   ): Promise<Partial<GraphState>> {
-    const { messages, updatedMemory } = prepareContext(state);
+    const { messages, updatedMemory, auditedFiles, discoveredFindings } = prepareContext(state);
     const modelWithTools = await bindModel(state, config);
     const systemMessages = buildDynamicSystemPrompt(systemMsg, NODE_PROMPTS.graphTracer, updatedMemory);
     const messagesWithSystem = [...systemMessages, ...messages];
     const response = await modelWithTools.invoke(messagesWithSystem, config);
-    const newMemory = updateWorkingMemory(state, response);
-    return { messages: [response], workingMemory: newMemory || updatedMemory };
+    const memResult = updateWorkingMemory(state, response);
+    return {
+      messages: [response],
+      workingMemory: memResult.memory || updatedMemory,
+      auditedFiles: [...new Set([...auditedFiles, ...memResult.auditedFiles])],
+      discoveredFindings: [...new Set([...discoveredFindings, ...memResult.discoveredFindings])],
+    };
   }
 
   /**
@@ -497,29 +674,59 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
     state: GraphState,
     config?: RunnableConfig,
   ): Promise<Partial<GraphState>> {
-    const { messages, updatedMemory } = prepareContext(state);
+    const { messages, updatedMemory, auditedFiles, discoveredFindings } = prepareContext(state);
     const modelWithTools = await bindModel(state, config);
     const systemMessages = buildDynamicSystemPrompt(systemMsg, NODE_PROMPTS.verifier, updatedMemory);
     const messagesWithSystem = [...systemMessages, ...messages];
     const response = await modelWithTools.invoke(messagesWithSystem, config);
-    const newMemory = updateWorkingMemory(state, response);
-    return { messages: [response], workingMemory: newMemory || updatedMemory };
+    const memResult = updateWorkingMemory(state, response);
+    return {
+      messages: [response],
+      workingMemory: memResult.memory || updatedMemory,
+      auditedFiles: [...new Set([...auditedFiles, ...memResult.auditedFiles])],
+      discoveredFindings: [...new Set([...discoveredFindings, ...memResult.discoveredFindings])],
+    };
   }
 
   /**
-   * Supervisor node: the main LLM orchestrator that decides what to do next.
+   * Supervisor node: the intelligent orchestrator that decides which
+   * specialist node should handle the current analysis state. Uses
+   * structured output (JSON Schema via Zod) to produce a deterministic,
+   * traceable routing decision — replacing the old static fallback that
+   * always defaulted to SastAnalyzer and left GraphTracer/Verifier orphaned.
    */
   async function supervisorNode(
     state: GraphState,
     config?: RunnableConfig,
   ): Promise<Partial<GraphState>> {
-    const { messages, updatedMemory } = prepareContext(state);
-    const modelWithTools = await bindModel(state, config);
-    const systemMessages = buildDynamicSystemPrompt(systemMsg, undefined, updatedMemory);
-    const messagesWithSystem = [...systemMessages, ...messages];
-    const response = await modelWithTools.invoke(messagesWithSystem, config);
-    const newMemory = updateWorkingMemory(state, response);
-    return { messages: [response], workingMemory: newMemory || updatedMemory };
+    const { messages, updatedMemory, auditedFiles, discoveredFindings } = prepareContext(state);
+
+    // Build the routing prompt with current state context
+    const supervisorSystemPrompt = `## WORKING MEMORY\n${updatedMemory || '(empty)'}\n\n## RECENT MESSAGES\n${messages.slice(-6).map((m) => {
+      const role = m instanceof AIMessage ? 'AI' : m instanceof HumanMessage ? 'Human' : 'System';
+      const content = typeof m.content === 'string' ? m.content.slice(0, 500) : JSON.stringify(m.content).slice(0, 500);
+      return `[${role}] ${content}`;
+    }).join('\n\n')}`;
+
+    const routingMessages: BaseMessage[] = [
+      new SystemMessage({ content: NODE_PROMPTS.supervisor }),
+      new HumanMessage({ content: `Current analysis state:\n\n${supervisorSystemPrompt}\n\nBased on the current state, which node should execute next? Respond with the JSON routing decision.` }),
+    ];
+
+    // Use structured output for deterministic routing — no tool calls from
+    // the supervisor itself; specialists handle tool execution.
+    const modelWithRouting = model.withStructuredOutput(supervisorRoutingSchema);
+    const routingDecision = await modelWithRouting.invoke(routingMessages, config);
+
+    const nextNode = routingDecision.next_node === 'END' ? END : routingDecision.next_node;
+
+    return {
+      messages: [new AIMessage({ content: `[Supervisor → ${routingDecision.next_node}] ${routingDecision.rationale}` })],
+      nextNode,
+      workingMemory: updatedMemory,
+      auditedFiles,
+      discoveredFindings,
+    };
   }
 
   /**
@@ -531,7 +738,7 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
     state: GraphState,
     config?: RunnableConfig,
   ): Promise<Partial<GraphState>> {
-    const { messages, updatedMemory } = prepareContext(state);
+    const { messages, updatedMemory, auditedFiles, discoveredFindings } = prepareContext(state);
 
     // Find the last non-reflector AI message to review
     const lastAI = [...messages].reverse().find(
@@ -540,7 +747,7 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
 
     if (!lastAI) {
       // No AI message to review — pass through
-      return { workingMemory: updatedMemory };
+      return { workingMemory: updatedMemory, auditedFiles, discoveredFindings };
     }
 
     // Build a focused review prompt with just the message to review
@@ -565,6 +772,8 @@ Respond with PASS if the output is complete and well-evidenced, or RETRY: <speci
     return {
       messages: [response],
       workingMemory: updatedMemory,
+      auditedFiles,
+      discoveredFindings,
     };
   }
 
@@ -577,7 +786,12 @@ Respond with PASS if the output is complete and well-evidenced, or RETRY: <speci
    * pause, shows the question, and resumes the graph with the human's answer.
    */
   async function humanInterventionNode(state: GraphState): Promise<Partial<GraphState>> {
-    return { pendingHumanInput: null, workingMemory: state.workingMemory };
+    return {
+      pendingHumanInput: null,
+      workingMemory: state.workingMemory,
+      auditedFiles: state.auditedFiles,
+      discoveredFindings: state.discoveredFindings,
+    };
   }
 
   const workflow = new StateGraph(AgentState)

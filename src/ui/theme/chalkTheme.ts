@@ -104,7 +104,7 @@ export const themeMode: ThemeMode = detectThemeMode();
 const activePalette: ThemePalette = themeMode === 'light' ? LIGHT_PALETTE : DARK_PALETTE;
 
 /**
- * Ink-compatible color values (hex strings) mapped to the legacy UI key names
+ * OpenTUI-compatible color values (hex strings) mapped to the legacy UI key names
  * the components already import. Tier downsampling happens at render via
  * `chalk.level`.
  */
@@ -141,7 +141,7 @@ export const labels = {
 export const layout = {
   COMPACT_THRESHOLD: 80,
   FOOTER_HEIGHT: 1,   // single-line status bar at the very bottom
-  HEADER_HEIGHT: 4,   // 2 content lines + 2 border lines (Ink double border)
+  HEADER_HEIGHT: 4,   // 2 content lines + 2 border lines (double border)
   INPUT_HEIGHT: 4,    // border + content + border + footer line
   MIN_SIDEBAR_WIDTH: 18,
   SIDEBAR_RATIO: 0.25,
@@ -185,8 +185,8 @@ export const rolePrefix = {
 } as const;
 
 /**
- * Raw chalk helpers bound to the active palette. Used for non-Ink output
- * (stderr, logs). Ink components should use the `colors` object instead.
+ * Raw chalk helpers bound to the active palette. Used for stderr/logs output.
+ * UI components should use the `colors` object instead.
  */
 export const chalkTheme = {
   agent: chalk.hex(activePalette.statusInfo),

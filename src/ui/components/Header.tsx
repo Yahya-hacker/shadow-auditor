@@ -1,11 +1,13 @@
-import { Box, Text } from 'ink';
+/**
+ * Header — 2-line branded title bar with ASCII art logo and status indicators.
+ */
+
 import React, { memo } from 'react';
 
 import { type SwarmStateSnapshot } from '../../core/hivemind/swarm-supervisor.js';
 import { useAppStore } from '../store/appStore.js';
-import { colors, labels } from '../theme.js';
+import { colors, labels } from '../theme/chalkTheme.js';
 
-/** ASCII art logo for the expanded header. Falls back to plain text in compact mode. */
 const ASCII_LOGO = '█▀▀ █░█ █▀█ █▀▄ █▀█ █░█░█';
 const ASCII_LOGO_LINE2 = '▄▄█ █▀█ █▀█ █▄▀ █▄█ ▀▄▀▄▀';
 
@@ -22,34 +24,17 @@ function getAgentStatus(swarmState: null | SwarmStateSnapshot): string {
   return active > 0 ? `${active} Active` : 'Idle';
 }
 
-/**
- * 2-line header with ASCII art logo and right-aligned status indicators.
- *
- * Expanded mode (≥80 cols):
- *   ╔════════════════════════════════════════════════╗
- *   ║ █▀▀ █░█ █▀█ █▀▄ █▀█ █░█░█ ShadowAuditor v1.2.0 [Status: Ready]
- *   ║ ▄▄█ █▀█ █▀█ █▄▀ █▄█ ▀▄▀▄▀ AI-Native SAST      [Agents: Idle ]
- *   ╚════════════════════════════════════════════════╝
- *
- * Compact mode (<80 cols):
- *   ShadowAuditor v1.2.0 [Status: Ready]
- *   AI-Native SAST       [Agents: Idle ]
- */
 export const Header: React.FC = memo(() => {
   const sessionPhase = useAppStore((state) => state.session.phase);
   const streaming = useAppStore((state) => state.streaming);
   const swarmState = useAppStore((state) => state.swarmState);
   const isCompact = useAppStore((state) => state.isCompact);
   const config = useAppStore((state) => state.config);
-  // Use the store's hitCount instead of scanning the messages array on every
-  // render, avoiding a re-render cascade whenever a new message arrives.
   const findingCount = useAppStore((state) => state.hitCount);
 
-  // Derive status from streaming + session phase
   const effectivePhase = streaming ? 'ready' : sessionPhase;
   const status = statusLabels[effectivePhase] ?? { color: colors.muted, label: effectivePhase };
 
-  // Agent status: swarm agents OR local processing indicator
   const agentStatus = getAgentStatus(swarmState);
   const agentLabel = streaming ? 'Processing...'
     : swarmState ? agentStatus
@@ -63,40 +48,43 @@ export const Header: React.FC = memo(() => {
     : colors.muted;
 
   return (
-    <Box
-      borderColor={colors.brand}
-      borderStyle="double"
+    <box
+      border={{ color: colors.brand, style: 'double' }}
       flexDirection="column"
       paddingX={1}
     >
-      <Box justifyContent="space-between">
-        <Text bold color={colors.brand}>
-          {isCompact ? `${labels.appName} ${labels.version}` : `${ASCII_LOGO} ${labels.appName} ${labels.version}`}
-        </Text>
-        <Text>
-          <Text color={colors.muted}>[Status: </Text>
-          <Text bold color={status.color}>{status.label}</Text>
+      <box justifyContent="space-between">
+        <text style={{ color: colors.brand, fontWeight: 'bold' }}>
+          {isCompact
+            ? `${labels.appName} ${labels.version}`
+            : `${ASCII_LOGO} ${labels.appName} ${labels.version}`}
+        </text>
+        <text>
+          <text style={{ color: colors.muted }}>[Status: </text>
+          <text style={{ color: status.color, fontWeight: 'bold' }}>{status.label}</text>
           {findingCount > 0 && (
-            <Text color={colors.muted}> | {findingCount} finding{findingCount !== 1 ? 's' : ''}</Text>
+            <text style={{ color: colors.muted }}>
+              {' '}| {findingCount} finding{findingCount !== 1 ? 's' : ''}
+            </text>
           )}
-          <Text color={colors.muted}>]</Text>
-        </Text>
-      </Box>
-      <Box justifyContent="space-between">
-        <Text color={colors.muted}>
+          <text style={{ color: colors.muted }}>]</text>
+        </text>
+      </box>
+      <box justifyContent="space-between">
+        <text style={{ color: colors.muted }}>
           {isCompact
             ? labels.appTagline
             : config
               ? `${config.provider}/${config.model}${config.auditMode ? ' · ' + config.auditMode : ''}`
               : `${ASCII_LOGO_LINE2} ${labels.appTagline}`}
-        </Text>
-        <Text>
-          <Text color={colors.muted}>[Agents: </Text>
-          <Text bold color={agentColor}>{agentLabel}</Text>
-          <Text color={colors.muted}>]</Text>
-        </Text>
-      </Box>
-    </Box>
+        </text>
+        <text>
+          <text style={{ color: colors.muted }}>[Agents: </text>
+          <text style={{ color: agentColor, fontWeight: 'bold' }}>{agentLabel}</text>
+          <text style={{ color: colors.muted }}>]</text>
+        </text>
+      </box>
+    </box>
   );
 });
 

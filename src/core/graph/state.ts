@@ -124,6 +124,28 @@ export const AgentState = Annotation.Root({
     default: () => '',
     reducer: (_state, update) => update,
   }),
+  // Supervisor routing: the next node to execute, set by the Supervisor's
+  // structured output. Drives intelligent multi-agent delegation (vs the
+  // old static fallback that always routed to SastAnalyzer). Cleared after
+  // each routing decision is consumed.
+  nextNode: Annotation<string>({
+    default: () => '',
+    reducer: (_state, update) => update,
+  }),
+  // Audited files: authoritative list of files already examined by SAST.
+  // Survives context trimming — unlike the old regex-based extraction from
+  // message text which was fragile against LLM formatting variations.
+  auditedFiles: Annotation<string[]>({
+    default: () => [],
+    reducer: (state, update) => [...new Set([...state, ...update])],
+  }),
+  // Discovered findings: structured records of vulnerabilities found during
+  // analysis. Preserved across context compression so the agent never
+  // "forgets" its discoveries.
+  discoveredFindings: Annotation<string[]>({
+    default: () => [],
+    reducer: (state, update) => [...new Set([...state, ...update])],
+  }),
 });
 /* eslint-enable new-cap */
 

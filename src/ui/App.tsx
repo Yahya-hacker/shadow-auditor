@@ -1,3 +1,11 @@
+/**
+ * Shadow Auditor — OpenTUI Application Root.
+ *
+ * Replaces the Ink render tree with OpenTUI's Yoga-based renderer.
+ * Screen routing and Zustand store integration remain identical —
+ * only the rendering layer has changed.
+ */
+
 import * as path from 'node:path';
 import React, { useCallback, useEffect, useState } from 'react';
 
@@ -57,10 +65,8 @@ export const App: React.FC<AppProps> = ({
     }
   }, [initialConfig, setConfig]);
 
-  // Track if we should show setup after boot completes
   const [pendingSetup, setPendingSetup] = useState(needsSetup);
 
-  // Handle boot sequence completion - transition to setup or target selection
   const handleBootComplete = useCallback(() => {
     setPendingSetup(false);
     if (needsSetup) {
@@ -70,9 +76,6 @@ export const App: React.FC<AppProps> = ({
     }
   }, [needsSetup, setScreen]);
 
-  // Initialize session once target is selected.
-  // Uses the store's config (not the initialConfig prop) because
-  // SetupScreen may have saved a new config mid-session.
   useEffect(() => {
     const storedConfig = useAppStore.getState().config;
     if (screen !== 'initializing' || !sessionTarget || !storedConfig) return;
@@ -147,43 +150,54 @@ export const App: React.FC<AppProps> = ({
     setScreen,
   ]);
 
-  // Screen rendering
-  switch (screen) {
-    case 'boot': {
-      return <BootScreen onBootComplete={handleBootComplete} />;
-    }
+  // ── Screen routing ────────────────────────────────────────────────────
 
-    case 'initializing': {
-      return <InitializingScreen />;
+  const renderScreen = () => {
+    switch (screen) {
+      case 'boot':
+        return <BootScreen onBootComplete={handleBootComplete} />;
+      case 'initializing':
+        return <InitializingScreen />;
+      case 'license-blocked':
+        return <LicensePaywallScreen />;
+      case 'setup':
+        return <SetupScreen />;
+      case 'shell': {
+        // When a confirmation dialog or human-input request is active,
+        // render ONLY the dialog (modal behavior) — not alongside the shell.
+        // OpenTUI Yoga lacks `position: absolute`, so sibling stacking doesn't
+        // overlay; we replace the screen content entirely.
+        const store = useAppStore.getState();
+        const hasDialog = store.confirmation.open || store.humanInputRequest;
+        if (hasDialog) {
+          return (
+            <AgentSessionProvider agentSessionRef={agentSessionRef}>
+              <ConfirmDialog />
+            </AgentSessionProvider>
+          );
+        }
+        return (
+          <AgentSessionProvider agentSessionRef={agentSessionRef}>
+            <ErrorBoundary>
+              <ShellScreen />
+            </ErrorBoundary>
+          </AgentSessionProvider>
+        );
+      }
+      case 'target':
+        return <TargetSelectionScreen />;
+      default:
+        return <BootScreen />;
     }
+  };
 
-    case 'license-blocked': {
-      return <LicensePaywallScreen />;
-    }
-
-    case 'setup': {
-      return <SetupScreen />;
-    }
-
-    case 'shell': {
-      return (
-        <AgentSessionProvider agentSessionRef={agentSessionRef}>
-          <ErrorBoundary>
-            <ShellScreen />
-          </ErrorBoundary>
-          <ConfirmDialog />
-        </AgentSessionProvider>
-      );
-    }
-
-    case 'target': {
-      return <TargetSelectionScreen />;
-    }
-
-    default: {
-      return <BootScreen />;
-    }
-  }
+  // OpenTUI root: full-screen flex container. Every screen receives
+  // 100% width/height so Yoga can distribute space correctly.
+  return (
+    <box width="100%" height="100%" flexDirection="column">
+      {renderScreen()}
+    </box>
+  );
 };
 
 export default App;

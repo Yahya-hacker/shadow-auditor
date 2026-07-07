@@ -1,5 +1,9 @@
-import { Box, Text, useInput } from 'ink';
-import TextInput from 'ink-text-input';
+/**
+ * TargetSelectionScreen — choose audit target directory.
+ *
+ * `<input>` replaces ink-text-input for path entry.
+ */
+
 import React, { useCallback, useState } from 'react';
 
 import { startRepoMapGeneration } from '../hooks/useAgentSession.js';
@@ -13,6 +17,12 @@ export const TargetSelectionScreen: React.FC = () => {
   const setScreen = useAppStore((state) => state.setScreen);
   const setSessionTarget = useAppStore((state) => state.setSessionTarget);
 
+  const proceed = (target: string) => {
+    startRepoMapGeneration(target);
+    setSessionTarget(target);
+    setScreen('initializing');
+  };
+
   const handleDefaultSubmit = (value: string) => {
     const normalized = value.trim().toLowerCase();
     if (normalized === 'n' || normalized === 'no') {
@@ -21,7 +31,6 @@ export const TargetSelectionScreen: React.FC = () => {
       setError('');
       return;
     }
-
     proceed(process.cwd());
   };
 
@@ -31,74 +40,58 @@ export const TargetSelectionScreen: React.FC = () => {
       setError('Please enter a path.');
       return;
     }
-
     proceed(trimmed);
   };
 
-  const proceed = (target: string) => {
-    // Start repo map generation in the background before transitioning
-    startRepoMapGeneration(target);
-    setSessionTarget(target);
-    setScreen('initializing');
-  };
-
-  useInput(useCallback((_, key) => {
-    if (key.escape && showCustom) {
-      setShowCustom(false);
-      setError('');
-    }
-  }, [showCustom]));
-
   return (
-    <Box flexDirection="column" paddingX={spacing.panelPadX}>
-      <Box
-        borderColor={colors.brand}
-        borderStyle="round"
+    <box flexDirection="column" paddingX={spacing.panelPadX}>
+      <box
+        border={{ color: colors.brand, style: 'round' }}
         paddingX={spacing.panelPadX}
         paddingY={spacing.panelPadY}
       >
-        <Text bold color={colors.brand}>
+        <text style={{ color: colors.brand, fontWeight: 'bold' }}>
           ◈ {labels.appName} — Target Selection
-        </Text>
-      </Box>
+        </text>
+      </box>
 
-      <Box flexDirection="column" marginTop={1}>
+      <box flexDirection="column" marginTop={1}>
         {showCustom ? (
-          <Box flexDirection="column">
-            <Box>
-              <Text color={colors.pending}>Enter target directory: </Text>
-              <TextInput
-                onChange={setCustomPath}
+          <box flexDirection="column">
+            <box>
+              <text style={{ color: colors.pending }}>Enter target directory: </text>
+              <input
+                value={customPath}
+                onChange={(v: string) => setCustomPath(v)}
                 onSubmit={handleCustomSubmit}
                 placeholder="/path/to/project"
-                value={customPath}
               />
-            </Box>
+            </box>
             {error && (
-              <Box marginTop={1}>
-                <Text color={colors.error}>✖ {error}</Text>
-              </Box>
+              <box marginTop={1}>
+                <text style={{ color: colors.error }}>✖ {error}</text>
+              </box>
             )}
-          </Box>
+          </box>
         ) : (
-          <Box>
-            <Text color={colors.pending}>
+          <box>
+            <text style={{ color: colors.pending }}>
               Use current directory (
-            </Text>
-            <Text bold color={colors.bright}>
+            </text>
+            <text style={{ color: colors.bright, fontWeight: 'bold' }}>
               {process.cwd()}
-            </Text>
-            <Text color={colors.pending}>
+            </text>
+            <text style={{ color: colors.pending }}>
               ) for the audit? [Y/n]{' '}
-            </Text>
-            <TextInput
-              onChange={setCustomPath}
-              onSubmit={handleDefaultSubmit}
+            </text>
+            <input
               value={customPath}
+              onChange={(v: string) => setCustomPath(v)}
+              onSubmit={handleDefaultSubmit}
             />
-          </Box>
+          </box>
         )}
-      </Box>
-    </Box>
+      </box>
+    </box>
   );
 };

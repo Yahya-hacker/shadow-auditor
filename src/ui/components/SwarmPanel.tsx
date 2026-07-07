@@ -1,4 +1,10 @@
-import { Box, Text } from 'ink';
+/**
+ * SwarmPanel — live multi-agent swarm visualization.
+ *
+ * Shows agent status, task progress, claims, and consensus metrics.
+ * Hidden in compact mode.
+ */
+
 import React, { memo } from 'react';
 
 import { useAppStore } from '../store/appStore.js';
@@ -25,83 +31,75 @@ const lightFg = colors.panelLightFg;
 const lightBg = colors.panelLightBg;
 const panelInnerWidth = layout.MIN_SIDEBAR_WIDTH - 2;
 
-/**
- * Live swarm panel adapted for sidebar placement.
- *
- * Uses light panel styling (backgroundColor on text nodes) to match
- * FiltersPanel and MetadataPanel. In compact mode, the SwarmPanel is
- * hidden (toggle `P` does nothing).
- */
 export const SwarmPanel: React.FC = memo(() => {
   const swarmState = useAppStore((state) => state.swarmState);
 
   if (!swarmState) {
     return (
-      <Box
-        borderColor={colors.border}
-        borderStyle="single"
+      <box
+        border={{ color: colors.border, style: 'single' }}
         flexDirection="column"
         paddingX={spacing.panelPadX}
         paddingY={spacing.panelPadY}
       >
-        <Text backgroundColor={lightBg} bold color={lightFg}>
+        <text style={{ backgroundColor: lightBg, color: lightFg, fontWeight: 'bold' }}>
           {'Swarm'.padEnd(panelInnerWidth)}
-        </Text>
-        <Text backgroundColor={lightBg} color={lightFg}>
+        </text>
+        <text style={{ backgroundColor: lightBg, color: lightFg }}>
           {'No active swarm run.'.padEnd(panelInnerWidth)}
-        </Text>
-        <Text backgroundColor={lightBg}>
+        </text>
+        <text style={{ backgroundColor: lightBg }}>
           {' '.repeat(panelInnerWidth)}
-        </Text>
-      </Box>
+        </text>
+      </box>
     );
   }
 
   return (
-    <Box
-      borderColor={colors.border}
-      borderStyle="single"
+    <box
+      border={{ color: colors.border, style: 'single' }}
       flexDirection="column"
       paddingX={spacing.panelPadX}
       paddingY={spacing.panelPadY}
     >
-      <Text backgroundColor={lightBg} bold color={lightFg}>
+      <text style={{ backgroundColor: lightBg, color: lightFg, fontWeight: 'bold' }}>
         {'Swarm'.padEnd(panelInnerWidth)}
-      </Text>
+      </text>
 
-      <Text backgroundColor={lightBg} bold color={lightFg}>
+      <text style={{ backgroundColor: lightBg, color: lightFg, fontWeight: 'bold' }}>
         {'Agents'.padEnd(panelInnerWidth)}
-      </Text>
+      </text>
       {swarmState.agents.map((agent) => {
         const g = agentGlyph[agent.status] ?? { color: colors.muted, glyph: '•' };
         const line = `${g.glyph} ${agent.role} ${agent.status}`;
         return (
-          <Text backgroundColor={lightBg} color={g.color} key={agent.agentId}>
+          <text style={{ backgroundColor: lightBg, color: g.color }} key={agent.agentId}>
             {line.padEnd(panelInnerWidth)}
-          </Text>
+          </text>
         );
       })}
 
-      <Text backgroundColor={lightBg} bold color={lightFg}>
+      <text style={{ backgroundColor: lightBg, color: lightFg, fontWeight: 'bold' }}>
         {'Tasks'.padEnd(panelInnerWidth)}
-      </Text>
+      </text>
       {swarmState.tasks.map((task) => {
         const g = statusGlyph[task.status] ?? { color: colors.muted, glyph: '•' };
         const line = `${g.glyph} ${task.taskType}`;
         return (
-          <Text backgroundColor={lightBg} color={g.color} key={task.taskId}>
+          <text style={{ backgroundColor: lightBg, color: g.color }} key={task.taskId}>
             {line.padEnd(panelInnerWidth)}
-          </Text>
+          </text>
         );
       })}
 
-      <Text backgroundColor={lightBg} color={colors.dim}>
-        {`claims ${swarmState.claims} · consensus ${swarmState.consensus}`.padEnd(panelInnerWidth)}
-      </Text>
-      <Text backgroundColor={lightBg}>
+      <text style={{ backgroundColor: lightBg, color: colors.dim }}>
+        {`claims ${swarmState.claims} · consensus ${swarmState.consensus}`
+          .padEnd(panelInnerWidth)}
+      </text>
+      <text style={{ backgroundColor: lightBg }}>
         {' '.repeat(panelInnerWidth)}
-      </Text>
-    </Box>
+      </text>
+    </box>
   );
 });
 

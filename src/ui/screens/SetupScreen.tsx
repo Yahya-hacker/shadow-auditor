@@ -1,7 +1,11 @@
-import { Box, Text, useInput } from 'ink';
-import SelectInput from 'ink-select-input';
-import TextInput from 'ink-text-input';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+/**
+ * SetupScreen — provider/model/API key configuration.
+ *
+ * Replaces Ink's `<SelectInput>` with interactive `<box>` lists
+ * navigated via keyboard. `<TextInput>` replaced with `<input>`.
+ */
+
+import React, { useEffect, useMemo, useState } from 'react';
 
 import type { ShadowConfig } from '../../utils/config.js';
 
@@ -15,20 +19,13 @@ import {
   providerHasNativeEmbedding,
 } from '../../utils/provider-catalog.js';
 import { startRepoMapGeneration } from '../hooks/useAgentSession.js';
+import { OptionList } from '../components/OptionList.js';
 import { useAppStore } from '../store/appStore.js';
 import { colors, spacing } from '../theme/chalkTheme.js';
 
 type Step =
-  | 'apiKey'
-  | 'baseUrl'
-  | 'customModel'
-  | 'done'
-  | 'embedding'
-  | 'fetching'
-  | 'license'
-  | 'model'
-  | 'provider'
-  | 'trust';
+  | 'apiKey' | 'baseUrl' | 'customModel' | 'done' | 'embedding'
+  | 'fetching' | 'license' | 'model' | 'provider' | 'trust';
 
 const providerOptions = [
   { label: 'Anthropic (Claude)', value: 'anthropic' },
@@ -63,24 +60,23 @@ export const SetupScreen: React.FC = () => {
   const [error, setError] = useState('');
   const [fetching, setFetching] = useState(false);
 
-  // Start Tree-sitter / Repo Map indexing in the background as soon as we have a target
   useEffect(() => {
     if (targetPath) {
       startRepoMapGeneration(targetPath);
     }
   }, [targetPath]);
 
-  const handleTrustSelect = (item: { value: string }) => {
-    if (item.value === 'yes') {
+  const handleTrustSelect = (value: string) => {
+    if (value === 'yes') {
       setStep('provider');
     } else {
       process.exit(0);
     }
   };
 
-  const handleProviderSelect = (item: { value: string }) => {
-    setProvider(item.value);
-    if (item.value === 'custom') {
+  const handleProviderSelect = (value: string) => {
+    setProvider(value);
+    if (value === 'custom') {
       setStep('baseUrl');
     } else {
       setStep('apiKey');
@@ -88,22 +84,11 @@ export const SetupScreen: React.FC = () => {
   };
 
   const handleBaseUrlSubmit = (value: string) => {
-    if (!value.trim()) {
-      setError('Base URL is required');
-      return;
-    }
-
+    if (!value.trim()) { setError('Base URL is required'); return; }
     try {
       const url = new URL(value);
-      if (!url.hostname) {
-        setError('Please enter a valid URL');
-        return;
-      }
-    } catch {
-      setError('Please enter a valid URL');
-      return;
-    }
-
+      if (!url.hostname) { setError('Please enter a valid URL'); return; }
+    } catch { setError('Please enter a valid URL'); return; }
     setCustomBaseUrl(value.trim());
     setError('');
     setStep('apiKey');
@@ -114,55 +99,37 @@ export const SetupScreen: React.FC = () => {
       setError('API key is required');
       return;
     }
-
     setApiKey(value.trim());
     setError('');
-
-    // Save to secure keychain immediately
-    if (value.trim()) {
-      await saveApiKey(provider, value.trim());
-    }
-
+    if (value.trim()) await saveApiKey(provider, value.trim());
     if (isOpenAICompatibleProvider(provider) && value.trim()) {
       setFetching(true);
       setStep('fetching');
       const fetched = await fetchApiModels(provider, value.trim(), customBaseUrl || undefined);
       setFetching(false);
-      if (fetched && fetched.length > 0) {
-        setModels(fetched);
-      } else {
-        setModels(getProviderModels(provider) ?? []);
-      }
+      if (fetched && fetched.length > 0) setModels(fetched);
+      else setModels(getProviderModels(provider) ?? []);
     } else {
       setModels(getProviderModels(provider) ?? []);
     }
-
     setStep('model');
   };
 
-  const handleModelSelect = (item: { value: string }) => {
-    if (item.value === '__custom__') {
-      setStep('customModel');
-      return;
-    }
-
-    setModel(item.value);
+  const handleModelSelect = (value: string) => {
+    if (value === '__custom__') { setStep('customModel'); return; }
+    setModel(value);
     setStep('embedding');
   };
 
   const handleCustomModelSubmit = (value: string) => {
-    if (!value.trim()) {
-      setError('Model name is required');
-      return;
-    }
-
+    if (!value.trim()) { setError('Model name is required'); return; }
     setModel(value.trim());
     setError('');
     setStep('embedding');
   };
 
-  const handleEmbeddingSelect = (item: { value: string }) => {
-    setEmbeddingChoice(item.value);
+  const handleEmbeddingSelect = (value: string) => {
+    setEmbeddingChoice(value);
     setStep('license');
   };
 
@@ -174,21 +141,13 @@ export const SetupScreen: React.FC = () => {
     let embeddingModel = defaults.embeddingModel;
 
     if (providerHasNativeEmbedding(provider)) {
-      if (embeddingChoice === 'cloud') {
-        embeddingProvider = 'openai';
-        embeddingModel = defaults.embeddingModel;
-      } else if (embeddingChoice === 'ollama') {
-        embeddingProvider = 'ollama';
-        embeddingModel = 'nomic-embed-text';
-      } else {
-        indexingEnabled = false;
-      }
-    } else if (defaults.requiresOllamaInstallPrompt) {
-      indexingEnabled = false;
-    }
+      if (embeddingChoice === 'cloud') { embeddingProvider = 'openai'; embeddingModel = defaults.embeddingModel; }
+      else if (embeddingChoice === 'ollama') { embeddingProvider = 'ollama'; embeddingModel = 'nomic-embed-text'; }
+      else { indexingEnabled = false; }
+    } else if (defaults.requiresOllamaInstallPrompt) { indexingEnabled = false; }
 
     const config: ShadowConfig = {
-      apiKey: '', // API key is now stored in keychain, not plain text config
+      apiKey: '',
       customBaseUrl: customBaseUrl || undefined,
       indexing: {
         embeddingModel,
@@ -201,9 +160,6 @@ export const SetupScreen: React.FC = () => {
     };
 
     await saveConfig(config);
-    // Reload config into store and set cwd as default target, then go
-    // through the normal initializing→shell flow to initialize the
-    // agent session (instead of jumping directly to shell).
     const freshCfg = await loadConfig();
     const s = useAppStore.getState();
     if (freshCfg) s.setConfig(freshCfg);
@@ -211,13 +167,6 @@ export const SetupScreen: React.FC = () => {
     setStep('done');
     setTimeout(() => s.setScreen('initializing'), 1500);
   };
-
-  useInput(useCallback((_, key) => {
-    if (key.escape && step === 'customModel') {
-      setStep('model');
-      setError('');
-    }
-  }, [step]));
 
   const modelOptions = useMemo(() => [
     ...models.map((m) => ({ label: m.label, value: m.value })),
@@ -231,119 +180,124 @@ export const SetupScreen: React.FC = () => {
   ], [provider]);
 
   return (
-    <Box flexDirection="column" paddingX={spacing.panelPadX}>
-      <Box
-        borderColor={colors.brand}
-        borderStyle="round"
+    <box flexDirection="column" paddingX={spacing.panelPadX}>
+      <box
+        border={{ color: colors.brand, style: 'round' }}
         paddingX={spacing.panelPadX}
         paddingY={spacing.panelPadY}
       >
-        <Text bold color={colors.brand}>
+        <text style={{ color: colors.brand, fontWeight: 'bold' }}>
           ◈ Shadow Auditor — Environment Setup
-        </Text>
-      </Box>
+        </text>
+      </box>
 
-      <Box flexDirection="column" marginTop={1}>
+      <box flexDirection="column" marginTop={1}>
         {step === 'trust' && (
           <>
-            <Text color={colors.bright}>
-              Shadow requires deep read/write access to: <Text bold>{targetPath}</Text>
-            </Text>
-            <Box marginBottom={1}>
-              <Text color={colors.muted}>
+            <text style={{ color: colors.bright }}>
+              Shadow requires deep read/write access to:{' '}
+              <text style={{ fontWeight: 'bold' }}>{targetPath}</text>
+            </text>
+            <box marginBottom={1}>
+              <text style={{ color: colors.muted }}>
                 Do you trust this folder and its contents?
-              </Text>
-            </Box>
-            <SelectInput items={trustOptions} onSelect={handleTrustSelect} />
+              </text>
+            </box>
+            <OptionList options={trustOptions} onSelect={handleTrustSelect} />
           </>
         )}
 
         {step === 'provider' && (
           <>
-            <Text color={colors.bright}>Select your LLM provider:</Text>
-            <SelectInput items={providerOptions} onSelect={handleProviderSelect} />
+            <text style={{ color: colors.bright }}>Select your LLM provider:</text>
+            <OptionList options={providerOptions} onSelect={handleProviderSelect} />
           </>
         )}
 
         {step === 'baseUrl' && (
           <>
-            <Text color={colors.bright}>Enter your custom API base URL:</Text>
-            <TextInput
-              onChange={setCustomBaseUrl}
+            <text style={{ color: colors.bright }}>Enter your custom API base URL:</text>
+            <input
+              value={customBaseUrl}
+              onChange={(v: string) => setCustomBaseUrl(v)}
               onSubmit={handleBaseUrlSubmit}
               placeholder="https://api.your-provider.com/v1"
-              value={customBaseUrl}
             />
           </>
         )}
 
         {step === 'apiKey' && (
           <>
-            <Text color={colors.bright}>Enter your API key (stored securely in OS vault):</Text>
-            <TextInput
-              mask="*"
-              onChange={setApiKey}
-              onSubmit={handleApiKeySubmit}
+            <text style={{ color: colors.bright }}>
+              Enter your API key (stored securely in OS vault):
+            </text>
+            <input
               value={apiKey}
+              onChange={(v: string) => setApiKey(v)}
+              onSubmit={handleApiKeySubmit}
+              placeholder="••••••••"
+              mask="*"
             />
           </>
         )}
 
         {step === 'fetching' && (
-          <Text color={colors.agent}>Fetching live models from API...</Text>
+          <text style={{ color: colors.agent }}>Fetching live models from API...</text>
         )}
 
         {step === 'model' && (
           <>
-            <Text color={colors.bright}>
+            <text style={{ color: colors.bright }}>
               {fetching ? 'Select a model (live list):' : 'Select a model:'}
-            </Text>
-            <SelectInput items={modelOptions} onSelect={handleModelSelect} />
+            </text>
+            <OptionList options={modelOptions} onSelect={handleModelSelect} />
           </>
         )}
 
         {step === 'customModel' && (
           <>
-            <Text color={colors.bright}>Enter the model name:</Text>
-            <TextInput
-              onChange={setModel}
-              onSubmit={handleCustomModelSubmit}
+            <text style={{ color: colors.bright }}>Enter the model name:</text>
+            <input
               value={model}
+              onChange={(v: string) => setModel(v)}
+              onSubmit={handleCustomModelSubmit}
             />
           </>
         )}
 
         {step === 'embedding' && (
           <>
-            <Text color={colors.bright}>Choose embedding strategy:</Text>
-            <SelectInput items={embeddingOptions} onSelect={handleEmbeddingSelect} />
+            <text style={{ color: colors.bright }}>Choose embedding strategy:</text>
+            <OptionList options={embeddingOptions} onSelect={handleEmbeddingSelect} />
           </>
         )}
 
         {step === 'license' && (
           <>
-            <Text color={colors.bright}>
+            <text style={{ color: colors.bright }}>
               Enter your license key (press Enter to skip):
-            </Text>
-            <TextInput
-              onChange={setLicenseKey}
+            </text>
+            <input
+              value={licenseKey}
+              onChange={(v: string) => setLicenseKey(v)}
               onSubmit={handleLicenseSubmit}
               placeholder="SA-XXXX-XXXX-XXXX-XXXX"
-              value={licenseKey}
             />
           </>
         )}
 
         {step === 'done' && (
-          <Text color={colors.success}>Configuration saved! Entering Shadow Auditor...</Text>
+          <text style={{ color: colors.success }}>
+            Configuration saved! Entering Shadow Auditor...
+          </text>
         )}
 
         {error && (
-          <Box marginTop={1}>
-            <Text color={colors.error}>✖ {error}</Text>
-          </Box>
+          <box marginTop={1}>
+            <text style={{ color: colors.error }}>✖ {error}</text>
+          </box>
         )}
-      </Box>
-    </Box>
+      </box>
+    </box>
   );
 };

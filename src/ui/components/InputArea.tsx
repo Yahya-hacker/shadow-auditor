@@ -1,6 +1,17 @@
-import { Box, Text } from 'ink';
-import Spinner from 'ink-spinner';
-import TextInput from 'ink-text-input';
+/**
+ * InputArea — OpenTUI query input with focus-aware border.
+ *
+ * Architecture:
+ *   InputArea (outer) — subscribes to focus, streaming, searchActive.
+ *     Does NOT subscribe to `input` or `searchQuery`.
+ *   InputBorder — memoized wrapper for border (stable across keystrokes).
+ *   InputContent — subscribes to `input`/`searchQuery` from store.
+ *
+ * Strict Focus Isolation: when the <input> is focused and has text,
+ * ALL keystrokes stay in the input. Navigation shortcuts only activate
+ * when the input is empty (handled in ShellScreen's useHandleSubmit).
+ */
+
 import React, { memo } from 'react';
 
 import { useAppStore } from '../store/appStore.js';
@@ -10,25 +21,7 @@ interface InputAreaProps {
   onSubmit: (command: string) => void;
 }
 
-/**
- * Query panel with focus-driven border styling. The border is stable —
- * it only changes when focus/search/streaming state changes, not on
- * every keystroke. The TextInput content updates independently.
- *
- * Architecture:
- *   InputArea (outer) — subscribes to focus, streaming, searchActive,
- *     humanInputRequest. Does NOT subscribe to `input` or `searchQuery`.
- *   InputBorder — memoized wrapper that only re-renders on border-relevant
- *     state changes (focus, searchActive).
- *   InputContent — subscribes to `input` and `searchQuery` from the store
- *     directly, so only this leaf component re-renders on every keystroke.
- *
- * This separation prevents the terminal border from being redrawn on
- * every keystroke, eliminating the flickering that occurs when Ink
- * has to repaint box-drawing characters during fast typing.
- */
-
-/** Stable border wrapper — only re-renders when focus or streaming changes. */
+/** Stable border wrapper — only re-renders when focus/search/streaming changes. */
 const InputBorder = memo<{
   children: React.ReactNode;
   isFocused: boolean;
@@ -39,15 +32,14 @@ const InputBorder = memo<{
     : getPanelStyle(isFocused);
 
   return (
-    <Box
-      borderColor={panelStyle.borderColor}
-      borderStyle={panelStyle.borderStyle}
+    <box
+      border={{ color: panelStyle.borderColor, style: panelStyle.borderStyle }}
       flexDirection="column"
       paddingX={1}
     >
-      <Text bold color={panelStyle.borderColor}>Query</Text>
+      <text style={{ color: panelStyle.borderColor, fontWeight: 'bold' }}>Query</text>
       {children}
-    </Box>
+    </box>
   );
 });
 InputBorder.displayName = 'InputBorder';
@@ -63,8 +55,6 @@ const InputContent = memo<{
   searchActive: boolean;
   streaming: boolean;
 }>(({ isFocused, onSubmit, placeholder, searchActive, streaming }) => {
-  // These subscriptions are deliberately here (not in the parent) so that
-  // keystroke-driven changes only re-render this leaf component.
   const input = useAppStore((s) => s.input);
   const searchQuery = useAppStore((s) => s.searchQuery);
   const setInput = useAppStore((s) => s.setInput);
@@ -73,54 +63,55 @@ const InputContent = memo<{
 
   if (streaming) {
     return (
-      <Box>
-        <Text bold color={colors.brand}>❯ </Text>
-        <Text color={colors.agent}>
-          <Spinner type="dots" /> Agent is thinking...
-        </Text>
-      </Box>
+      <box>
+        <text style={{ color: colors.brand, fontWeight: 'bold' }}>❯ </text>
+        <text style={{ color: colors.agent }} animate="pulse">
+          ● Agent is thinking...
+        </text>
+      </box>
     );
   }
 
   if (searchActive) {
+    const handleSubmit = () => {
+      if (!searchQuery) setSearchActive(false);
+    };
     return (
-      <Box>
-        <Text bold color={colors.pending}>filter ❯ </Text>
-        <TextInput
-          onChange={setSearchQuery}
-          onSubmit={() => { if (!searchQuery) setSearchActive(false); }}
-          placeholder="filter messages… (Esc to clear)"
+      <box>
+        <text style={{ color: colors.pending, fontWeight: 'bold' }}>filter ❯ </text>
+        <input
           value={searchQuery}
+          onChange={(val: string) => setSearchQuery(val)}
+          onSubmit={handleSubmit}
+          placeholder="filter messages… (Esc to clear)"
         />
-      </Box>
+      </box>
     );
   }
 
   if (isFocused) {
     return (
-      <Box>
-        <Text bold color={colors.brand}>❯ </Text>
-        <TextInput
-          onChange={setInput}
+      <box>
+        <text style={{ color: colors.brand, fontWeight: 'bold' }}>❯ </text>
+        <input
+          value={input}
+          onChange={(val: string) => setInput(val)}
           onSubmit={onSubmit}
           placeholder={placeholder}
-          value={input}
         />
-      </Box>
+      </box>
     );
   }
 
   return (
-    <Text color={colors.muted}>
+    <text style={{ color: colors.muted }}>
       {input || 'Press <Enter> to search or type a command...'}
-    </Text>
+    </text>
   );
 });
 InputContent.displayName = 'InputContent';
 
 export const InputArea: React.FC<InputAreaProps> = memo(({ onSubmit }) => {
-  // Deliberately does NOT subscribe to `input` or `searchQuery` —
-  // those are read by InputContent directly to avoid border re-renders.
   const focus = useAppStore((s) => s.focus);
   const streaming = useAppStore((s) => s.streaming);
   const searchActive = useAppStore((s) => s.searchActive);
@@ -135,7 +126,7 @@ export const InputArea: React.FC<InputAreaProps> = memo(({ onSubmit }) => {
     : 'Describe a security concern or ask a question...';
 
   return (
-    <Box flexDirection="column">
+    <box flexDirection="column">
       <InputBorder isFocused={isFocused} searchActive={searchActive}>
         <InputContent
           isFocused={isFocused}
@@ -145,7 +136,7 @@ export const InputArea: React.FC<InputAreaProps> = memo(({ onSubmit }) => {
           streaming={streaming}
         />
       </InputBorder>
-    </Box>
+    </box>
   );
 });
 

@@ -1,26 +1,22 @@
-import { Box, Text } from 'ink';
-import SelectInput from 'ink-select-input';
-import React from 'react';
+/**
+ * Confirmation dialog — OpenTUI interactive elements.
+ *
+ * Handles two interruption sources:
+ * 1. LangGraph interrupt-driven confirmations (humanInputRequest)
+ * 2. Legacy Zustand confirmation (blocking Promise pattern)
+ *
+ * Now renders as a modal replacement (App.tsx switches to dialog-only
+ * when active), fixing the Yoga sibling-stacking layout issue.
+ */
 
-import type { HumanInputRequest } from '../core/graph/state.js';
+import React from 'react';
 
 import { debugLog } from '../utils/debug-logger.js';
 import { useAgentSessionRef } from './AgentSessionContext.js';
+import { OptionList } from './components/OptionList.js';
 import { useAppStore } from './store/appStore.js';
 import { colors } from './theme/chalkTheme.js';
 
-/**
- * Confirmation dialog for two sources:
- * 1. Legacy Zustand confirmation (blocking Promise pattern from the Vercel AI
- *    SDK flow, used by the swarm coordinator).
- * 2. LangGraph interrupt-driven confirmations (humanInputRequest set when the
- *    graph pauses at HumanIntervention via interruptBefore).
- *
- * For type='confirmation', renders a Yes/No dialog that calls
- * `agent.resumeWithHumanInput(true/false)` on selection.
- * For type='question', shows the question and instructs the user to type
- * their answer in the InputArea (which routes through useHandleSubmit).
- */
 export const ConfirmDialog: React.FC = () => {
   const confirmation = useAppStore((state) => state.confirmation);
   const closeConfirmation = useAppStore((state) => state.closeConfirmation);
@@ -34,22 +30,21 @@ export const ConfirmDialog: React.FC = () => {
   const addErrorMessage = useAppStore((state) => state.addErrorMessage);
   const agentSessionRef = useAgentSessionRef();
 
-  // Handle LangGraph interrupt-driven confirmation
+  // ── LangGraph interrupt-driven confirmation ────────────────────────
   if (humanInputRequest && humanInputRequest.type === 'confirmation') {
     const options = [
       { label: 'Yes, approve', value: 'yes' },
       { label: 'No, deny', value: 'no' },
     ];
 
-    const handleSelect = async (item: { value: string }) => {
-      const approved = item.value === 'yes';
+    const handleSelect = async (value: string) => {
+      const approved = value === 'yes';
       const answerText = approved ? 'Yes, approve' : 'No, deny';
-      
+
       addUserMessage(answerText);
       setHumanInputRequest(null);
       startStreaming();
 
-      // Resume the LangGraph graph with the human's answer
       try {
         await agentSessionRef.current?.resumeWithHumanInput(
           approved,
@@ -65,68 +60,76 @@ export const ConfirmDialog: React.FC = () => {
     };
 
     return (
-      <Box
+      <box
         alignItems="center"
         flexDirection="column"
+        width="100%"
         height="100%"
         justifyContent="center"
       >
-        <Box
-          borderColor={colors.warning}
-          borderStyle="round"
+        <box
+          border={{ color: colors.warning, style: 'round' }}
           flexDirection="column"
           padding={1}
         >
-          <Box marginBottom={1}>
-            <Text bold color={colors.warning}>
+          <box marginBottom={1}>
+            <text style={{ color: colors.warning, fontWeight: 'bold' }}>
               {humanInputRequest.question}
-            </Text>
-          </Box>
+            </text>
+          </box>
           {humanInputRequest.context && (
-            <Box borderColor={colors.dim} borderStyle="single" marginBottom={1} padding={1}>
-              <Text dimColor>{humanInputRequest.context}</Text>
-            </Box>
+            <box
+              border={{ color: colors.dim, style: 'single' }}
+              marginBottom={1}
+              padding={1}
+            >
+              <text style={{ color: colors.muted, fontStyle: 'italic' }}>
+                {humanInputRequest.context}
+              </text>
+            </box>
           )}
-          <SelectInput items={options} onSelect={handleSelect} />
-        </Box>
-      </Box>
+          <OptionList options={options} onSelect={handleSelect} focused={true} />
+        </box>
+      </box>
     );
   }
 
-  // Handle LangGraph interrupt-driven question (user types answer in InputArea)
+  // ── LangGraph interrupt-driven question (type your answer) ─────────
   if (humanInputRequest && humanInputRequest.type === 'question') {
     return (
-      <Box
+      <box
         alignItems="center"
         flexDirection="column"
+        width="100%"
         height="100%"
         justifyContent="center"
       >
-        <Box
-          borderColor={colors.info}
-          borderStyle="round"
+        <box
+          border={{ color: colors.info, style: 'round' }}
           flexDirection="column"
           padding={1}
         >
-          <Box marginBottom={1}>
-            <Text bold color={colors.info}>
+          <box marginBottom={1}>
+            <text style={{ color: colors.info, fontWeight: 'bold' }}>
               {humanInputRequest.question}
-            </Text>
-          </Box>
+            </text>
+          </box>
           {humanInputRequest.context && (
-            <Box marginBottom={1}>
-              <Text dimColor>{humanInputRequest.context}</Text>
-            </Box>
+            <box marginBottom={1}>
+              <text style={{ color: colors.muted, fontStyle: 'italic' }}>
+                {humanInputRequest.context}
+              </text>
+            </box>
           )}
-          <Text color={colors.muted}>
+          <text style={{ color: colors.muted, fontStyle: 'italic' }}>
             Type your answer below and press Enter.
-          </Text>
-        </Box>
-      </Box>
+          </text>
+        </box>
+      </box>
     );
   }
 
-  // Handle legacy Zustand confirmation (blocking Promise pattern)
+  // ── Legacy Zustand confirmation ────────────────────────────────────
   if (!confirmation.open) {
     return null;
   }
@@ -136,39 +139,45 @@ export const ConfirmDialog: React.FC = () => {
     { label: 'No, deny', value: 'no' },
   ];
 
-  const handleSelect = (item: { value: string }) => {
-    confirmation.onConfirm(item.value === 'yes');
+  const handleSelect = (value: string) => {
+    confirmation.onConfirm(value === 'yes');
     closeConfirmation();
   };
 
   return (
-    <Box
+    <box
       alignItems="center"
       flexDirection="column"
+      width="100%"
       height="100%"
       justifyContent="center"
     >
-      <Box
-        borderColor="yellow"
-        borderStyle="round"
+      <box
+        border={{ color: 'yellow', style: 'round' }}
         flexDirection="column"
         padding={1}
       >
-        <Box marginBottom={1}>
-          <Text bold color="yellow">
+        <box marginBottom={1}>
+          <text style={{ color: 'yellow', fontWeight: 'bold' }}>
             {confirmation.title}
-          </Text>
-        </Box>
-        <Box marginBottom={1}>
-          <Text>{confirmation.message}</Text>
-        </Box>
+          </text>
+        </box>
+        <box marginBottom={1}>
+          <text>{confirmation.message}</text>
+        </box>
         {confirmation.details && (
-          <Box borderColor="gray" borderStyle="single" marginBottom={1} padding={1}>
-            <Text dimColor>{confirmation.details}</Text>
-          </Box>
+          <box
+            border={{ color: 'gray', style: 'single' }}
+            marginBottom={1}
+            padding={1}
+          >
+            <text style={{ color: colors.muted, fontStyle: 'italic' }}>
+              {confirmation.details}
+            </text>
+          </box>
         )}
-        <SelectInput items={options} onSelect={handleSelect} />
-      </Box>
-    </Box>
+        <OptionList options={options} onSelect={handleSelect} focused={true} />
+      </box>
+    </box>
   );
 };

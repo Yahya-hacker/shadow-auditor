@@ -1,29 +1,16 @@
-import { Box, Text } from 'ink';
+/**
+ * MetadataPanel — scan stats and session info.
+ */
+
 import React, { memo, useEffect, useState } from 'react';
 
 import { useAppStore } from '../store/appStore.js';
-import { colors, layout } from '../theme.js';
+import { colors, layout } from '../theme/chalkTheme.js';
 
 interface MetadataPanelProps {
-  /** Compact mode: shows abbreviated status + hits instead of full metadata. */
   compact?: boolean;
 }
 
-/**
- * Metadata panel showing hit count, elapsed time, and focus scope.
- *
- * Expanded:
- * ├─ Metadata ───────┤
- * │ Hits: 0          │
- * │ Time: 0.0s       │
- * │ Focus: Global    │
- * └──────────────────┘
- *
- * Compact:
- * Status: Running │ Hits: 5
- *
- * Light panel styling for visual contrast against the dark output area.
- */
 export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = false }) => {
   const streaming = useAppStore((s) => s.streaming);
   const config = useAppStore((s) => s.config);
@@ -31,8 +18,6 @@ export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = fal
   const targetPath = useAppStore((s) => s.session.targetPath);
   const swarmState = useAppStore((s) => s.swarmState);
   const focusScope = useAppStore((s) => s.focusScope);
-  // Use the store's hitCount instead of scanning the messages array on every
-  // render, avoiding a re-render cascade whenever a new message arrives.
   const hitCount = useAppStore((s) => s.hitCount);
   const [elapsed, setElapsed] = useState(0);
 
@@ -47,8 +32,14 @@ export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = fal
   const lightBg = colors.panelLightBg;
   const panelInnerWidth = compact ? 14 : layout.MIN_SIDEBAR_WIDTH - 2;
 
-  const statusLabel = streaming ? 'Running' : sessionPhase === 'ready' ? 'Ready' : sessionPhase === 'error' ? 'Error' : 'Idle';
-  const statusColor = streaming ? colors.pending : sessionPhase === 'ready' ? colors.success : sessionPhase === 'error' ? colors.error : colors.muted;
+  const statusLabel = streaming ? 'Running'
+    : sessionPhase === 'ready' ? 'Ready'
+    : sessionPhase === 'error' ? 'Error'
+    : 'Idle';
+  const statusColor = streaming ? colors.pending
+    : sessionPhase === 'ready' ? colors.success
+    : sessionPhase === 'error' ? colors.error
+    : colors.muted;
 
   const provider = config?.provider ?? '—';
   const model = config?.model ?? '—';
@@ -59,32 +50,63 @@ export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = fal
 
   if (compact) {
     return (
-      <Box borderColor={colors.border} borderStyle="single" flexDirection="column" paddingX={1}>
-        <Text backgroundColor={lightBg} color={lightFg}>{'Status:'.padEnd(panelInnerWidth)}</Text>
-        <Text backgroundColor={lightBg} bold color={statusColor}>{statusLabel.padEnd(panelInnerWidth)}</Text>
-        <Text backgroundColor={lightBg} color={lightFg}>{`Hits: ${hitCount}`.padEnd(panelInnerWidth)}</Text>
-      </Box>
+      <box
+        border={{ color: colors.border, style: 'single' }}
+        flexDirection="column"
+        paddingX={1}
+      >
+        <text style={{ backgroundColor: lightBg, color: lightFg }}>
+          {'Status:'.padEnd(panelInnerWidth)}
+        </text>
+        <text style={{ backgroundColor: lightBg, color: statusColor, fontWeight: 'bold' }}>
+          {statusLabel.padEnd(panelInnerWidth)}
+        </text>
+        <text style={{ backgroundColor: lightBg, color: lightFg }}>
+          {`Hits: ${hitCount}`.padEnd(panelInnerWidth)}
+        </text>
+      </box>
     );
   }
 
   return (
-    <Box borderColor={colors.border} borderStyle="single" flexDirection="column" paddingX={1}>
-      <Text backgroundColor={lightBg} bold color={lightFg}>Scan</Text>
-      <Text backgroundColor={lightBg} color={lightFg}>{`${provider}/${model}`.padEnd(panelInnerWidth)}</Text>
-      <Text backgroundColor={lightBg} color={lightFg}>{`Mode: ${auditMode}`.padEnd(panelInnerWidth)}</Text>
-      <Text backgroundColor={lightBg} color={lightFg}>{`Target: ${targetLabel}`.padEnd(panelInnerWidth)}</Text>
-      <Text backgroundColor={lightBg} color={lightFg}>{' '.repeat(panelInnerWidth)}</Text>
-      <Text backgroundColor={lightBg} bold color={lightFg}>Session</Text>
-      <Text backgroundColor={lightBg} color={lightFg}>{`Status: ${statusLabel}`.padEnd(panelInnerWidth)}</Text>
-      <Text backgroundColor={lightBg} color={lightFg}>{`Findings: ${hitCount}`.padEnd(panelInnerWidth)}</Text>
-      <Text backgroundColor={lightBg} color={lightFg}>{`Time: ${elapsed.toFixed(0)}s`.padEnd(panelInnerWidth)}</Text>
-      <Text backgroundColor={lightBg} color={lightFg}>{' '.repeat(panelInnerWidth)}</Text>
+    <box
+      border={{ color: colors.border, style: 'single' }}
+      flexDirection="column"
+      paddingX={1}
+    >
+      <text style={{ backgroundColor: lightBg, color: lightFg, fontWeight: 'bold' }}>Scan</text>
+      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+        {`${provider}/${model}`.padEnd(panelInnerWidth)}
+      </text>
+      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+        {`Mode: ${auditMode}`.padEnd(panelInnerWidth)}
+      </text>
+      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+        {`Target: ${targetLabel}`.padEnd(panelInnerWidth)}
+      </text>
+      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+        {' '.repeat(panelInnerWidth)}
+      </text>
+      <text style={{ backgroundColor: lightBg, color: lightFg, fontWeight: 'bold' }}>Session</text>
+      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+        {`Status: ${statusLabel}`.padEnd(panelInnerWidth)}
+      </text>
+      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+        {`Findings: ${hitCount}`.padEnd(panelInnerWidth)}
+      </text>
+      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+        {`Time: ${elapsed.toFixed(0)}s`.padEnd(panelInnerWidth)}
+      </text>
+      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+        {' '.repeat(panelInnerWidth)}
+      </text>
       {swarmState && (
-        <Text backgroundColor={lightBg} color={colors.focusBorder}>
-          {`Swarm: ${swarmState.agents.length} agents, ${swarmState.claims} claims`.slice(0, panelInnerWidth).padEnd(panelInnerWidth)}
-        </Text>
+        <text style={{ backgroundColor: lightBg, color: colors.focusBorder }}>
+          {`Swarm: ${swarmState.agents.length} agents, ${swarmState.claims} claims`
+            .slice(0, panelInnerWidth).padEnd(panelInnerWidth)}
+        </text>
       )}
-    </Box>
+    </box>
   );
 });
 

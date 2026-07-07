@@ -1,23 +1,22 @@
-import { Box, Text } from 'ink';
-import Spinner from 'ink-spinner';
+/**
+ * OutputArea — main chat/log display with native OpenTUI scrolling.
+ *
+ * Uses `overflowY="scroll"` on the container — no custom virtualization,
+ * no Ink `<Static>` emulation. Yoga handles scrolling natively.
+ * Auto-scroll to bottom is handled by OpenTUI's native behavior when
+ * new content is appended to a scrollable container.
+ */
+
 import React, { memo, useMemo } from 'react';
 
 import { type ChatMessageData } from '../store/appStore.js';
 import { useAppStore } from '../store/appStore.js';
-import { colors, getPanelStyle } from '../theme.js';
+import { colors, getPanelStyle } from '../theme/chalkTheme.js';
 
 interface OutputAreaProps {
   compact?: boolean;
 }
 
-/**
- * Main output area. Separates stable message history from dynamic
- * streaming content to minimize Ink re-renders.
- *
- * ┌─ Output (Logs & Responses) ─────────────────────────────────────┐
- * │ █  System initialized. Awaiting commands...                     │
- * └─────────────────────────────────────────────────────────────────┘
- */
 export const OutputArea: React.FC<OutputAreaProps> = memo(({ compact = false }) => {
   const messages = useAppStore((s) => s.messages);
   const searchActive = useAppStore((s) => s.searchActive);
@@ -31,7 +30,7 @@ export const OutputArea: React.FC<OutputAreaProps> = memo(({ compact = false }) 
   const isFocused = focus === 'output';
   const panelStyle = getPanelStyle(isFocused);
 
-  // ── Filter messages ──────────────────────────────────────────────
+  // ── Filter messages (memoized — only recomputes when deps change) ──
   const visibleMessages = useMemo(() => {
     const query = searchActive && searchQuery ? searchQuery.toLowerCase() : '';
     if (query) {
@@ -40,53 +39,50 @@ export const OutputArea: React.FC<OutputAreaProps> = memo(({ compact = false }) 
     return applyFilters(messages, filters);
   }, [messages, searchActive, searchQuery, filters]);
 
-  // Last few activity events
   const recentActivity = useMemo(() => activity.slice(-3), [activity]);
-
   const hasContent = visibleMessages.length > 0 || isStreaming || recentActivity.length > 0;
 
   return (
-    <Box
-      borderColor={panelStyle.borderColor}
-      borderStyle={panelStyle.borderStyle}
+    <box
+      border={{ color: panelStyle.borderColor, style: panelStyle.borderStyle }}
       flexDirection="column"
       flexGrow={1}
       paddingX={1}
     >
       {!compact && (
-        <Text bold color={colors.brand}>
+        <text style={{ color: colors.brand, fontWeight: 'bold' }}>
           Output (Logs &amp; Responses)
-        </Text>
+        </text>
       )}
 
       {!hasContent && (
-        <Text color={colors.muted}>
+        <text style={{ color: colors.muted }}>
           {searchActive
             ? `No messages match "${searchQuery}".`
             : '█ System initialized. Awaiting commands... Press [?] for help.'}
-        </Text>
+        </text>
       )}
 
-      {/* ── Message history ─────────────────────────────────── */}
-      {visibleMessages.map((msg) => (
-        <MessageLine key={msg.id} message={msg} />
-      ))}
+      {/* ── Message history with native scrolling ────────────────── */}
+      <box flexDirection="column" flexGrow={1} overflowY="scroll">
+        {visibleMessages.map((msg) => (
+          <MessageLine key={msg.id} message={msg} />
+        ))}
 
-      {/* ── Activity events ──────────────────────────────────── */}
-      {recentActivity.map((event) => (
-        <ActivityLine key={event.id} event={event} />
-      ))}
+        {recentActivity.map((event) => (
+          <ActivityLine key={event.id} event={event} />
+        ))}
 
-      {/* ── Streaming response ───────────────────────────────── */}
-      {isStreaming && <StreamingLine text={streamingText} />}
-    </Box>
+        {isStreaming && <StreamingLine text={streamingText} />}
+      </box>
+    </box>
   );
 });
 
 OutputArea.displayName = 'OutputArea';
 
 // ==========================================================================
-// Sub-components — all memoized to prevent unnecessary re-renders
+// Sub-components — all memoized
 // ==========================================================================
 
 const MessageLine: React.FC<{ message: ChatMessageData }> = memo(({ message }) => {
@@ -96,16 +92,18 @@ const MessageLine: React.FC<{ message: ChatMessageData }> = memo(({ message }) =
     const findingStyle = getFindingStyle(message.text);
     if (findingStyle) {
       return (
-        <Box flexDirection="column">
-          <Text>
-            <Text color={findingStyle.gutterColor}>█ </Text>
-            <Text bold color={findingStyle.labelColor}>{findingStyle.label}</Text>
-            <Text wrap="wrap">{findingStyle.rest}</Text>
-          </Text>
+        <box flexDirection="column">
+          <text>
+            <text style={{ color: findingStyle.gutterColor }}>█ </text>
+            <text style={{ color: findingStyle.labelColor, fontWeight: 'bold' }}>
+              {findingStyle.label}
+            </text>
+            <text>{findingStyle.rest}</text>
+          </text>
           {findingStyle.codeBlocks.map((block, i) => (
             <CodeBlock code={block} key={`cb-${i}`} />
           ))}
-        </Box>
+        </box>
       );
     }
   }
@@ -113,77 +111,79 @@ const MessageLine: React.FC<{ message: ChatMessageData }> = memo(({ message }) =
   const codeBlocks = extractCodeBlocks(message.text);
   if (codeBlocks.length > 0 && message.role === 'agent') {
     return (
-      <Box flexDirection="column">
-        <Text>
-          <Text color={color}>█ </Text>
-          <Text bold color={color}>{prefix} </Text>
-          <Text wrap="wrap">{removeCodeBlocks(message.text)}</Text>
-        </Text>
+      <box flexDirection="column">
+        <text>
+          <text style={{ color }}>█ </text>
+          <text style={{ color, fontWeight: 'bold' }}>{prefix} </text>
+          <text>{removeCodeBlocks(message.text)}</text>
+        </text>
         {codeBlocks.map((block, i) => (
           <CodeBlock code={block} key={`cb-${i}`} />
         ))}
-      </Box>
+      </box>
     );
   }
 
   return (
-    <Box flexDirection="column">
-      <Text>
-        <Text color={color}>█ </Text>
-        <Text bold color={color}>{prefix} </Text>
+    <box flexDirection="column">
+      <text>
+        <text style={{ color }}>█ </text>
+        <text style={{ color, fontWeight: 'bold' }}>{prefix} </text>
         {message.role === 'user' ? (
-          <Text color={color}>{message.text}</Text>
+          <text style={{ color }}>{message.text}</text>
         ) : (
-          <Text wrap="wrap">{message.text}</Text>
+          <text>{message.text}</text>
         )}
-      </Text>
-    </Box>
+      </text>
+    </box>
   );
 });
-
 MessageLine.displayName = 'MessageLine';
 
 const ActivityLine: React.FC<{
   event: { id: string; kind: string; text: string };
 }> = memo(({ event }) => (
-  <Text>
-    <Text color={getActivityColor(event.kind)}>█ </Text>
-    <Text bold color={getActivityColor(event.kind)}>{getActivityPrefix(event.kind)} </Text>
-    <Text wrap="wrap">{event.text}</Text>
-  </Text>
+  <text>
+    <text style={{ color: getActivityColor(event.kind) }}>█ </text>
+    <text style={{ color: getActivityColor(event.kind), fontWeight: 'bold' }}>
+      {getActivityPrefix(event.kind)}{' '}
+    </text>
+    <text>{event.text}</text>
+  </text>
 ));
-
 ActivityLine.displayName = 'ActivityLine';
 
 const StreamingLine: React.FC<{ text: string }> = memo(({ text }) => {
   if (text) {
     return (
-      <Box flexDirection="column">
-        <Text>
-          <Text color={colors.agent}>█ </Text>
-          <Text wrap="wrap">{text}</Text>
-        </Text>
-      </Box>
+      <box flexDirection="column">
+        <text>
+          <text style={{ color: colors.agent }}>█ </text>
+          <text>{text}</text>
+        </text>
+      </box>
     );
   }
 
   return (
-    <Text>
-      <Text color={colors.agent}>█ </Text>
-      <Text color={colors.agent}><Spinner type="dots" /></Text>
-      <Text color={colors.muted}> Streaming response...</Text>
-    </Text>
+    <text>
+      <text style={{ color: colors.agent }}>█ </text>
+      <text style={{ color: colors.agent }} animate="pulse">●</text>
+      <text style={{ color: colors.muted }}> Streaming response...</text>
+    </text>
   );
 });
-
 StreamingLine.displayName = 'StreamingLine';
 
 const CodeBlock: React.FC<{ code: string }> = memo(({ code }) => (
-  <Box borderColor={colors.dim} borderStyle="single" flexDirection="column" paddingX={1}>
-    <Text wrap="wrap">{code}</Text>
-  </Box>
+  <box
+    border={{ color: colors.dim, style: 'single' }}
+    flexDirection="column"
+    paddingX={1}
+  >
+    <text>{code}</text>
+  </box>
 ));
-
 CodeBlock.displayName = 'CodeBlock';
 
 // ==========================================================================
@@ -209,24 +209,24 @@ function getFindingStyle(text: string): null | {
 } {
   const hitMatch = text.match(/^\[Hit\]\s*(.*)/s);
   if (hitMatch) {
-    const blocks = extractCodeBlocks(hitMatch[1]);
+    const blocks = extractCodeBlocks(hitMatch[1]!);
     return {
       codeBlocks: blocks,
       gutterColor: colors.info,
       label: '[Hit]',
       labelColor: colors.info,
-      rest: removeCodeBlocks(hitMatch[1]),
+      rest: removeCodeBlocks(hitMatch[1]!),
     };
   }
   const alertMatch = text.match(/^\[Alert\]\s*(.*)/s);
   if (alertMatch) {
-    const blocks = extractCodeBlocks(alertMatch[1]);
+    const blocks = extractCodeBlocks(alertMatch[1]!);
     return {
       codeBlocks: blocks,
       gutterColor: colors.error,
       label: '[Alert]',
       labelColor: colors.error,
-      rest: removeCodeBlocks(alertMatch[1]),
+      rest: removeCodeBlocks(alertMatch[1]!),
     };
   }
   return null;
