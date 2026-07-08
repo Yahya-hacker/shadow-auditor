@@ -184,9 +184,9 @@ export function generateEnhancedSarifReport(report: EnhancedReport): SarifLog {
       message: {
         text: enhancedFindingMessage(finding),
       },
-      partialFingerprints: {
-        'primaryLocationLineHash': finding.locations[0]?.snippetHash,
-      },
+      partialFingerprints: finding.locations[0]?.snippetHash
+        ? { primaryLocationLineHash: finding.locations[0].snippetHash }
+        : undefined,
       properties: {
         attackerPersonas: finding.attackerPersonas,
         confidence: finding.confidence,
@@ -276,12 +276,13 @@ export function generateEnhancedSarifReport(report: EnhancedReport): SarifLog {
         invocations: [{
           endTimeUtc: report.metadata.generatedAt,
           executionSuccessful: true,
-          // Compute startTimeUtc as endTime minus durationMs
-          startTimeUtc: report.metadata.durationMs == null
-            ? report.metadata.generatedAt
-            : new Date(
-                new Date(report.metadata.generatedAt).getTime() - report.metadata.durationMs,
-              ).toISOString(),
+          // Compute startTimeUtc defensively: it MUST be before endTimeUtc
+          // per SARIF spec §3.13.3. Fall back to 1s before endTime if
+          // durationMs is missing, zero, or negative.
+          startTimeUtc: computeSafeStartTime(
+            report.metadata.generatedAt,
+            report.metadata.durationMs,
+          ),
         }],
         properties: {
           runId: report.metadata.runId,
@@ -308,4 +309,25 @@ export function generateEnhancedSarifReport(report: EnhancedReport): SarifLog {
     ],
     version: '2.1.0',
   };
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+/**
+ * Compute a safe startTimeUtc that is always strictly before endTimeUtc.
+ * Per SARIF spec §3.13.3, startTimeUtc MUST precede endTimeUtc.
+ */
+function computeSafeStartTime(
+  endTimeIso: string,
+  durationMs?: number,
+): string {
+  const endMs = new Date(endTimeIso).getTime();
+  if (durationMs != null && durationMs > 0) {
+    const startMs = Math.max(0, endMs - durationMs);
+    return new Date(startMs).toISOString();
+  }
+  // Fallback: assume at least 1 second before endTime
+  return new Date(Math.max(0, endMs - 1000)).toISOString();
 }

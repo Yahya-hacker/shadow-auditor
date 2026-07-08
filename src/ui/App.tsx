@@ -1,3 +1,4 @@
+import { Box, Text, Input } from "../opentui/components.js";
 /**
  * Shadow Auditor — OpenTUI Application Root.
  *
@@ -54,9 +55,12 @@ export const App: React.FC<AppProps> = ({
   const setSessionPhase = useAppStore((state) => state.setSessionPhase);
   const setLicenseGate = useAppStore((state) => state.setLicenseGate);
   const addErrorMessage = useAppStore((state) => state.addErrorMessage);
-  const setSessionTarget = useAppStore((state) => state.setSessionTarget);
   const setFocusScope = useAppStore((state) => state.setFocusScope);
   const userName = useAppStore((state) => state.userName);
+  // Dialog state subscriptions — required so App re-renders when
+  // a confirmation or human-input request becomes active.
+  const confirmationOpen = useAppStore((s) => s.confirmation.open);
+  const humanInputRequest = useAppStore((s) => s.humanInputRequest);
   const { agentSessionRef, initSession } = useAgentSession();
 
   useEffect(() => {
@@ -164,11 +168,9 @@ export const App: React.FC<AppProps> = ({
         return <SetupScreen />;
       case 'shell': {
         // When a confirmation dialog or human-input request is active,
-        // render ONLY the dialog (modal behavior) — not alongside the shell.
-        // OpenTUI Yoga lacks `position: absolute`, so sibling stacking doesn't
-        // overlay; we replace the screen content entirely.
-        const store = useAppStore.getState();
-        const hasDialog = store.confirmation.open || store.humanInputRequest;
+        // render ONLY the dialog (modal behavior). Uses subscribed
+        // values so the component re-renders when dialog state changes.
+        const hasDialog = confirmationOpen || humanInputRequest;
         if (hasDialog) {
           return (
             <AgentSessionProvider agentSessionRef={agentSessionRef}>
@@ -194,9 +196,9 @@ export const App: React.FC<AppProps> = ({
   // OpenTUI root: full-screen flex container. Every screen receives
   // 100% width/height so Yoga can distribute space correctly.
   return (
-    <box width="100%" height="100%" flexDirection="column">
+    <Box width="100%" height="100%" flexDirection="column">
       {renderScreen()}
-    </box>
+    </Box>
   );
 };
 

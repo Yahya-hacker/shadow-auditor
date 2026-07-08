@@ -30,26 +30,7 @@ export interface ToolArtifactEvent {
   toolCallId: string;
   toolName: string;
 }
-
-async function writeFileAtomic(filePath: string, content: string): Promise<void> {
-  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tempPath, content, 'utf8');
-
-  try {
-    await fs.rename(tempPath, filePath);
-  } catch (error) {
-    const renameError = error as NodeJS.ErrnoException;
-
-    if (renameError.code === 'EEXIST' || renameError.code === 'EPERM') {
-      await fs.rm(filePath, { force: true });
-      await fs.rename(tempPath, filePath);
-      return;
-    }
-
-    await fs.rm(tempPath, { force: true });
-    throw error;
-  }
-}
+import { writeFileAtomic } from '../utils/fs-atomic.js';
 
 function createRunId(): string {
   const timestamp = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');

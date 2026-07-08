@@ -1,3 +1,4 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * SwarmPanel — live multi-agent swarm visualization.
  *
@@ -36,70 +37,70 @@ export const SwarmPanel: React.FC = memo(() => {
 
   if (!swarmState) {
     return (
-      <box
-        border={{ color: colors.border, style: 'single' }}
+      <Box
+        borderColor={colors.border} borderStyle={'single'}
         flexDirection="column"
         paddingX={spacing.panelPadX}
         paddingY={spacing.panelPadY}
       >
-        <text style={{ backgroundColor: lightBg, color: lightFg, fontWeight: 'bold' }}>
+        <Text backgroundColor={lightBg} color={lightFg} bold>
           {'Swarm'.padEnd(panelInnerWidth)}
-        </text>
-        <text style={{ backgroundColor: lightBg, color: lightFg }}>
+        </Text>
+        <Text backgroundColor={lightBg} color={lightFg}>
           {'No active swarm run.'.padEnd(panelInnerWidth)}
-        </text>
-        <text style={{ backgroundColor: lightBg }}>
+        </Text>
+        <Text backgroundColor={lightBg}>
           {' '.repeat(panelInnerWidth)}
-        </text>
-      </box>
+        </Text>
+      </Box>
     );
   }
 
   return (
-    <box
-      border={{ color: colors.border, style: 'single' }}
+    <Box
+      borderColor={colors.border} borderStyle={'single'}
       flexDirection="column"
       paddingX={spacing.panelPadX}
       paddingY={spacing.panelPadY}
     >
-      <text style={{ backgroundColor: lightBg, color: lightFg, fontWeight: 'bold' }}>
+      <Text backgroundColor={lightBg} color={lightFg} bold>
         {'Swarm'.padEnd(panelInnerWidth)}
-      </text>
+      </Text>
 
-      <text style={{ backgroundColor: lightBg, color: lightFg, fontWeight: 'bold' }}>
+      <Text backgroundColor={lightBg} color={lightFg} bold>
         {'Agents'.padEnd(panelInnerWidth)}
-      </text>
+      </Text>
       {swarmState.agents.map((agent) => {
         const g = agentGlyph[agent.status] ?? { color: colors.muted, glyph: '•' };
         const line = `${g.glyph} ${agent.role} ${agent.status}`;
         return (
-          <text style={{ backgroundColor: lightBg, color: g.color }} key={agent.agentId}>
+          <Text backgroundColor={lightBg} color={g.color} key={agent.agentId}>
             {line.padEnd(panelInnerWidth)}
-          </text>
+          </Text>
         );
       })}
 
-      <text style={{ backgroundColor: lightBg, color: lightFg, fontWeight: 'bold' }}>
+      <Text backgroundColor={lightBg} color={lightFg} bold>
         {'Tasks'.padEnd(panelInnerWidth)}
-      </text>
+      </Text>
       {swarmState.tasks.map((task) => {
         const g = statusGlyph[task.status] ?? { color: colors.muted, glyph: '•' };
         const line = `${g.glyph} ${task.taskType}`;
         return (
-          <text style={{ backgroundColor: lightBg, color: g.color }} key={task.taskId}>
+          <Text backgroundColor={lightBg} color={g.color} key={task.taskId}>
             {line.padEnd(panelInnerWidth)}
-          </text>
+          </Text>
         );
       })}
 
-      <text style={{ backgroundColor: lightBg, color: colors.dim }}>
+      <Text backgroundColor={lightBg} color={colors.dim}>
         {`claims ${swarmState.claims} · consensus ${swarmState.consensus}`
           .padEnd(panelInnerWidth)}
-      </text>
-      <text style={{ backgroundColor: lightBg }}>
+      </Text>
+      <Text backgroundColor={lightBg}>
         {' '.repeat(panelInnerWidth)}
-      </text>
-    </box>
+      </Text>
+    </Box>
   );
 });
 

@@ -1,3 +1,4 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * Footer — contextual keybinding bar.
  *
@@ -19,8 +20,8 @@ import { colors } from '../theme/chalkTheme.js';
 
 const KeybindTag: React.FC<Keybind> = memo(({ desc, keys }) => (
   <>
-    <text style={{ color: colors.dim, fontWeight: 'bold' }}>[{keys}]</text>
-    <text style={{ color: colors.muted, fontStyle: 'italic' }}> {desc} · </text>
+    <Text color={colors.dim} bold>[{keys}]</Text>
+    <Text color={colors.muted} italic> {desc} · </Text>
   </>
 ));
 KeybindTag.displayName = 'KeybindTag';
@@ -42,13 +43,13 @@ export const Footer: React.FC = memo(() => {
   }
 
   return (
-    <box>
+    <Box>
       {keybinds.map((kb) => (
         <React.Fragment key={`${kb.keys}-${kb.desc}`}>
           <KeybindTag desc={kb.desc} keys={kb.keys} />
         </React.Fragment>
       ))}
-    </box>
+    </Box>
   );
 });
 

@@ -1,6 +1,6 @@
 import { BaseMessage } from '@langchain/core/messages';
 import { BaseStore } from '@langchain/core/stores';
-import { Annotation, messagesStateReducer } from '@langchain/langgraph';
+import { Annotation } from '@langchain/langgraph';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -95,7 +95,19 @@ export const AgentState = Annotation.Root({
   }),
   messages: Annotation<BaseMessage[]>({
     default: () => [],
-    reducer: messagesStateReducer,
+    // Custom reducer: enforces MAX_CONTEXT_MESSAGES so the full message
+    // array doesn't grow unbounded. Keeps the first message (system context
+    // or user query) + the most recent N-1 messages. This prevents checkpoint
+    // bloat and ensures the LLM always sees a manageable context window.
+    reducer: (state, update) => {
+      const MAX_CONTEXT_MESSAGES = 40;
+      const merged = state.concat(update);
+      if (merged.length <= MAX_CONTEXT_MESSAGES) return merged;
+      // Keep first message (context anchor) + last N-1 messages
+      const first = merged[0]!;
+      const recent = merged.slice(-(MAX_CONTEXT_MESSAGES - 1));
+      return [first, ...recent];
+    },
   }),
   // Human-input request: when a tool needs confirmation or a question, it
   // sets this field via a Command throw and routes to HumanIntervention. The
@@ -129,6 +141,14 @@ export const AgentState = Annotation.Root({
   // old static fallback that always routed to SastAnalyzer). Cleared after
   // each routing decision is consumed.
   nextNode: Annotation<string>({
+    default: () => '',
+    reducer: (_state, update) => update,
+  }),
+  // Tracks which specialist last invoked the model (set by specialist nodes).
+  // Used by routeFromToolExecutor to return directly to the initiating
+  // specialist instead of always routing through Supervisor, saving an
+  // unnecessary LLM round-trip per tool call.
+  lastSpecialist: Annotation<string>({
     default: () => '',
     reducer: (_state, update) => update,
   }),

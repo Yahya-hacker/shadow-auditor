@@ -1,3 +1,4 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * OptionList — reusable interactive selection list.
  *
@@ -51,22 +52,20 @@ export const OptionList: React.FC<OptionListProps> = ({
   );
 
   return (
-    <box flexDirection="column" onKeyDown={handleKey}>
+    <Box flexDirection="column" onKeyDown={handleKey}>
       {options.map((opt, i) => {
         const isHL = focused && i === highlighted;
         return (
-          <text
+          <Text
             key={opt.value}
-            style={{
-              color: isHL ? colors.focusBorder : colors.muted,
-              fontWeight: isHL ? 'bold' : 'normal',
-            }}
+            color={isHL ? colors.focusBorder : colors.muted}
+            bold={isHL}
           >
             {isHL ? '❯ ' : '  '}
             {opt.label}
-          </text>
+          </Text>
         );
       })}
-    </box>
+    </Box>
   );
 };

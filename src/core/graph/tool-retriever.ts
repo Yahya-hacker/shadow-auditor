@@ -132,9 +132,14 @@ export class ToolRetriever {
     scored.sort((a, b) => b.score - a.score);
     const top = scored.slice(0, this.topK).map((s) => s.entry);
 
-    // Always include at least the originally selected tools if we have any.
-    if (top.length === 0) {
-      return this.allTools;
+    // Always include critical lifecycle tools regardless of keyword score.
+    // Without finish_task, the agent cannot self-terminate. Without
+    // context_retrieval, it cannot efficiently search the codebase.
+    const essentialNames = new Set(['finish_task', 'context_retrieval']);
+    for (const entry of this.allTools) {
+      if (essentialNames.has(entry.name) && !top.some((t) => t.name === entry.name)) {
+        top.push(entry);
+      }
     }
 
     return top;

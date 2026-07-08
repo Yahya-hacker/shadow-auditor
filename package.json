@@ -23,13 +23,11 @@
     "@oclif/plugin-help": "^6",
     "ai": "^7.0.11",
     "chalk": "^5.6.2",
-    "cross-keychain": "^1.0.0",
-    "dotenv": "^17.4.0",
-    "@opentui/core": "^1.0.0",
-    "@opentui/react": "^1.0.0",
+    "@opentui/core": "^0.4.3",
+    "@opentui/react": "^0.4.3",
     "ollama-ai-provider": "^1.2.0",
-    "react": "^18.3.1",
-    "tree-sitter": "^0.21.1",
+    "react": "^19.2.0",
+    "tree-sitter": "^0.22.1",
     "tree-sitter-cpp": "^0.23.4",
     "tree-sitter-elixir": "^0.3.5",
     "tree-sitter-go": "^0.21.2",
@@ -52,7 +50,7 @@
     "@types/chai": "^4",
     "@types/mocha": "^10",
     "@types/node": "^24.0.0",
-    "@types/react": "^18.3.0",
+    "@types/react": "^19.0.0",
     "@types/sarif": "^2.1.7",
     "chai": "^4",
     "eslint": "^9",
@@ -64,8 +62,11 @@
     "ts-node": "^10",
     "typescript": "^5"
   },
+  "optionalDependencies": {
+    "cross-keychain": "^1.0.0"
+  },
   "engines": {
-    "node": ">=24.14.1 <25"
+    "node": ">=24.0.0 <25"
   },
   "files": [
     "./bin",
@@ -107,6 +108,25 @@
   "overrides": {
     "serialize-javascript": "^7.0.5",
     "picomatch": "^4.0.4",
-    "brace-expansion": "^2.0.3"
+    "brace-expansion": "^2.0.3",
+    "tree-sitter": "$tree-sitter"
+  },
+  "allowScripts": {
+    "tree-sitter@0.22.4": true,
+    "tree-sitter-c@0.23.6": true,
+    "tree-sitter-cpp@0.23.4": true,
+    "tree-sitter-elixir@0.3.5": true,
+    "tree-sitter-go@0.21.2": true,
+    "tree-sitter-haskell@0.23.1": true,
+    "tree-sitter-html@0.23.2": true,
+    "tree-sitter-java@0.23.5": true,
+    "tree-sitter-javascript@0.21.4": true,
+    "tree-sitter-javascript@0.23.1": true,
+    "tree-sitter-json@0.24.8": true,
+    "tree-sitter-python@0.21.0": true,
+    "tree-sitter-ruby@0.23.1": true,
+    "tree-sitter-scala@0.24.0": true,
+    "tree-sitter-typescript@0.23.2": true,
+    "unrs-resolver@1.11.1": true
   }
 }

@@ -1,3 +1,4 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * Header — 2-line branded title bar with ASCII art logo and status indicators.
  */
@@ -48,43 +49,43 @@ export const Header: React.FC = memo(() => {
     : colors.muted;
 
   return (
-    <box
-      border={{ color: colors.brand, style: 'double' }}
+    <Box
+      borderColor={colors.brand} borderStyle={'double'}
       flexDirection="column"
       paddingX={1}
     >
-      <box justifyContent="space-between">
-        <text style={{ color: colors.brand, fontWeight: 'bold' }}>
+      <Box justifyContent="space-between">
+        <Text color={colors.brand} bold>
           {isCompact
             ? `${labels.appName} ${labels.version}`
             : `${ASCII_LOGO} ${labels.appName} ${labels.version}`}
-        </text>
-        <text>
-          <text style={{ color: colors.muted }}>[Status: </text>
-          <text style={{ color: status.color, fontWeight: 'bold' }}>{status.label}</text>
+        </Text>
+        <Text>
+          <Text color={colors.muted}>[Status: </Text>
+          <Text color={status.color} bold>{status.label}</Text>
           {findingCount > 0 && (
-            <text style={{ color: colors.muted }}>
+            <Text color={colors.muted}>
               {' '}| {findingCount} finding{findingCount !== 1 ? 's' : ''}
-            </text>
+            </Text>
           )}
-          <text style={{ color: colors.muted }}>]</text>
-        </text>
-      </box>
-      <box justifyContent="space-between">
-        <text style={{ color: colors.muted }}>
+          <Text color={colors.muted}>]</Text>
+        </Text>
+      </Box>
+      <Box justifyContent="space-between">
+        <Text color={colors.muted}>
           {isCompact
             ? labels.appTagline
             : config
               ? `${config.provider}/${config.model}${config.auditMode ? ' · ' + config.auditMode : ''}`
               : `${ASCII_LOGO_LINE2} ${labels.appTagline}`}
-        </text>
-        <text>
-          <text style={{ color: colors.muted }}>[Agents: </text>
-          <text style={{ color: agentColor, fontWeight: 'bold' }}>{agentLabel}</text>
-          <text style={{ color: colors.muted }}>]</text>
-        </text>
-      </box>
-    </box>
+        </Text>
+        <Text>
+          <Text color={colors.muted}>[Agents: </Text>
+          <Text color={agentColor} bold>{agentLabel}</Text>
+          <Text color={colors.muted}>]</Text>
+        </Text>
+      </Box>
+    </Box>
   );
 });
 

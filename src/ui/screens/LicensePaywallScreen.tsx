@@ -1,3 +1,4 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * LicensePaywallScreen — PRO feature gate.
  */
@@ -15,69 +16,69 @@ export const LicensePaywallScreen: React.FC = () => {
   }
 
   return (
-    <box
+    <Box
       flexDirection="column"
       padding={spacing.panelPadY}
       paddingX={spacing.panelPadX}
     >
-      <box
-        border={{ color: colors.warning, style: 'round' }}
+      <Box
+        borderColor={colors.warning} borderStyle={'rounded'}
         flexDirection="column"
         paddingX={spacing.panelPadX}
         paddingY={spacing.panelPadY}
       >
-        <text style={{ color: colors.warning, fontWeight: 'bold' }}>
+        <Text color={colors.warning} bold>
           ⚡ PRO FEATURE REQUIRED
-        </text>
-        <box marginTop={1}>
-          <text>
+        </Text>
+        <Box marginTop={1}>
+          <Text>
             The feature{' '}
-            <text style={{ color: colors.agent, fontWeight: 'bold' }}>
+            <Text color={colors.agent} bold>
               {gateResult.feature}
-            </text>{' '}
+            </Text>{' '}
             requires a{' '}
-            <text style={{ color: colors.brand, fontWeight: 'bold' }}>
+            <Text color={colors.brand} bold>
               {gateResult.requiredTier?.toUpperCase()}
-            </text>{' '}
+            </Text>{' '}
             license.
-          </text>
-        </box>
-        <box marginTop={1}>
-          <text style={{ color: colors.muted }}>
+          </Text>
+        </Box>
+        <Box marginTop={1}>
+          <Text color={colors.muted}>
             Your current tier:{' '}
-            <text style={{ fontWeight: 'bold' }}>
+            <Text bold>
               {gateResult.currentTier?.toUpperCase() ?? 'FREE'}
-            </text>
-          </text>
-        </box>
-      </box>
+            </Text>
+          </Text>
+        </Box>
+      </Box>
 
-      <box flexDirection="column" marginTop={1} paddingX={spacing.inputPadX}>
-        <text style={{ color: colors.success, fontWeight: 'bold' }}>
+      <Box flexDirection="column" marginTop={1} paddingX={spacing.inputPadX}>
+        <Text color={colors.success} bold>
           🔑 Upgrade to unlock:
-        </text>
-        <text style={{ color: colors.muted }}>  • Deep SAST analysis with full taint tracing</text>
-        <text style={{ color: colors.muted }}>  • Comprehensive PDF/Markdown security reports</text>
-        <text style={{ color: colors.muted }}>  • CI/CD integration with exit codes</text>
-        <text style={{ color: colors.muted }}>  • Priority support</text>
-      </box>
+        </Text>
+        <Text color={colors.muted}>  • Deep SAST analysis with full taint tracing</Text>
+        <Text color={colors.muted}>  • Comprehensive PDF/Markdown security reports</Text>
+        <Text color={colors.muted}>  • CI/CD integration with exit codes</Text>
+        <Text color={colors.muted}>  • Priority support</Text>
+      </Box>
 
-      <box marginTop={1} paddingX={spacing.inputPadX}>
-        <text>
+      <Box marginTop={1} paddingX={spacing.inputPadX}>
+        <Text>
           👉{' '}
-          <text style={{ color: colors.agent, fontWeight: 'bold', textDecoration: 'underline' }}>
+          <Text color={colors.agent} bold underline>
             {gateResult.upgradeUrl}
-          </text>
-        </text>
-      </box>
+          </Text>
+        </Text>
+      </Box>
 
-      <box marginTop={1} paddingX={spacing.inputPadX}>
-        <text style={{ color: colors.dim }}>
+      <Box marginTop={1} paddingX={spacing.inputPadX}>
+        <Text color={colors.dim}>
           Already purchased? Run{' '}
-          <text style={{ fontWeight: 'bold' }}>shadow-auditor --reconfigure</text>{' '}
+          <Text bold>shadow-auditor --reconfigure</Text>{' '}
           to enter your license key.
-        </text>
-      </box>
-    </box>
+        </Text>
+      </Box>
+    </Box>
   );
 };

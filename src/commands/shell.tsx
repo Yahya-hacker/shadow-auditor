@@ -74,14 +74,17 @@ export default class Shell extends Command {
       config = await loadConfig();
     }
 
-    // ── SIGINT handler — ensure clean exit ──────────────────────────
-    let exiting = false;
-    process.on('SIGINT', () => {
-      if (exiting) return;
-      exiting = true;
-      process.stdout.write('\n');
-      process.exit(0);
-    });
+    // ── Graceful shutdown handlers ──────────────────────────────────
+    let shuttingDown = false;
+    const gracefulShutdown = (signal: string) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      process.stderr.write(`\n[ShadowAuditor] Received ${signal}, shutting down...\n`);
+      process.exit(signal === 'SIGTERM' ? 143 : 0);
+    };
+
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
     // ── OpenTUI renderer replaces Ink's render() ────────────────────
     const renderer = await createCliRenderer();

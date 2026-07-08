@@ -1,8 +1,9 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * SetupScreen — provider/model/API key configuration.
  *
- * Replaces Ink's `<SelectInput>` with interactive `<box>` lists
- * navigated via keyboard. `<TextInput>` replaced with `<input>`.
+ * Replaces Ink's `<SelectInput>` with interactive `<Box>` lists
+ * navigated via keyboard. `<TextInput>` replaced with `<Input>`.
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
@@ -180,44 +181,44 @@ export const SetupScreen: React.FC = () => {
   ], [provider]);
 
   return (
-    <box flexDirection="column" paddingX={spacing.panelPadX}>
-      <box
-        border={{ color: colors.brand, style: 'round' }}
+    <Box flexDirection="column" paddingX={spacing.panelPadX}>
+      <Box
+        borderColor={colors.brand} borderStyle={'rounded'}
         paddingX={spacing.panelPadX}
         paddingY={spacing.panelPadY}
       >
-        <text style={{ color: colors.brand, fontWeight: 'bold' }}>
+        <Text color={colors.brand} bold>
           ◈ Shadow Auditor — Environment Setup
-        </text>
-      </box>
+        </Text>
+      </Box>
 
-      <box flexDirection="column" marginTop={1}>
+      <Box flexDirection="column" marginTop={1}>
         {step === 'trust' && (
           <>
-            <text style={{ color: colors.bright }}>
+            <Text color={colors.bright}>
               Shadow requires deep read/write access to:{' '}
-              <text style={{ fontWeight: 'bold' }}>{targetPath}</text>
-            </text>
-            <box marginBottom={1}>
-              <text style={{ color: colors.muted }}>
+              <Text bold>{targetPath}</Text>
+            </Text>
+            <Box marginBottom={1}>
+              <Text color={colors.muted}>
                 Do you trust this folder and its contents?
-              </text>
-            </box>
+              </Text>
+            </Box>
             <OptionList options={trustOptions} onSelect={handleTrustSelect} />
           </>
         )}
 
         {step === 'provider' && (
           <>
-            <text style={{ color: colors.bright }}>Select your LLM provider:</text>
+            <Text color={colors.bright}>Select your LLM provider:</Text>
             <OptionList options={providerOptions} onSelect={handleProviderSelect} />
           </>
         )}
 
         {step === 'baseUrl' && (
           <>
-            <text style={{ color: colors.bright }}>Enter your custom API base URL:</text>
-            <input
+            <Text color={colors.bright}>Enter your custom API base URL:</Text>
+            <Input
               value={customBaseUrl}
               onChange={(v: string) => setCustomBaseUrl(v)}
               onSubmit={handleBaseUrlSubmit}
@@ -228,10 +229,10 @@ export const SetupScreen: React.FC = () => {
 
         {step === 'apiKey' && (
           <>
-            <text style={{ color: colors.bright }}>
+            <Text color={colors.bright}>
               Enter your API key (stored securely in OS vault):
-            </text>
-            <input
+            </Text>
+            <Input
               value={apiKey}
               onChange={(v: string) => setApiKey(v)}
               onSubmit={handleApiKeySubmit}
@@ -242,22 +243,22 @@ export const SetupScreen: React.FC = () => {
         )}
 
         {step === 'fetching' && (
-          <text style={{ color: colors.agent }}>Fetching live models from API...</text>
+          <Text color={colors.agent}>Fetching live models from API...</Text>
         )}
 
         {step === 'model' && (
           <>
-            <text style={{ color: colors.bright }}>
+            <Text color={colors.bright}>
               {fetching ? 'Select a model (live list):' : 'Select a model:'}
-            </text>
+            </Text>
             <OptionList options={modelOptions} onSelect={handleModelSelect} />
           </>
         )}
 
         {step === 'customModel' && (
           <>
-            <text style={{ color: colors.bright }}>Enter the model name:</text>
-            <input
+            <Text color={colors.bright}>Enter the model name:</Text>
+            <Input
               value={model}
               onChange={(v: string) => setModel(v)}
               onSubmit={handleCustomModelSubmit}
@@ -267,17 +268,17 @@ export const SetupScreen: React.FC = () => {
 
         {step === 'embedding' && (
           <>
-            <text style={{ color: colors.bright }}>Choose embedding strategy:</text>
+            <Text color={colors.bright}>Choose embedding strategy:</Text>
             <OptionList options={embeddingOptions} onSelect={handleEmbeddingSelect} />
           </>
         )}
 
         {step === 'license' && (
           <>
-            <text style={{ color: colors.bright }}>
+            <Text color={colors.bright}>
               Enter your license key (press Enter to skip):
-            </text>
-            <input
+            </Text>
+            <Input
               value={licenseKey}
               onChange={(v: string) => setLicenseKey(v)}
               onSubmit={handleLicenseSubmit}
@@ -287,17 +288,17 @@ export const SetupScreen: React.FC = () => {
         )}
 
         {step === 'done' && (
-          <text style={{ color: colors.success }}>
+          <Text color={colors.success}>
             Configuration saved! Entering Shadow Auditor...
-          </text>
+          </Text>
         )}
 
         {error && (
-          <box marginTop={1}>
-            <text style={{ color: colors.error }}>✖ {error}</text>
-          </box>
+          <Box marginTop={1}>
+            <Text color={colors.error}>✖ {error}</Text>
+          </Box>
         )}
-      </box>
-    </box>
+      </Box>
+    </Box>
   );
 };

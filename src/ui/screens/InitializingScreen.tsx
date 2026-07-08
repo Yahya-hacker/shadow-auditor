@@ -1,7 +1,8 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * InitializingScreen — loading state while the security engine spins up.
  *
- * `<text animate="pulse">●</text>` replaces Ink's `<Spinner type="dots">`.
+ * `<Text animate="pulse">●</Text>` replaces Ink's `<Spinner type="dots">`.
  */
 
 import React from 'react';
@@ -13,36 +14,36 @@ export const InitializingScreen: React.FC = () => {
   const targetPath = useAppStore((state) => state.session.targetPath);
 
   return (
-    <box flexDirection="column" paddingX={spacing.panelPadX}>
-      <box
-        border={{ color: colors.agent, style: 'round' }}
+    <Box flexDirection="column" paddingX={spacing.panelPadX}>
+      <Box
+        borderColor={colors.agent} borderStyle={'rounded'}
         flexDirection="column"
         paddingX={spacing.panelPadX}
         paddingY={spacing.panelPadY}
       >
-        <text style={{ color: colors.brand, fontWeight: 'bold' }}>
+        <Text color={colors.brand} bold>
           ◈ Initializing Security Engine
-        </text>
-        <box marginTop={1}>
-          <text style={{ color: colors.agent }} animate="pulse">●</text>
-          <text style={{ color: colors.muted }}> Parsing AST with tree-sitter</text>
-        </box>
-        <box>
-          <text style={{ color: colors.agent }} animate="pulse">●</text>
-          <text style={{ color: colors.muted }}> Building semantic index & embeddings</text>
-        </box>
-        <box>
-          <text style={{ color: colors.agent }} animate="pulse">●</text>
-          <text style={{ color: colors.muted }}> Loading knowledge graph</text>
-        </box>
-        <box>
-          <text style={{ color: colors.agent }} animate="pulse">●</text>
-          <text style={{ color: colors.muted }}> Configuring multi-agent workflow</text>
-        </box>
-        <box marginTop={1}>
-          <text style={{ color: colors.dim }}>Target: {targetPath}</text>
-        </box>
-      </box>
-    </box>
+        </Text>
+        <Box marginTop={1}>
+          <Text color={colors.agent} animate="pulse">●</Text>
+          <Text color={colors.muted}> Parsing AST with tree-sitter</Text>
+        </Box>
+        <Box>
+          <Text color={colors.agent} animate="pulse">●</Text>
+          <Text color={colors.muted}> Building semantic index & embeddings</Text>
+        </Box>
+        <Box>
+          <Text color={colors.agent} animate="pulse">●</Text>
+          <Text color={colors.muted}> Loading knowledge graph</Text>
+        </Box>
+        <Box>
+          <Text color={colors.agent} animate="pulse">●</Text>
+          <Text color={colors.muted}> Configuring multi-agent workflow</Text>
+        </Box>
+        <Box marginTop={1}>
+          <Text color={colors.dim}>Target: {targetPath}</Text>
+        </Box>
+      </Box>
+    </Box>
   );
 };

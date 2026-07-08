@@ -1,3 +1,4 @@
+import { Box, Text, Input } from "../opentui/components.js";
 /**
  * Confirmation dialog — OpenTUI interactive elements.
  *
@@ -60,72 +61,103 @@ export const ConfirmDialog: React.FC = () => {
     };
 
     return (
-      <box
+      <Box
         alignItems="center"
         flexDirection="column"
         width="100%"
         height="100%"
         justifyContent="center"
       >
-        <box
-          border={{ color: colors.warning, style: 'round' }}
+        <Box
+          borderColor={colors.warning} borderStyle={'rounded'}
           flexDirection="column"
           padding={1}
         >
-          <box marginBottom={1}>
-            <text style={{ color: colors.warning, fontWeight: 'bold' }}>
+          <Box marginBottom={1}>
+            <Text color={colors.warning} bold>
               {humanInputRequest.question}
-            </text>
-          </box>
+            </Text>
+          </Box>
           {humanInputRequest.context && (
-            <box
-              border={{ color: colors.dim, style: 'single' }}
+            <Box
+              borderColor={colors.dim} borderStyle={'single'}
               marginBottom={1}
               padding={1}
             >
-              <text style={{ color: colors.muted, fontStyle: 'italic' }}>
+              <Text color={colors.muted} italic>
                 {humanInputRequest.context}
-              </text>
-            </box>
+              </Text>
+            </Box>
           )}
           <OptionList options={options} onSelect={handleSelect} focused={true} />
-        </box>
-      </box>
+        </Box>
+      </Box>
     );
   }
 
   // ── LangGraph interrupt-driven question (type your answer) ─────────
   if (humanInputRequest && humanInputRequest.type === 'question') {
+    const handleQuestionSubmit = async (answer: string) => {
+      const trimmed = answer.trim();
+      if (!trimmed) return;
+
+      addUserMessage(trimmed);
+      setHumanInputRequest(null);
+      startStreaming();
+
+      try {
+        await agentSessionRef.current?.resumeWithHumanInput(
+          trimmed,
+          (chunk: string) => { appendStreamChunk(chunk); },
+          (event) => { addActivityEvent(event); },
+        );
+        finishStreaming();
+      } catch (error) {
+        debugLog(`[ConfirmDialog] Question resume failed: ${error}`);
+        addErrorMessage(`Error: ${(error as Error).message}`);
+        finishStreaming();
+      }
+    };
+
     return (
-      <box
+      <Box
         alignItems="center"
         flexDirection="column"
         width="100%"
         height="100%"
         justifyContent="center"
       >
-        <box
-          border={{ color: colors.info, style: 'round' }}
+        <Box
+          borderColor={colors.info} borderStyle={'rounded'}
           flexDirection="column"
           padding={1}
         >
-          <box marginBottom={1}>
-            <text style={{ color: colors.info, fontWeight: 'bold' }}>
+          <Box marginBottom={1}>
+            <Text color={colors.info} bold>
               {humanInputRequest.question}
-            </text>
-          </box>
+            </Text>
+          </Box>
           {humanInputRequest.context && (
-            <box marginBottom={1}>
-              <text style={{ color: colors.muted, fontStyle: 'italic' }}>
+            <Box marginBottom={1}>
+              <Text color={colors.muted} italic>
                 {humanInputRequest.context}
-              </text>
-            </box>
+              </Text>
+            </Box>
           )}
-          <text style={{ color: colors.muted, fontStyle: 'italic' }}>
+          <Text color={colors.muted} italic>
             Type your answer below and press Enter.
-          </text>
-        </box>
-      </box>
+          </Text>
+          <Box marginTop={1}>
+            <Text color={colors.brand} bold>❯ </Text>
+            <Input
+              value=""
+              onChange={() => {}}
+              onSubmit={handleQuestionSubmit}
+              placeholder="Type your answer..."
+            />
+          </Box>
+        </Box>
+      </Box>
     );
   }
 
@@ -145,39 +177,39 @@ export const ConfirmDialog: React.FC = () => {
   };
 
   return (
-    <box
+    <Box
       alignItems="center"
       flexDirection="column"
       width="100%"
       height="100%"
       justifyContent="center"
     >
-      <box
-        border={{ color: 'yellow', style: 'round' }}
+      <Box
+        borderColor={colors.warning} borderStyle={'rounded'}
         flexDirection="column"
         padding={1}
       >
-        <box marginBottom={1}>
-          <text style={{ color: 'yellow', fontWeight: 'bold' }}>
+        <Box marginBottom={1}>
+          <Text color={colors.warning} bold>
             {confirmation.title}
-          </text>
-        </box>
-        <box marginBottom={1}>
-          <text>{confirmation.message}</text>
-        </box>
+          </Text>
+        </Box>
+        <Box marginBottom={1}>
+          <Text>{confirmation.message}</Text>
+        </Box>
         {confirmation.details && (
-          <box
-            border={{ color: 'gray', style: 'single' }}
+          <Box
+            borderColor={colors.dim} borderStyle={'single'}
             marginBottom={1}
             padding={1}
           >
-            <text style={{ color: colors.muted, fontStyle: 'italic' }}>
+            <Text color={colors.muted} italic>
               {confirmation.details}
-            </text>
-          </box>
+            </Text>
+          </Box>
         )}
         <OptionList options={options} onSelect={handleSelect} focused={true} />
-      </box>
-    </box>
+      </Box>
+    </Box>
   );
 };

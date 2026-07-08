@@ -33,14 +33,31 @@ const PNPM_YARN_ALLOWED_PATTERNS = [
 ];
 
 const DEFAULT_DENIED_PATTERNS = [
+  // Destructive file operations (only when explicit, e.g. not inside a pipe)
   /(^|[;&|]\s*)rm\s+-rf(\s|$)/i,
   /(^|[;&|]\s*)del(\.exe)?\s+\/s(\s|$)/i,
+  // Privilege escalation
   /\b(sudo|doas|su)\b/i,
+  // Curl/wget piping to shell (remote code execution)
   /\b(curl|wget)\b[^|\n]*\|\s*(sh|bash|zsh|fish|pwsh|powershell)\b/i,
+  // Package manager install/remove (could install malicious packages)
   /\b(apt(-get)?|yum|dnf|pacman|zypper|brew|choco)\s+(install|remove|upgrade|update)\b/i,
+  // Permission/ownership escalation
   /\b(chmod\s+777|chown\s+-R)\b/i,
+  // Filesystem formatting/destruction
   /\b(mkfs(\.\w+)?|fdisk|diskpart|format)\b/i,
+  // System shutdown
   /\b(shutdown|reboot|halt)\b/i,
+];
+
+/**
+ * Shell substitution patterns that could hide dangerous commands inside
+ * otherwise-allowed commands (e.g. `echo $(rm -rf /)`). These are checked
+ * BEFORE the allowed/denied pattern matching.
+ */
+const SHELL_SUBSTITUTION_DANGEROUS = [
+  // Command substitution containing destructive or privileged operations
+  /(?:\$\(|`)\s*(?:rm\s+-rf|sudo|doas|su|mkfs|fdisk|shutdown|reboot|chmod\s+777|curl.*\|.*sh)/i,
 ];
 
 function buildPatterns(patterns: string[] | undefined): RegExp[] {
@@ -57,6 +74,18 @@ export function evaluateCommandPolicy(command: string, config: CommandPolicyConf
     return {
       allowed: false,
       reason: '[POLICY_DENIED] Empty command is not allowed.',
+    };
+  }
+
+  // ── Shell substitution check (before pattern matching) ────────────
+  // Prevent `echo $(rm -rf /)` and similar command-injection bypasses
+  // where dangerous commands are hidden inside $() or backticks.
+  const matchedSub = SHELL_SUBSTITUTION_DANGEROUS.find((p) => p.test(trimmed));
+  if (matchedSub && !config.expertUnsafe) {
+    return {
+      allowed: false,
+      reason: '[POLICY_DENIED] Command contains dangerous operations inside shell substitution ($(...) or backticks).',
+      warning: 'Shell substitution with destructive commands is not permitted.',
     };
   }
 

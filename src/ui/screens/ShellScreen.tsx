@@ -1,10 +1,11 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * Shadow Auditor — Interactive Security Analysis Shell (OpenTUI).
  *
  * Full-screen responsive layout using OpenTUI's Yoga Flexbox engine.
  * Terminal resize is handled natively — no manual column/row calculations.
  *
- * Strict Focus Isolation: when an `<input>` has text content, ALL keystrokes
+ * Strict Focus Isolation: when an `<Input>` has text content, ALL keystrokes
  * go to the input. Vim shortcuts (j/k/g/G/) only activate when the input is
  * empty. This prevents typing "j" in the query box from scrolling the chat.
  */
@@ -73,7 +74,7 @@ function handleFiltersFocus(evt: KeyEvent): void {
 
 function handleInputFocus(evt: KeyEvent): void {
   const s = useAppStore.getState();
-  // CRITICAL: if input has text, ALL keystrokes go to the <input>.
+  // CRITICAL: if input has text, ALL keystrokes go to the <Input>.
   // Only empty input allows navigation shortcuts.
   if (s.input.length > 0) return;
 
@@ -231,28 +232,28 @@ function useHandleSubmit(): (command: string) => void {
 // ============================================================================
 
 const CompactLayout = memo(() => (
-  <box flexDirection="row" flexGrow={1}>
-    <box flexDirection="column" flexGrow={1}>
+  <Box flexDirection="row" flexGrow={1}>
+    <Box flexDirection="column" flexGrow={1}>
       <OutputArea compact />
-    </box>
-    <box flexDirection="column" width="16">
+    </Box>
+    <Box flexDirection="column" width="16">
       <MetadataPanel compact />
-    </box>
-  </box>
+    </Box>
+  </Box>
 ));
 CompactLayout.displayName = 'CompactLayout';
 
 const ExpandedLayout = memo<{ panelOpen: boolean }>(({ panelOpen }) => (
-  <box flexDirection="row" flexGrow={1}>
-    <box flexDirection="column" width="25%">
+  <Box flexDirection="row" flexGrow={1}>
+    <Box flexDirection="column" width="25%">
       <FiltersPanel />
       <MetadataPanel />
       {panelOpen && <SwarmPanel />}
-    </box>
-    <box flexDirection="column" flexGrow={1}>
+    </Box>
+    <Box flexDirection="column" flexGrow={1}>
       <OutputArea />
-    </box>
-  </box>
+    </Box>
+  </Box>
 ));
 ExpandedLayout.displayName = 'ExpandedLayout';
 
@@ -286,8 +287,8 @@ export const ShellScreen: React.FC = () => {
   }, []);
 
   // ── Global keyboard handler ────────────────────────────────────────
-  // Captures key events on the root <box>. The `tabIndex` makes it
-  // focusable so keyDown events bubble here when no <input> is focused.
+  // Captures key events on the root <Box>. The `tabIndex` makes it
+  // focusable so keyDown events bubble here when no <Input> is focused.
   const handleKeyDown = useCallback((evt: React.KeyboardEvent) => {
     dispatchFocusKey({
       key: evt.key,
@@ -298,7 +299,7 @@ export const ShellScreen: React.FC = () => {
   }, []);
 
   return (
-    <box
+    <Box
       width="100%"
       height="100%"
       flexDirection="column"
@@ -306,19 +307,19 @@ export const ShellScreen: React.FC = () => {
     >
       <Header />
 
-      <box flexDirection="row" flexGrow={1}>
+      <Box flexDirection="row" flexGrow={1}>
         {helpOpen ? (
-          <box flexGrow={1}><HelpOverlay /></box>
+          <Box flexGrow={1}><HelpOverlay /></Box>
         ) : isCompact ? (
           <CompactLayout />
         ) : (
           <ExpandedLayout panelOpen={panelOpen} />
         )}
-      </box>
+      </Box>
 
       <StatusLine />
       <InputArea onSubmit={handleSubmit} />
       <Footer />
-    </box>
+    </Box>
   );
 };

@@ -1,3 +1,4 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * OutputArea — main chat/log display with native OpenTUI scrolling.
  *
@@ -43,28 +44,28 @@ export const OutputArea: React.FC<OutputAreaProps> = memo(({ compact = false }) 
   const hasContent = visibleMessages.length > 0 || isStreaming || recentActivity.length > 0;
 
   return (
-    <box
-      border={{ color: panelStyle.borderColor, style: panelStyle.borderStyle }}
+    <Box
+      borderColor={panelStyle.borderColor} borderStyle={panelStyle.borderStyle}
       flexDirection="column"
       flexGrow={1}
       paddingX={1}
     >
       {!compact && (
-        <text style={{ color: colors.brand, fontWeight: 'bold' }}>
+        <Text color={colors.brand} bold>
           Output (Logs &amp; Responses)
-        </text>
+        </Text>
       )}
 
       {!hasContent && (
-        <text style={{ color: colors.muted }}>
+        <Text color={colors.muted}>
           {searchActive
             ? `No messages match "${searchQuery}".`
             : '█ System initialized. Awaiting commands... Press [?] for help.'}
-        </text>
+        </Text>
       )}
 
       {/* ── Message history with native scrolling ────────────────── */}
-      <box flexDirection="column" flexGrow={1} overflowY="scroll">
+      <Box flexDirection="column" flexGrow={1} overflowY="scroll">
         {visibleMessages.map((msg) => (
           <MessageLine key={msg.id} message={msg} />
         ))}
@@ -74,8 +75,8 @@ export const OutputArea: React.FC<OutputAreaProps> = memo(({ compact = false }) 
         ))}
 
         {isStreaming && <StreamingLine text={streamingText} />}
-      </box>
-    </box>
+      </Box>
+    </Box>
   );
 });
 
@@ -92,18 +93,18 @@ const MessageLine: React.FC<{ message: ChatMessageData }> = memo(({ message }) =
     const findingStyle = getFindingStyle(message.text);
     if (findingStyle) {
       return (
-        <box flexDirection="column">
-          <text>
-            <text style={{ color: findingStyle.gutterColor }}>█ </text>
-            <text style={{ color: findingStyle.labelColor, fontWeight: 'bold' }}>
+        <Box flexDirection="column">
+          <Text>
+            <Text color={findingStyle.gutterColor}>█ </Text>
+            <Text color={findingStyle.labelColor} bold>
               {findingStyle.label}
-            </text>
-            <text>{findingStyle.rest}</text>
-          </text>
+            </Text>
+            <Text>{findingStyle.rest}</Text>
+          </Text>
           {findingStyle.codeBlocks.map((block, i) => (
             <CodeBlock code={block} key={`cb-${i}`} />
           ))}
-        </box>
+        </Box>
       );
     }
   }
@@ -111,31 +112,31 @@ const MessageLine: React.FC<{ message: ChatMessageData }> = memo(({ message }) =
   const codeBlocks = extractCodeBlocks(message.text);
   if (codeBlocks.length > 0 && message.role === 'agent') {
     return (
-      <box flexDirection="column">
-        <text>
-          <text style={{ color }}>█ </text>
-          <text style={{ color, fontWeight: 'bold' }}>{prefix} </text>
-          <text>{removeCodeBlocks(message.text)}</text>
-        </text>
+      <Box flexDirection="column">
+        <Text>
+          <Text color={color}>█ </Text>
+          <Text color={color} bold>{prefix} </Text>
+          <Text>{removeCodeBlocks(message.text)}</Text>
+        </Text>
         {codeBlocks.map((block, i) => (
           <CodeBlock code={block} key={`cb-${i}`} />
         ))}
-      </box>
+      </Box>
     );
   }
 
   return (
-    <box flexDirection="column">
-      <text>
-        <text style={{ color }}>█ </text>
-        <text style={{ color, fontWeight: 'bold' }}>{prefix} </text>
+    <Box flexDirection="column">
+      <Text>
+        <Text color={color}>█ </Text>
+        <Text color={color} bold>{prefix} </Text>
         {message.role === 'user' ? (
-          <text style={{ color }}>{message.text}</text>
+          <Text color={color}>{message.text}</Text>
         ) : (
-          <text>{message.text}</text>
+          <Text>{message.text}</Text>
         )}
-      </text>
-    </box>
+      </Text>
+    </Box>
   );
 });
 MessageLine.displayName = 'MessageLine';
@@ -143,46 +144,46 @@ MessageLine.displayName = 'MessageLine';
 const ActivityLine: React.FC<{
   event: { id: string; kind: string; text: string };
 }> = memo(({ event }) => (
-  <text>
-    <text style={{ color: getActivityColor(event.kind) }}>█ </text>
-    <text style={{ color: getActivityColor(event.kind), fontWeight: 'bold' }}>
+  <Text>
+    <Text color={getActivityColor(event.kind)}>█ </Text>
+    <Text color={getActivityColor(event.kind)} bold>
       {getActivityPrefix(event.kind)}{' '}
-    </text>
-    <text>{event.text}</text>
-  </text>
+    </Text>
+    <Text>{event.text}</Text>
+  </Text>
 ));
 ActivityLine.displayName = 'ActivityLine';
 
 const StreamingLine: React.FC<{ text: string }> = memo(({ text }) => {
   if (text) {
     return (
-      <box flexDirection="column">
-        <text>
-          <text style={{ color: colors.agent }}>█ </text>
-          <text>{text}</text>
-        </text>
-      </box>
+      <Box flexDirection="column">
+        <Text>
+          <Text color={colors.agent}>█ </Text>
+          <Text>{text}</Text>
+        </Text>
+      </Box>
     );
   }
 
   return (
-    <text>
-      <text style={{ color: colors.agent }}>█ </text>
-      <text style={{ color: colors.agent }} animate="pulse">●</text>
-      <text style={{ color: colors.muted }}> Streaming response...</text>
-    </text>
+    <Text>
+      <Text color={colors.agent}>█ </Text>
+      <Text color={colors.agent} animate="pulse">●</Text>
+      <Text color={colors.muted}> Streaming response...</Text>
+    </Text>
   );
 });
 StreamingLine.displayName = 'StreamingLine';
 
 const CodeBlock: React.FC<{ code: string }> = memo(({ code }) => (
-  <box
-    border={{ color: colors.dim, style: 'single' }}
+  <Box
+    borderColor={colors.dim} borderStyle={'single'}
     flexDirection="column"
     paddingX={1}
   >
-    <text>{code}</text>
-  </box>
+    <Text>{code}</Text>
+  </Box>
 ));
 CodeBlock.displayName = 'CodeBlock';
 

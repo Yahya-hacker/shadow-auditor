@@ -1,3 +1,4 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * StatusLine — single-line status bar with provider/model info and swarm progress.
  */
@@ -25,16 +26,16 @@ const SwarmStatus: React.FC<{ snapshot: SwarmStateSnapshot }> = memo(({ snapshot
         const count = stats[status] ?? 0;
         if (count === 0) return null;
         return (
-          <text key={status}>
-            <text style={{ color }}>{glyph}</text>
-            <text style={{ color: colors.muted }}>{count} </text>
-          </text>
+          <Text key={status}>
+            <Text color={color}>{glyph}</Text>
+            <Text color={colors.muted}>{count} </Text>
+          </Text>
         );
       })}
-      <text style={{ color: colors.muted }}>│ </text>
-      <text style={{ color: colors.info }}>claims {snapshot.claims}</text>
-      <text style={{ color: colors.muted }}> │ </text>
-      <text style={{ color: colors.borderSecondary }}>◍{snapshot.consensus}</text>
+      <Text color={colors.muted}>│ </Text>
+      <Text color={colors.info}>claims {snapshot.claims}</Text>
+      <Text color={colors.muted}> │ </Text>
+      <Text color={colors.borderSecondary}>◍{snapshot.consensus}</Text>
     </>
   );
 });
@@ -54,42 +55,42 @@ export const StatusLine: React.FC = memo(() => {
     : focusScope;
 
   return (
-    <box border={{ color: colors.border, style: 'single' }} paddingX={1}>
-      <box flexGrow={1}>
-        <text style={{ color: colors.brand, fontWeight: 'bold' }}>Shadow</text>
+    <Box borderColor={colors.border} borderStyle={'single'} paddingX={1}>
+      <Box flexGrow={1}>
+        <Text color={colors.brand} bold>Shadow</Text>
         {provider && (
           <>
-            <text style={{ color: colors.muted }}> │ </text>
-            <text style={{ color: colors.info }}>{provider}</text>
+            <Text color={colors.muted}> │ </Text>
+            <Text color={colors.info}>{provider}</Text>
           </>
         )}
         {model && (
           <>
-            <text style={{ color: colors.muted }}> │ </text>
-            <text style={{ color: colors.bright }}>{model}</text>
+            <Text color={colors.muted}> │ </Text>
+            <Text color={colors.bright}>{model}</Text>
           </>
         )}
         {auditMode && (
           <>
-            <text style={{ color: colors.muted }}> │ </text>
-            <text style={{ color: colors.pending }}>{auditMode}</text>
+            <Text color={colors.muted}> │ </Text>
+            <Text color={colors.pending}>{auditMode}</Text>
           </>
         )}
         {targetLabel && targetLabel !== 'Global' && (
           <>
-            <text style={{ color: colors.muted }}> │ </text>
-            <text style={{ color: colors.muted }}>{targetLabel}</text>
+            <Text color={colors.muted}> │ </Text>
+            <Text color={colors.muted}>{targetLabel}</Text>
           </>
         )}
         {config?.expertUnsafe && (
           <>
-            <text style={{ color: colors.muted }}> │ </text>
-            <text style={{ color: colors.error, fontWeight: 'bold' }}>EXPERT-UNSAFE</text>
+            <Text color={colors.muted}> │ </Text>
+            <Text color={colors.error} bold>EXPERT-UNSAFE</Text>
           </>
         )}
-      </box>
+      </Box>
       {swarmState && <SwarmStatus snapshot={swarmState} />}
-    </box>
+    </Box>
   );
 });
 

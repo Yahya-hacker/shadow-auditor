@@ -18,6 +18,7 @@ import {
   type ReportSummary,
 } from './finding-schema.js';
 import { generateEnhancedSarifReport } from './sarif.js';
+import { writeFileAtomic } from '../../utils/fs-atomic.js';
 
 // =============================================================================
 // Report Builder
@@ -212,7 +213,7 @@ export class ReportBuilder {
     // Generate JSON report
     if (this.options.generateJson) {
       const jsonPath = path.join(this.options.outputDir, 'report.json');
-      await fs.writeFile(jsonPath, JSON.stringify(report, null, 2), 'utf-8');
+      await writeFileAtomic(jsonPath, JSON.stringify(report, null, 2));
       result.jsonPath = jsonPath;
     }
     
@@ -220,7 +221,7 @@ export class ReportBuilder {
     if (this.options.generateSarif) {
       const sarif = generateEnhancedSarifReport(report);
       const sarifPath = path.join(this.options.outputDir, 'report.sarif');
-      await fs.writeFile(sarifPath, JSON.stringify(sarif, null, 2), 'utf-8');
+      await writeFileAtomic(sarifPath, JSON.stringify(sarif, null, 2));
       result.sarifPath = sarifPath;
     }
     
@@ -228,7 +229,7 @@ export class ReportBuilder {
     if (this.options.generateMarkdown) {
       const markdown = this.generateMarkdown(report);
       const mdPath = path.join(this.options.outputDir, 'report.md');
-      await fs.writeFile(mdPath, markdown, 'utf-8');
+      await writeFileAtomic(mdPath, markdown);
       result.markdownPath = mdPath;
     }
     
@@ -312,7 +313,9 @@ export class ReportBuilder {
       // CWE count
       cweCount.set(finding.cwe, (cweCount.get(finding.cwe) ?? 0) + 1);
       
-      // Risk score contribution
+      // Risk score contribution (defensive NaN guard)
+      const score = finding.cvssV31Score;
+      if (Number.isNaN(score)) continue;
       const severityMultiplier = {
         Critical: 10,
         High: 7,
@@ -321,7 +324,7 @@ export class ReportBuilder {
         Medium: 4,
       }[finding.severityLabel];
       
-      totalRisk += finding.cvssV31Score * severityMultiplier * finding.confidence;
+      totalRisk += score * severityMultiplier * finding.confidence;
     }
     
     // Top CWEs

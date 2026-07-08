@@ -1,7 +1,8 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * TargetSelectionScreen — choose audit target directory.
  *
- * `<input>` replaces ink-text-input for path entry.
+ * `<Input>` replaces ink-text-input for path entry.
  */
 
 import React, { useCallback, useState } from 'react';
@@ -44,54 +45,54 @@ export const TargetSelectionScreen: React.FC = () => {
   };
 
   return (
-    <box flexDirection="column" paddingX={spacing.panelPadX}>
-      <box
-        border={{ color: colors.brand, style: 'round' }}
+    <Box flexDirection="column" paddingX={spacing.panelPadX}>
+      <Box
+        borderColor={colors.brand} borderStyle={'rounded'}
         paddingX={spacing.panelPadX}
         paddingY={spacing.panelPadY}
       >
-        <text style={{ color: colors.brand, fontWeight: 'bold' }}>
+        <Text color={colors.brand} bold>
           ◈ {labels.appName} — Target Selection
-        </text>
-      </box>
+        </Text>
+      </Box>
 
-      <box flexDirection="column" marginTop={1}>
+      <Box flexDirection="column" marginTop={1}>
         {showCustom ? (
-          <box flexDirection="column">
-            <box>
-              <text style={{ color: colors.pending }}>Enter target directory: </text>
-              <input
+          <Box flexDirection="column">
+            <Box>
+              <Text color={colors.pending}>Enter target directory: </Text>
+              <Input
                 value={customPath}
                 onChange={(v: string) => setCustomPath(v)}
                 onSubmit={handleCustomSubmit}
                 placeholder="/path/to/project"
               />
-            </box>
+            </Box>
             {error && (
-              <box marginTop={1}>
-                <text style={{ color: colors.error }}>✖ {error}</text>
-              </box>
+              <Box marginTop={1}>
+                <Text color={colors.error}>✖ {error}</Text>
+              </Box>
             )}
-          </box>
+          </Box>
         ) : (
-          <box>
-            <text style={{ color: colors.pending }}>
+          <Box>
+            <Text color={colors.pending}>
               Use current directory (
-            </text>
-            <text style={{ color: colors.bright, fontWeight: 'bold' }}>
+            </Text>
+            <Text color={colors.bright} bold>
               {process.cwd()}
-            </text>
-            <text style={{ color: colors.pending }}>
+            </Text>
+            <Text color={colors.pending}>
               ) for the audit? [Y/n]{' '}
-            </text>
-            <input
+            </Text>
+            <Input
               value={customPath}
               onChange={(v: string) => setCustomPath(v)}
               onSubmit={handleDefaultSubmit}
             />
-          </box>
+          </Box>
         )}
-      </box>
-    </box>
+      </Box>
+    </Box>
   );
 };

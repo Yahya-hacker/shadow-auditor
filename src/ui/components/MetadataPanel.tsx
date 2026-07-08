@@ -1,3 +1,4 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * MetadataPanel — scan stats and session info.
  */
@@ -50,63 +51,63 @@ export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = fal
 
   if (compact) {
     return (
-      <box
-        border={{ color: colors.border, style: 'single' }}
+      <Box
+        borderColor={colors.border} borderStyle={'single'}
         flexDirection="column"
         paddingX={1}
       >
-        <text style={{ backgroundColor: lightBg, color: lightFg }}>
+        <Text backgroundColor={lightBg} color={lightFg}>
           {'Status:'.padEnd(panelInnerWidth)}
-        </text>
-        <text style={{ backgroundColor: lightBg, color: statusColor, fontWeight: 'bold' }}>
+        </Text>
+        <Text backgroundColor={lightBg} color={statusColor} bold>
           {statusLabel.padEnd(panelInnerWidth)}
-        </text>
-        <text style={{ backgroundColor: lightBg, color: lightFg }}>
+        </Text>
+        <Text backgroundColor={lightBg} color={lightFg}>
           {`Hits: ${hitCount}`.padEnd(panelInnerWidth)}
-        </text>
-      </box>
+        </Text>
+      </Box>
     );
   }
 
   return (
-    <box
-      border={{ color: colors.border, style: 'single' }}
+    <Box
+      borderColor={colors.border} borderStyle={'single'}
       flexDirection="column"
       paddingX={1}
     >
-      <text style={{ backgroundColor: lightBg, color: lightFg, fontWeight: 'bold' }}>Scan</text>
-      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+      <Text backgroundColor={lightBg} color={lightFg} bold>Scan</Text>
+      <Text backgroundColor={lightBg} color={lightFg}>
         {`${provider}/${model}`.padEnd(panelInnerWidth)}
-      </text>
-      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+      </Text>
+      <Text backgroundColor={lightBg} color={lightFg}>
         {`Mode: ${auditMode}`.padEnd(panelInnerWidth)}
-      </text>
-      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+      </Text>
+      <Text backgroundColor={lightBg} color={lightFg}>
         {`Target: ${targetLabel}`.padEnd(panelInnerWidth)}
-      </text>
-      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+      </Text>
+      <Text backgroundColor={lightBg} color={lightFg}>
         {' '.repeat(panelInnerWidth)}
-      </text>
-      <text style={{ backgroundColor: lightBg, color: lightFg, fontWeight: 'bold' }}>Session</text>
-      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+      </Text>
+      <Text backgroundColor={lightBg} color={lightFg} bold>Session</Text>
+      <Text backgroundColor={lightBg} color={lightFg}>
         {`Status: ${statusLabel}`.padEnd(panelInnerWidth)}
-      </text>
-      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+      </Text>
+      <Text backgroundColor={lightBg} color={lightFg}>
         {`Findings: ${hitCount}`.padEnd(panelInnerWidth)}
-      </text>
-      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+      </Text>
+      <Text backgroundColor={lightBg} color={lightFg}>
         {`Time: ${elapsed.toFixed(0)}s`.padEnd(panelInnerWidth)}
-      </text>
-      <text style={{ backgroundColor: lightBg, color: lightFg }}>
+      </Text>
+      <Text backgroundColor={lightBg} color={lightFg}>
         {' '.repeat(panelInnerWidth)}
-      </text>
+      </Text>
       {swarmState && (
-        <text style={{ backgroundColor: lightBg, color: colors.focusBorder }}>
+        <Text backgroundColor={lightBg} color={colors.focusBorder}>
           {`Swarm: ${swarmState.agents.length} agents, ${swarmState.claims} claims`
             .slice(0, panelInnerWidth).padEnd(panelInnerWidth)}
-        </text>
+        </Text>
       )}
-    </box>
+    </Box>
   );
 });
 

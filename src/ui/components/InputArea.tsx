@@ -1,3 +1,4 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * InputArea — OpenTUI query input with focus-aware border.
  *
@@ -7,7 +8,7 @@
  *   InputBorder — memoized wrapper for border (stable across keystrokes).
  *   InputContent — subscribes to `input`/`searchQuery` from store.
  *
- * Strict Focus Isolation: when the <input> is focused and has text,
+ * Strict Focus Isolation: when the <Input> is focused and has text,
  * ALL keystrokes stay in the input. Navigation shortcuts only activate
  * when the input is empty (handled in ShellScreen's useHandleSubmit).
  */
@@ -32,14 +33,14 @@ const InputBorder = memo<{
     : getPanelStyle(isFocused);
 
   return (
-    <box
-      border={{ color: panelStyle.borderColor, style: panelStyle.borderStyle }}
+    <Box
+      borderColor={panelStyle.borderColor} borderStyle={panelStyle.borderStyle}
       flexDirection="column"
       paddingX={1}
     >
-      <text style={{ color: panelStyle.borderColor, fontWeight: 'bold' }}>Query</text>
+      <Text color={panelStyle.borderColor} bold>Query</Text>
       {children}
-    </box>
+    </Box>
   );
 });
 InputBorder.displayName = 'InputBorder';
@@ -63,12 +64,12 @@ const InputContent = memo<{
 
   if (streaming) {
     return (
-      <box>
-        <text style={{ color: colors.brand, fontWeight: 'bold' }}>❯ </text>
-        <text style={{ color: colors.agent }} animate="pulse">
+      <Box>
+        <Text color={colors.brand} bold>❯ </Text>
+        <Text color={colors.agent} animate="pulse">
           ● Agent is thinking...
-        </text>
-      </box>
+        </Text>
+      </Box>
     );
   }
 
@@ -77,36 +78,36 @@ const InputContent = memo<{
       if (!searchQuery) setSearchActive(false);
     };
     return (
-      <box>
-        <text style={{ color: colors.pending, fontWeight: 'bold' }}>filter ❯ </text>
-        <input
+      <Box>
+        <Text color={colors.pending} bold>filter ❯ </Text>
+        <Input
           value={searchQuery}
           onChange={(val: string) => setSearchQuery(val)}
           onSubmit={handleSubmit}
           placeholder="filter messages… (Esc to clear)"
         />
-      </box>
+      </Box>
     );
   }
 
   if (isFocused) {
     return (
-      <box>
-        <text style={{ color: colors.brand, fontWeight: 'bold' }}>❯ </text>
-        <input
+      <Box>
+        <Text color={colors.brand} bold>❯ </Text>
+        <Input
           value={input}
           onChange={(val: string) => setInput(val)}
           onSubmit={onSubmit}
           placeholder={placeholder}
         />
-      </box>
+      </Box>
     );
   }
 
   return (
-    <text style={{ color: colors.muted }}>
+    <Text color={colors.muted}>
       {input || 'Press <Enter> to search or type a command...'}
-    </text>
+    </Text>
   );
 });
 InputContent.displayName = 'InputContent';
@@ -126,7 +127,7 @@ export const InputArea: React.FC<InputAreaProps> = memo(({ onSubmit }) => {
     : 'Describe a security concern or ask a question...';
 
   return (
-    <box flexDirection="column">
+    <Box flexDirection="column">
       <InputBorder isFocused={isFocused} searchActive={searchActive}>
         <InputContent
           isFocused={isFocused}
@@ -136,7 +137,7 @@ export const InputArea: React.FC<InputAreaProps> = memo(({ onSubmit }) => {
           streaming={streaming}
         />
       </InputBorder>
-    </box>
+    </Box>
   );
 });
 

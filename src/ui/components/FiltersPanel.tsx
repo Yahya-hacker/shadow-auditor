@@ -1,3 +1,4 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * FiltersPanel — checkbox-style filter sidebar.
  *
@@ -28,20 +29,18 @@ export const FiltersPanel: React.FC = () => {
   const lightBg = colors.panelLightBg;
 
   return (
-    <box
-      border={{ color: panelStyle.borderColor, style: panelStyle.borderStyle }}
+    <Box
+      borderColor={panelStyle.borderColor} borderStyle={panelStyle.borderStyle}
       flexDirection="column"
       paddingX={1}
     >
-      <text
-        style={{
-          color: lightFg,
-          fontWeight: 'bold',
-          backgroundColor: lightBg,
-        }}
+      <Text
+        color={lightFg}
+        bold
+        backgroundColor={lightBg}
       >
         {'Filters'.padEnd(panelInnerWidth)}
-      </text>
+      </Text>
       {entries.map(([key, value], index) => {
         const isSelected = isFocused && index === selectedIndex;
         const check = value ? 'x' : ' ';
@@ -49,21 +48,19 @@ export const FiltersPanel: React.FC = () => {
         const paddedLabel = label.padEnd(panelInnerWidth);
 
         return (
-          <text
+          <Text
             key={key}
-            style={{
-              backgroundColor: lightBg,
-              color: isSelected ? colors.focusBorder : lightFg,
-              fontWeight: isSelected ? 'bold' : 'normal',
-            }}
+            backgroundColor={lightBg}
+            color={isSelected ? colors.focusBorder : lightFg}
+            bold={isSelected}
           >
             {paddedLabel}
-          </text>
+          </Text>
         );
       })}
-      <text style={{ backgroundColor: lightBg }}>
+      <Text backgroundColor={lightBg}>
         {' '.repeat(panelInnerWidth)}
-      </text>
-    </box>
+      </Text>
+    </Box>
   );
 };

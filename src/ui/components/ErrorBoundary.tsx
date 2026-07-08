@@ -1,3 +1,4 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * ErrorBoundary — catch render errors in the OpenTUI component tree.
  *
@@ -34,25 +35,25 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
   render(): React.ReactNode {
     if (this.state.error) {
       return (
-        <box
-          border={{ color: colors.error, style: 'round' }}
+        <Box
+          borderColor={colors.error} borderStyle={'rounded'}
           flexDirection="column"
           padding={1}
         >
-          <box marginBottom={1}>
-            <text style={{ color: colors.error, fontWeight: 'bold' }}>
+          <Box marginBottom={1}>
+            <Text color={colors.error} bold>
               ✖ UI Error — Shadow Auditor encountered a rendering error.
-            </text>
-          </box>
-          <box marginBottom={1}>
-            <text style={{ color: colors.muted }}>
+            </Text>
+          </Box>
+          <Box marginBottom={1}>
+            <Text color={colors.muted}>
               {this.state.error.message}
-            </text>
-          </box>
-          <text style={{ color: colors.muted }}>
+            </Text>
+          </Box>
+          <Text color={colors.muted}>
             Press Ctrl+C to exit, or restart the application.
-          </text>
-        </box>
+          </Text>
+        </Box>
       );
     }
 

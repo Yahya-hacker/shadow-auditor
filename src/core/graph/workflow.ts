@@ -103,11 +103,19 @@ function computeStateHash(state: GraphState): string {
 
 /** Track state hashes to detect loops across supersteps. */
 const stateHashHistory = new Map<string, number>();
+const MAX_HASH_HISTORY = 200; // Prune oldest entries to prevent unbounded growth
 
 function checkRepetitiveLoop(state: GraphState): boolean {
   const hash = computeStateHash(state);
   const count = (stateHashHistory.get(hash) ?? 0) + 1;
   stateHashHistory.set(hash, count);
+  // Prune oldest entries if map grows too large
+  if (stateHashHistory.size > MAX_HASH_HISTORY) {
+    const keys = [...stateHashHistory.keys()];
+    for (let i = 0; i < keys.length - MAX_HASH_HISTORY; i++) {
+      stateHashHistory.delete(keys[i]!);
+    }
+  }
   return count >= MAX_REPETITIVE_CYCLES;
 }
 
@@ -479,11 +487,19 @@ function routeAfterModelInvocation(
 /**
  * Routing function after ToolExecutor: if a tool set pendingHumanInput (via
  * a Command throw), route to HumanIntervention so the graph pauses at
- * interruptBefore. Otherwise, return to Supervisor to continue the loop.
+ * interruptBefore. Otherwise, return directly to the specialist that
+ * initiated the tool call — saving an unnecessary Supervisor LLM round-trip.
  */
 function routeFromToolExecutor(state: GraphState): string {
   if (state.pendingHumanInput) {
     return 'HumanIntervention';
+  }
+
+  // Return directly to the specialist that called the tool, if known.
+  // Falls back to Supervisor for safety (should never happen).
+  const specialist = state.lastSpecialist;
+  if (specialist && ['SastAnalyzer', 'GraphTracer', 'Verifier'].includes(specialist)) {
+    return specialist;
   }
 
   return 'Supervisor';
@@ -537,11 +553,13 @@ function routeFromSpecialist(state: GraphState): string {
  * Routing function after the Reflector reviews output quality.
  *
  * The Reflector node invokes the model WITHOUT tools (pure review), so
- * hasToolCalls is always false — the previous code's tool-call check was
- * dead code. Simplified to a clean binary:
+ * hasToolCalls is always false. Simplified to:
  *   PASS  → END (analysis complete)
  *   RETRY → Supervisor (with critique in message history)
- *   Exhausted iterations → END
+ *
+ * Uses regex matching to handle common model output variations
+ * (markdown bold, leading whitespace, emoji). Tracks consecutive RETRY
+ * count to prevent infinite loops — forces END after 3 straight RETRYs.
  */
 function routeFromReflector(state: GraphState): string {
   const lastMessage = state.messages.at(-1);
@@ -551,14 +569,29 @@ function routeFromReflector(state: GraphState): string {
       ? lastMessage.content
       : '';
 
-    // PASS: analysis is complete and well-evidenced
-    if (content.startsWith('PASS') || content.includes('\nPASS')) {
+    // Robust matching: handles "PASS", "**PASS**", "  PASS  ", etc.
+    if (/^\s*(?:PASS|✅|\*\*PASS\*\*)/m.test(content)) {
       return END;
     }
 
-    // RETRY: analysis needs improvement — go back to Supervisor with
-    // the reflector's critique appended to the message history.
-    if (content.startsWith('RETRY') || content.includes('\nRETRY')) {
+    // RETRY with feedback — go back to Supervisor
+    if (/^\s*(?:RETRY|🔄|\*\*RETRY\*\*)/m.test(content)) {
+      // Count consecutive RETRYs to prevent infinite loops.
+      // After 3 straight RETRYs, terminate regardless.
+      const prevMsg = state.messages.at(-2);
+      const prevContent = prevMsg instanceof AIMessage && typeof prevMsg.content === 'string'
+        ? prevMsg.content : '';
+      const wasRetry = /^\s*(?:RETRY|🔄|\*\*RETRY\*\*)/m.test(prevContent);
+      const prevPrevMsg = state.messages.at(-3);
+      const prevPrevContent = prevPrevMsg instanceof AIMessage && typeof prevPrevMsg.content === 'string'
+        ? prevPrevMsg.content : '';
+      const wasPrevRetry = /^\s*(?:RETRY|🔄|\*\*RETRY\*\*)/m.test(prevPrevContent);
+
+      if (wasRetry && wasPrevRetry) {
+        // 3 consecutive RETRYs — force termination
+        return END;
+      }
+
       return 'Supervisor';
     }
   }
@@ -566,7 +599,7 @@ function routeFromReflector(state: GraphState): string {
   const iterations = getMessageIterationCount(state);
   if (iterations >= MAX_ITERATIONS) return END;
 
-  // Unclear or unrecognized verdict: return to Supervisor for re-evaluation
+  // Unclear verdict: return to Supervisor for re-evaluation
   return 'Supervisor';
 }
 
@@ -643,6 +676,7 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
       workingMemory: memResult.memory || updatedMemory,
       auditedFiles: [...new Set([...auditedFiles, ...memResult.auditedFiles])],
       discoveredFindings: [...new Set([...discoveredFindings, ...memResult.discoveredFindings])],
+      lastSpecialist: 'SastAnalyzer',
     };
   }
 
@@ -664,6 +698,7 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
       workingMemory: memResult.memory || updatedMemory,
       auditedFiles: [...new Set([...auditedFiles, ...memResult.auditedFiles])],
       discoveredFindings: [...new Set([...discoveredFindings, ...memResult.discoveredFindings])],
+      lastSpecialist: 'GraphTracer',
     };
   }
 
@@ -685,6 +720,7 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
       workingMemory: memResult.memory || updatedMemory,
       auditedFiles: [...new Set([...auditedFiles, ...memResult.auditedFiles])],
       discoveredFindings: [...new Set([...discoveredFindings, ...memResult.discoveredFindings])],
+      lastSpecialist: 'Verifier',
     };
   }
 

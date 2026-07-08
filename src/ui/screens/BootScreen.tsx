@@ -1,7 +1,8 @@
+import { Box, Text, Input } from "../../opentui/components.js";
 /**
  * BootScreen — onboarding banner with name entry.
  *
- * Interactive `<input>` replaces ink-text-input.
+ * Interactive `<Input>` replaces ink-text-input.
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -47,32 +48,32 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onBootComplete }) => {
   };
 
   return (
-    <box flexDirection="column" padding={1}>
-      <text style={{ color: colors.brand }}>{BANNER}</text>
+    <Box flexDirection="column" padding={1}>
+      <Text color={colors.brand}>{BANNER}</Text>
 
       {phase === 'banner' && (
-        <text style={{ color: colors.muted }}>Initializing Shadow Auditor...</text>
+        <Text color={colors.muted}>Initializing Shadow Auditor...</Text>
       )}
 
       {phase === 'name' && (
-        <box flexDirection="column">
-          <text style={{ color: colors.bright }}>
+        <Box flexDirection="column">
+          <Text color={colors.bright}>
             Can Shadow know what's your name or how to call you?
-          </text>
-          <input
+          </Text>
+          <Input
             value={name}
             onChange={(v: string) => setName(v)}
             onSubmit={handleNameSubmit}
             placeholder="Enter your name..."
           />
-        </box>
+        </Box>
       )}
 
       {phase === 'greeting' && (
-        <text style={{ color: colors.success, fontWeight: 'bold' }}>
+        <Text color={colors.success} bold>
           Greetings, {name}. I am Shadow, your autonomous security companion.
-        </text>
+        </Text>
       )}
-    </box>
+    </Box>
   );
 };

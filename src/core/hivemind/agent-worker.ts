@@ -77,7 +77,9 @@ export class AgentWorker {
       modelTier: this.modelTier,
     });
 
-    // Start periodic heartbeat to prevent timeouts during long tool runs
+    // Start periodic heartbeat to prevent timeouts during long tool runs.
+    // `unref()` ensures the timer doesn't keep the Node.js event loop alive
+    // if the worker is orphaned and terminate() is never called.
     this.heartbeatInterval = setInterval(() => {
       if (!this.isTerminated) {
         const agent = this.blackboard.getActiveAgents().find((a) => a.agentId === this.agentId);
@@ -85,7 +87,7 @@ export class AgentWorker {
           this.blackboard.heartbeat(this.agentId, agent.status);
         }
       }
-    }, 30_000);
+    }, 30_000).unref();
   }
 
   /**

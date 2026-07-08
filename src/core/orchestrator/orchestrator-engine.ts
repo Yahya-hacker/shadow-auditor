@@ -131,7 +131,7 @@ export class OrchestratorEngine {
         filesModified: proposal.filesAffected,
         summary: `Single proposal accepted from ${proposal.agentRole}. ${verification.overallVerdict === 'approved' ? 'Verification passed.' : `Verification: ${verification.overallVerdict} (${verification.warnings.length} warnings).`}`,
         verification: {
-          passed: verification.overallVerdict !== 'rejected',
+          passed: true, // overallVerdict is 'approved' or 'warning' at this point
           overallVerdict: verification.overallVerdict,
           checks: verification.checks,
           warnings: verification.warnings,

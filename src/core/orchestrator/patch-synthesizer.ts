@@ -15,7 +15,7 @@
  * 6. Generate the final unified diff string
  */
 
-import * as crypto from 'node:path';
+import * as crypto from 'node:crypto';
 
 import {
   type DiffHunk,

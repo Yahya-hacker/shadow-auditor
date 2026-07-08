@@ -5,7 +5,7 @@ import chalk from 'chalk';
  *
  * Design follows the TUI design system: color encodes meaning (not
  * decoration), and the interface degrades gracefully across terminal color
- * tiers. Every semantic slot is a truecolor hex value; Ink and chalk
+ * tiers. Every semantic slot is a truecolor hex value; the terminal and chalk
  * downsample it to the terminal's capability based on `chalk.level` (set in
  * {@link initTheme}). A dark palette ships by default with a light variant.
  *

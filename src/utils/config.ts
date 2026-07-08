@@ -3,6 +3,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { z } from 'zod';
 
+import { writeFileAtomic } from './fs-atomic.js';
+
 /**
  * Configuration interface for Shadow Auditor
  */
@@ -228,7 +230,15 @@ export async function loadConfig(): Promise<null | ShadowConfig> {
     }
 
     return parsed;
-  } catch {
+  } catch (error) {
+    // Distinguish between "file not found" (normal first run) and actual errors
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null;
+    }
+    const message = error instanceof SyntaxError
+      ? `Config file is corrupt (invalid JSON) at ${configPath}. Run with --reconfigure to reset.`
+      : `Cannot read config file at ${configPath}: ${error instanceof Error ? error.message : String(error)}`;
+    process.stderr.write(`[ShadowAuditor][ERROR] ${message}\n`);
     return null;
   }
 }
@@ -240,14 +250,29 @@ export async function saveConfig(configData: ShadowConfig): Promise<void> {
   const configPath = getConfigPath();
 
   if (configData.provider !== 'ollama' && configData.apiKey && secretStoreAdapter?.setApiKey) {
-    await secretStoreAdapter.setApiKey(configData.provider, configData.apiKey);
+    // Try keychain first. If it fails, keep the API key in the config file
+    // as a fallback rather than silently losing it.
+    let keychainOk = false;
+    try {
+      await secretStoreAdapter.setApiKey(configData.provider, configData.apiKey);
+      keychainOk = true;
+    } catch {
+      process.stderr.write(
+        `[ShadowAuditor][WARN] Failed to store API key in OS keychain. ` +
+        'Keeping key in config file as fallback.\n',
+      );
+    }
 
-    const { apiKey: _apiKey, ...configWithoutApiKey } = configData;
-    const json = JSON.stringify(configWithoutApiKey, null, 2);
-    await fs.writeFile(configPath, json, 'utf-8');
-    return;
+    if (keychainOk) {
+      // Keychain succeeded — strip API key from plaintext config
+      const { apiKey: _apiKey, ...configWithoutApiKey } = configData;
+      const json = JSON.stringify(configWithoutApiKey, null, 2);
+      await writeFileAtomic(configPath, json);
+      return;
+    }
+    // Fall through to plaintext write with API key included
   }
 
   const json = JSON.stringify(configData, null, 2);
-  await fs.writeFile(configPath, json, 'utf-8');
+  await writeFileAtomic(configPath, json);
 }
