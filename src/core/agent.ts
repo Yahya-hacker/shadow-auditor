@@ -11,6 +11,7 @@ import type { MissionObjective, MissionPhase, TransitionReason } from './orchest
 import type { TransitionContext } from './orchestrator/transitions.js';
 import type { SecurityReport } from './output/report-schema.js';
 
+import { resetHumanInLoopState, disableLangGraphContext } from '../utils/human-in-loop.js';
 import { type ShadowConfig } from '../utils/config.js';
 import { getEmbeddingDefaults, getProviderBaseUrl, normalizeProviderName } from '../utils/provider-catalog.js';
 import { compileWorkflow } from './graph/workflow.js';
@@ -101,30 +102,81 @@ function maybeCreateHttpInvoker(endpoint?: string): MCPRawInvoker | undefined {
     return undefined;
   }
 
+  // Validate the URL to prevent SSRF against internal services
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(normalizedEndpoint);
+  } catch {
+    logToStderr(`[MCP] Invalid endpoint URL: "${normalizedEndpoint}". MCP adapter disabled.`);
+    return undefined;
+  }
+
+  // Block obviously internal targets (loopback, link-local, private ranges)
+  if (isBlockedHost(parsedUrl.hostname)) {
+    logToStderr(`[MCP] Refusing to connect to internal host: "${parsedUrl.hostname}". MCP adapter disabled.`);
+    return undefined;
+  }
+
+  const validUrl = parsedUrl.href;
+
   return async (operation: string, input: Record<string, unknown>) => {
-    const response = await fetch(normalizedEndpoint, {
-      body: JSON.stringify({ input, operation }),
-      headers: {
-        'content-type': 'application/json',
-      },
-      method: 'POST',
-    });
-
-    if (!response.ok) {
-      throw new Error(`MCP endpoint error (${response.status}): ${response.statusText}`);
-    }
-
-    const rawBody = await response.text();
-    if (!rawBody) {
-      return '';
-    }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30_000); // 30s timeout
 
     try {
-      return JSON.parse(rawBody) as unknown;
-    } catch {
-      return rawBody;
+      const response = await fetch(validUrl, {
+        body: JSON.stringify({ input, operation }),
+        headers: {
+          'content-type': 'application/json',
+        },
+        method: 'POST',
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`MCP endpoint error (${response.status}): ${response.statusText}`);
+      }
+
+      const rawBody = await response.text();
+      if (!rawBody) {
+        return '';
+      }
+
+      try {
+        return JSON.parse(rawBody) as unknown;
+      } catch {
+        return rawBody;
+      }
+    } finally {
+      clearTimeout(timeoutId);
     }
   };
+}
+
+/**
+ * Block connections to hosts that are clearly internal/private.
+ * Prevents SSRF attacks where a compromised MCP endpoint URL points
+ * to internal services.
+ */
+function isBlockedHost(hostname: string): boolean {
+  // Loopback
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '0.0.0.0') {
+    return true;
+  }
+  // Link-local
+  if (hostname.startsWith('169.254.')) return true;
+  // Private ranges
+  if (hostname.startsWith('10.') || hostname.startsWith('192.168.') || hostname.startsWith('172.16.') || hostname.startsWith('172.17.')) {
+    // Allow 172.17.x.x only if it's a Docker bridge, but better safe than sorry
+    return true;
+  }
+  // More specific 172.16-31 range
+  const ipParts = hostname.split('.');
+  if (ipParts.length === 4) {
+    const second = parseInt(ipParts[1]!, 10);
+    if (ipParts[0] === '172' && second >= 16 && second <= 31) return true;
+  }
+  return false;
 }
 
 function toContentString(content: ModelMessage['content']): string {
@@ -208,6 +260,23 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     ];
 
     this.initialized = this.initialize();
+  }
+
+  /**
+   * Wait for the session to finish initialization.
+   * Public accessor for worker-thread and TUI code that needs to
+   * await readiness without reaching into private fields.
+   */
+  async waitForReady(): Promise<void> {
+    await this.initialized;
+  }
+
+  /**
+   * Snapshot of runtime warnings collected during initialization.
+   * Exposed read-only so worker threads can forward them to the TUI.
+   */
+  get warnings(): readonly string[] {
+    return this.runtimeWarnings;
   }
 
   /**
@@ -533,6 +602,11 @@ Use your tools to inspect implementation details, verify assumptions, and produc
   }
 
   private async initialize(): Promise<void> {
+    // Reset module-level human-in-the-loop state so each session starts
+    // with a clean slate — no stale pending signatures or decision history
+    // from a previous session in the same process.
+    resetHumanInLoopState();
+
     const pathGuard = await createPathGuard(this.targetPath);
     const resolvedTargetPath = pathGuard.rootRealPath;
 
@@ -618,8 +692,12 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       tools: toolsArray,
     });
 
-    // Initialize swarm coordinator if enabled
+    // Initialize swarm coordinator if enabled.
+    // Swarm mode uses the Vercel AI SDK's streamText, not LangGraph's
+    // StateGraph, so human-in-the-loop confirmation must use the blocking
+    // Promise pattern, not LangGraph Command throws.
     if (this.config.swarm?.enabled) {
+      disableLangGraphContext();
       await this.initializeSwarmCoordinator(resolvedTargetPath);
     }
 

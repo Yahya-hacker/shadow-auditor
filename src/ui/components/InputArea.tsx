@@ -75,7 +75,8 @@ const InputContent = memo<{
 
   if (searchActive) {
     const handleSubmit = () => {
-      if (!searchQuery) setSearchActive(false);
+      // Enter in search mode: exit search and return focus to input.
+      setSearchActive(false);
     };
     return (
       <Box>

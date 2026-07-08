@@ -61,9 +61,26 @@ const FAIL_ON_TO_LABEL: Record<FailOnSeverity, null | SecurityFinding['severity_
 
 /**
  * Compute the CI exit code and result summary for a completed audit.
+ *
+ * Returns exit code 2 with a descriptive message when `findings` is empty
+ * (no audit was performed) rather than silently returning code 0 — this
+ * prevents CI pipelines from passing when the tool malfunctions and
+ * produces no output.
  */
 export function computeCiExitCode(options: CiExitOptions): CiExitResult {
   const failOn = options.failOn ?? 'high';
+
+  // No findings at all means the audit likely failed or produced no output.
+  // Return code 2 (tool error) so CI pipelines fail fast instead of
+  // silently passing with zero findings.
+  if (!options.findings || options.findings.length === 0) {
+    return {
+      code: 2,
+      message: 'No findings produced — audit may have failed or produced no output. Check tool logs.',
+      triggeringFindings: [],
+    };
+  }
+
   const threshold = FAIL_ON_TO_LABEL[failOn];
 
   // "none" → always exit 0

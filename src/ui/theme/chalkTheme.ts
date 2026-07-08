@@ -118,7 +118,7 @@ export const colors = {
   bright: activePalette.fgEmphasis,
   dim: activePalette.fgDim,
   error: activePalette.statusError,
-  focusBorder: '#3b82f6',
+  focusBorder: themeMode === 'light' ? '#0550ae' : '#3b82f6',
   info: activePalette.statusInfo,
   muted: activePalette.fgMuted,
   panelDarkFg: '#f8fafc',

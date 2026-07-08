@@ -3,7 +3,6 @@ import type {
   Invocation,
   ReportingConfiguration,
   ReportingDescriptor,
-  Fix as SarifFix,
   Log as SarifLog,
   Result as SarifResult,
   VersionControlDetails,
@@ -154,12 +153,12 @@ export function generateEnhancedSarifReport(report: EnhancedReport): SarifLog {
   }));
 
   const results: SarifResult[] = sortedFindings.map((finding) => {
-    const result: Record<string, unknown> = {
+    const result: SarifResult = {
       level: toSarifLevel(finding.severityLabel),
       locations: finding.locations.map((loc) => ({
         logicalLocations: loc.functionName || loc.className ? [
           {
-            fullyQualifiedName: loc.className 
+            fullyQualifiedName: loc.className
               ? `${loc.className}.${loc.functionName ?? ''}`
               : loc.functionName,
             kind: loc.className ? 'member' : 'function',
@@ -248,25 +247,57 @@ export function generateEnhancedSarifReport(report: EnhancedReport): SarifLog {
     }
 
     // Add fixes if code example provided and we have enough info
-    // to produce a valid SARIF artifactChange. Skip when only a
-    // summary is available (no specific file replacements).
+    // to produce a valid SARIF artifactChange. The `replacements`
+    // array MUST be non-empty per SARIF spec §3.55.3 — an empty
+    // array is semantically meaningless and rejected by SARIF
+    // consumers. We construct a single `replacement` from the
+    // code example as a best-effort deletion region covering the
+    // primary finding location's line range, then insert the
+    // remediated code.
     if (finding.remediation.codeExample && finding.locations[0]?.filePath) {
-      const primaryFile = finding.locations[0].filePath;
-      const artifactChanges: ArtifactChange[] = [{
-        artifactLocation: {
-          uri: toPosixPath(primaryFile),
+      const primaryLoc = finding.locations[0];
+      const primaryFile = primaryLoc.filePath;
+      const replacementRegion = primaryLoc.startLine ? {
+        byteLength: 0,
+        byteOffset: 0,
+        charLength: 0,
+        charOffset: 0,
+        endColumn: primaryLoc.endColumn ?? 0,
+        endLine: primaryLoc.endLine ?? primaryLoc.startLine,
+        startColumn: primaryLoc.startColumn ?? 1,
+        startLine: primaryLoc.startLine,
+      } : undefined;
+
+      const replacement = {
+        deletedRegion: replacementRegion ?? {
+          byteLength: 0,
+          byteOffset: 0,
+          charLength: 0,
+          charOffset: 0,
+          endColumn: 0,
+          endLine: 0,
+          startColumn: 1,
+          startLine: 1,
         },
-        replacements: [],
-      }];
+        insertedContent: {
+          text: finding.remediation.codeExample,
+        },
+      };
+
       result.fixes = [{
-        artifactChanges,
+        artifactChanges: [{
+          artifactLocation: {
+            uri: toPosixPath(primaryFile),
+          },
+          replacements: [replacement],
+        }],
         description: {
           text: finding.remediation.summary,
         },
-      } as SarifFix];
+      }];
     }
 
-    return result as unknown as SarifResult;
+    return result;
   });
 
   return {
@@ -318,14 +349,28 @@ export function generateEnhancedSarifReport(report: EnhancedReport): SarifLog {
 /**
  * Compute a safe startTimeUtc that is always strictly before endTimeUtc.
  * Per SARIF spec §3.13.3, startTimeUtc MUST precede endTimeUtc.
+ *
+ * Guards against NaN from malformed ISO 8601 inputs — if Date.parse fails,
+ * endMs is NaN and all arithmetic cascades to 0 (epoch). We defensively
+ * fall back to one second before the current time so the result is always
+ * a valid ISO 8601 timestamp where startTime < endTime.
  */
 function computeSafeStartTime(
   endTimeIso: string,
   durationMs?: number,
 ): string {
   const endMs = new Date(endTimeIso).getTime();
+  if (Number.isNaN(endMs)) {
+    // Defensive fallback: use current time as endTime
+    const now = Date.now();
+    return new Date(now - 1000).toISOString();
+  }
   if (durationMs != null && durationMs > 0) {
     const startMs = Math.max(0, endMs - durationMs);
+    // Ensure startTime is strictly before endTime (minimum 1ms gap)
+    if (startMs >= endMs) {
+      return new Date(endMs - 1000).toISOString();
+    }
     return new Date(startMs).toISOString();
   }
   // Fallback: assume at least 1 second before endTime

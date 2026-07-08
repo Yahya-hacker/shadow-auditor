@@ -41,6 +41,7 @@ export class AgentWorker {
   private readonly evidenceTracker: EvidenceTracker;
   private heartbeatInterval?: ReturnType<typeof setInterval>;
   private isTerminated = false;
+  private readonly maxContextMessages: number;
   private readonly maxOutputTokens: number;
   private readonly maxToolSteps: number;
   private readonly messages: ModelMessage[] = [];
@@ -67,6 +68,7 @@ export class AgentWorker {
     this.tools = { ...roleTools, ...blackboardTools };
     this.maxOutputTokens = options.maxOutputTokens ?? 4096;
     this.maxToolSteps = options.maxToolSteps ?? 10;
+    this.maxContextMessages = 40; // cap to prevent unbounded growth across tasks
     this.auditMode = options.auditMode ?? 'sast';
     this.diffScopeHint = options.diffScopeHint ?? '';
 
@@ -128,6 +130,7 @@ Collaborate with the swarm. Inspect the blackboard if necessary, perform your ta
       content: userPrompt,
       role: 'user',
     });
+    this.trimMessages();
 
     // Execute via streamWithContinuation
     const streamResult = await streamWithContinuation({
@@ -151,11 +154,27 @@ Collaborate with the swarm. Inspect the blackboard if necessary, perform your ta
     });
 
     this.messages.push(...streamResult.messagesDelta);
+    this.trimMessages();
 
     // Heartbeat back to idle
     this.blackboard.heartbeat(this.agentId, 'idle');
 
     return streamResult.text;
+  }
+
+  /**
+   * Trim message history to prevent unbounded growth across multiple
+   * task executions. Keeps the first message (system/context anchor)
+   * and the most recent N-1 messages, mirroring the cap in the main
+   * workflow graph.
+   */
+  private trimMessages(): void {
+    const max = this.maxContextMessages;
+    if (this.messages.length <= max) return;
+    const first = this.messages[0];
+    const recent = this.messages.slice(-(max - 1));
+    this.messages.length = 0;
+    this.messages.push(first!, ...recent);
   }
 
   /**

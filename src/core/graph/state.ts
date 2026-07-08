@@ -1,7 +1,7 @@
 import { BaseMessage } from '@langchain/core/messages';
 import { BaseStore } from '@langchain/core/stores';
 import { Annotation } from '@langchain/langgraph';
-import * as fs from 'node:fs';
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
 import { type BlackboardState } from '../hivemind/hivemind-schema.js';
@@ -174,38 +174,38 @@ export type AgentStateType = typeof AgentState.State;
 export class ProjectPersistentStore extends BaseStore<string, StoreValue> {
   lc_namespace = ['langgraph', 'store'];
   private readonly storePath: string;
+  private initialized = false;
 
   constructor(projectRoot: string) {
     super();
     this.storePath = path.join(projectRoot, '.shadow-auditor', 'long-term-memory.json');
-    this.ensureStoreExists();
   }
 
   async mdelete(keys: string[]): Promise<void> {
-    const store = this.readStore();
+    const store = await this.readStore();
     for (const key of keys) {
       delete store[key];
     }
 
-    this.writeStore(store);
+    await this.writeStore(store);
   }
 
   async mget(keys: string[]): Promise<Array<StoreValue | undefined>> {
-    const store = this.readStore();
+    const store = await this.readStore();
     return keys.map((key) => store[key]);
   }
 
   async mset(keyValuePairs: Array<[string, StoreValue]>): Promise<void> {
-    const store = this.readStore();
+    const store = await this.readStore();
     for (const [key, value] of keyValuePairs) {
       store[key] = value;
     }
 
-    this.writeStore(store);
+    await this.writeStore(store);
   }
 
   async *yieldKeys(prefix?: string): AsyncGenerator<string> {
-    const store = this.readStore();
+    const store = await this.readStore();
     for (const key of Object.keys(store)) {
       if (prefix === undefined || key.startsWith(prefix)) {
         yield key;
@@ -213,32 +213,53 @@ export class ProjectPersistentStore extends BaseStore<string, StoreValue> {
     }
   }
 
-  private ensureStoreExists(): void {
-    const dir = path.dirname(this.storePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+  private async ensureStoreExists(): Promise<void> {
+    if (this.initialized) return;
+    this.initialized = true;
 
-    if (!fs.existsSync(this.storePath)) {
-      fs.writeFileSync(this.storePath, JSON.stringify({}, null, 2), 'utf8');
+    const dir = path.dirname(this.storePath);
+    await fs.mkdir(dir, { recursive: true });
+
+    try {
+      await fs.access(this.storePath);
+    } catch {
+      await fs.writeFile(this.storePath, JSON.stringify({}, null, 2), 'utf8');
     }
   }
 
-  private readStore(): Record<string, StoreValue> {
+  private async readStore(): Promise<Record<string, StoreValue>> {
+    await this.ensureStoreExists();
     try {
-      const data = fs.readFileSync(this.storePath, 'utf8');
-      return JSON.parse(data) as Record<string, StoreValue>;
+      const data = await fs.readFile(this.storePath, 'utf8');
+      const parsed = JSON.parse(data) as Record<string, StoreValue>;
+      // Prototype pollution guard: strip __proto__, constructor, prototype keys
+      return sanitizeParsedJson(parsed);
     } catch (error) {
       process.stderr.write(`[ShadowAuditor] Failed to read store at ${this.storePath}: ${error}\n`);
       return {};
     }
   }
 
-  private writeStore(data: Record<string, StoreValue>): void {
+  private async writeStore(data: Record<string, StoreValue>): Promise<void> {
+    await this.ensureStoreExists();
     try {
-      fs.writeFileSync(this.storePath, JSON.stringify(data, null, 2), 'utf8');
+      await fs.writeFile(this.storePath, JSON.stringify(data, null, 2), 'utf8');
     } catch (error) {
       process.stderr.write(`[ShadowAuditor] Failed to write store at ${this.storePath}: ${error}\n`);
     }
   }
+}
+
+/**
+ * Strip prototype-pollution keys from parsed JSON objects.
+ * Object.create(null) prevents __proto__ accessor from being inherited.
+ */
+function sanitizeParsedJson<T extends Record<string, unknown>>(obj: T): T {
+  if (obj === null || typeof obj !== 'object') return obj;
+  const cleaned = Object.create(null) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(obj)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+    cleaned[key] = value;
+  }
+  return cleaned as T;
 }

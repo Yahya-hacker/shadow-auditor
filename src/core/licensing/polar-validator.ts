@@ -44,8 +44,13 @@ interface LicenseCacheEntry {
 // Constants
 // =============================================================================
 
-/** Replace with your actual Polar.sh Organization ID */
-const POLAR_ORG_ID = 'POLAR_ORG_ID_PLACEHOLDER';
+/**
+ * Polar.sh Organization ID for license validation.
+ *
+ * Set via SHADOW_POLAR_ORG_ID environment variable. Falls back to the
+ * open-source default. Enterprise deployments should override this.
+ */
+const POLAR_ORG_ID = process.env.SHADOW_POLAR_ORG_ID?.trim() || 'shadow-auditor-oss';
 
 const POLAR_VALIDATE_URL = 'https://api.polar.sh/v1/customer-portal/license-keys/validate';
 const CACHE_FILENAME = '.shadow-auditor-license.json';
@@ -68,7 +73,25 @@ function hashKey(key: string): string {
 async function readCache(): Promise<LicenseCacheEntry | null> {
   try {
     const raw = await fs.readFile(getCachePath(), 'utf8');
-    const parsed = JSON.parse(raw) as LicenseCacheEntry;
+    // Prototype pollution guard: use JSON.parse with a reviver that strips
+    // __proto__, constructor, and prototype keys before object construction.
+    const parsed = JSON.parse(raw, (_key: string, value: unknown) => {
+      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        // Strip dangerous keys from plain objects
+        const obj = value as Record<string, unknown>;
+        if ('__proto__' in obj || 'constructor' in obj || 'prototype' in obj) {
+          const clean: Record<string, unknown> = Object.create(null);
+          for (const k of Object.keys(obj)) {
+            if (k !== '__proto__' && k !== 'constructor' && k !== 'prototype') {
+              clean[k] = (obj as Record<string, unknown>)[k];
+            }
+          }
+          return clean;
+        }
+      }
+      return value;
+    }) as LicenseCacheEntry;
+
     if (parsed.keyHash && parsed.tier && parsed.validatedAt && parsed.expiresAt) {
       return parsed;
     }

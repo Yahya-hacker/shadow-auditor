@@ -76,10 +76,16 @@ export default class Shell extends Command {
 
     // ── Graceful shutdown handlers ──────────────────────────────────
     let shuttingDown = false;
-    const gracefulShutdown = (signal: string) => {
+    const gracefulShutdown = async (signal: string) => {
       if (shuttingDown) return;
       shuttingDown = true;
       process.stderr.write(`\n[ShadowAuditor] Received ${signal}, shutting down...\n`);
+      // Allow OpenTUI renderer to restore terminal state before exiting.
+      try {
+        renderer.destroy();
+      } catch {
+        // Best-effort cleanup.
+      }
       process.exit(signal === 'SIGTERM' ? 143 : 0);
     };
 
@@ -103,9 +109,14 @@ export default class Shell extends Command {
     );
 
     // Keep the process alive — OpenTUI manages its own event loop.
-    // Exit on Ctrl+C is handled natively by the terminal.
-    await new Promise<void>(() => {
-      // Never resolves — the renderer owns the process lifecycle.
+    // The renderer's destroy event signals when the renderer has shut down.
+    // Also handle uncaught errors from the renderer's event emitter.
+    await new Promise<void>((resolve) => {
+      renderer.on('destroy', () => resolve());
+      renderer.on('error', (err: Error) => {
+        process.stderr.write(`[ShadowAuditor] Renderer error: ${err.message}\n`);
+        resolve();
+      });
     });
   }
 }

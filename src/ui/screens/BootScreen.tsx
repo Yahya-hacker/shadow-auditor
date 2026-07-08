@@ -5,7 +5,7 @@ import { Box, Text, Input } from "../../opentui/components.js";
  * Interactive `<Input>` replaces ink-text-input.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useAppStore } from '../store/appStore.js';
 import { colors } from '../theme/chalkTheme.js';
@@ -27,10 +27,19 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onBootComplete }) => {
   const setUserName = useAppStore((s) => s.setUserName);
   const [phase, setPhase] = useState<'banner' | 'greeting' | 'name'>('banner');
   const [name, setName] = useState('');
+  const mountedRef = useRef(true);
+  const greetingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const timer = setTimeout(() => setPhase('name'), 5000);
-    return () => clearTimeout(timer);
+    mountedRef.current = true;
+    const timer = setTimeout(() => {
+      if (mountedRef.current) setPhase('name');
+    }, 5000);
+    return () => {
+      mountedRef.current = false;
+      clearTimeout(timer);
+      if (greetingTimerRef.current) clearTimeout(greetingTimerRef.current);
+    };
   }, []);
 
   const handleNameSubmit = (val: string) => {
@@ -38,11 +47,12 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onBootComplete }) => {
     setUserName(trimmed);
     setName(trimmed);
     setPhase('greeting');
-    setTimeout(() => {
+    greetingTimerRef.current = setTimeout(() => {
+      if (!mountedRef.current) return;
       if (onBootComplete) {
         onBootComplete();
       } else {
-        useAppStore.getState().setScreen('setup');
+        setScreen('setup');
       }
     }, 2000);
   };

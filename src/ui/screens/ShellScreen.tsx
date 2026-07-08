@@ -40,14 +40,14 @@ interface KeyEvent {
 function handleOutputFocus(evt: KeyEvent): void {
   const s = useAppStore.getState();
   switch (evt.key) {
-    case 'ArrowUp': case 'k': s.setScrollOffset(s.scrollOffset + 1); break;
-    case 'ArrowDown': case 'j': s.setScrollOffset(Math.max(0, s.scrollOffset - 1)); break;
+    case 'ArrowDown': case 'j': s.setScrollOffset(s.scrollOffset + 1); break;
+    case 'ArrowUp': case 'k': s.setScrollOffset(Math.max(0, s.scrollOffset - 1)); break;
     case 'Tab': s.setFocus('filters'); break;
     case 'Escape': case 'i': s.setFocus('input'); break;
     case '/': s.setSearchActive(true); break;
     case '?': s.toggleHelp(); break;
-    case 'G': s.setScrollOffset(0); break;
-    case 'g': s.setScrollOffset(Number.MAX_SAFE_INTEGER); break;
+    case 'G': s.setScrollOffset(Number.MAX_SAFE_INTEGER); break;
+    case 'g': s.setScrollOffset(0); break;
     case 'P': if (!evt.shift) s.togglePanel(); break;
   }
 }
@@ -59,8 +59,8 @@ function handlePanelFocus(evt: KeyEvent): void {
 function handleFiltersFocus(evt: KeyEvent): void {
   const s = useAppStore.getState();
   switch (evt.key) {
-    case 'ArrowDown': case 'j': s.setScrollOffset(s.scrollOffset + 1); break; // Moves highlighted filter down
-    case 'ArrowUp': case 'k': s.setScrollOffset(Math.max(0, s.scrollOffset - 1)); break; // Moves highlighted filter up
+    case 'ArrowDown': case 'j': s.setScrollOffset(s.scrollOffset + 1); break;
+    case 'ArrowUp': case 'k': s.setScrollOffset(Math.max(0, s.scrollOffset - 1)); break;
     case ' ': { // Space toggles the currently highlighted filter
       const keys = Object.keys(s.filters);
       const idx = Math.min(s.scrollOffset, keys.length - 1);
@@ -79,13 +79,13 @@ function handleInputFocus(evt: KeyEvent): void {
   if (s.input.length > 0) return;
 
   switch (evt.key) {
-    case 'ArrowUp': case 'k': s.setScrollOffset(s.scrollOffset + 1); break;
-    case 'ArrowDown': case 'j': s.setScrollOffset(Math.max(0, s.scrollOffset - 1)); break;
+    case 'ArrowDown': case 'j': s.setScrollOffset(s.scrollOffset + 1); break;
+    case 'ArrowUp': case 'k': s.setScrollOffset(Math.max(0, s.scrollOffset - 1)); break;
     case 'Tab': s.setFocus('output'); break;
     case '/': s.setInput(''); s.setSearchActive(true); break;
     case '?': s.toggleHelp(); break;
-    case 'G': s.setScrollOffset(0); break;
-    case 'g': s.setScrollOffset(Number.MAX_SAFE_INTEGER); break;
+    case 'G': s.setScrollOffset(Number.MAX_SAFE_INTEGER); break;
+    case 'g': s.setScrollOffset(0); break;
     case 'P': if (!evt.shift) s.togglePanel(); break;
   }
 }
@@ -127,10 +127,19 @@ function createThrottledStream(intervalMs = 100) {
   let chunkBuffer = '';
   let eventBuffer: AgentStreamEvent[] = [];
   let flushTimer: null | ReturnType<typeof setTimeout> = null;
+  // Capture the generation at creation time so we can discard chunks
+  // from a previous (aborted) stream when startStreaming() is called again.
+  const generation = useAppStore.getState().streamGeneration;
 
   const flush = () => {
     flushTimer = null;
     const store = useAppStore.getState();
+    // Discard if a new stream has started since this one was created.
+    if (store.streamGeneration !== generation) {
+      chunkBuffer = '';
+      eventBuffer = [];
+      return;
+    }
     if (chunkBuffer) {
       store.appendStreamChunk(chunkBuffer);
       chunkBuffer = '';
@@ -193,7 +202,15 @@ function useHandleSubmit(): (command: string) => void {
       } catch (error) {
         stream.finish();
         const msg = (error as Error).message;
-        if (msg.includes('API key') || msg.includes('401') || msg.includes('authentication')) {
+        const isAuthError =
+          msg.includes('API key') ||
+          msg.includes('401') ||
+          msg.includes('403') ||
+          msg.includes('authentication') ||
+          msg.includes('unauthorized') ||
+          msg.includes('Invalid token') ||
+          msg.includes('key not valid');
+        if (isAuthError) {
           useAppStore.getState().addErrorMessage('Authentication failed. Run again with --reconfigure.');
         } else {
           useAppStore.getState().addErrorMessage(`Error: ${msg}`);
@@ -217,7 +234,15 @@ function useHandleSubmit(): (command: string) => void {
     } catch (error) {
       stream.finish();
       const msg = (error as Error).message;
-      if (msg.includes('API key') || msg.includes('401') || msg.includes('authentication')) {
+      const isAuthError =
+        msg.includes('API key') ||
+        msg.includes('401') ||
+        msg.includes('403') ||
+        msg.includes('authentication') ||
+        msg.includes('unauthorized') ||
+        msg.includes('Invalid token') ||
+        msg.includes('key not valid');
+      if (isAuthError) {
         useAppStore.getState().addErrorMessage('Authentication failed. Run again with --reconfigure.');
       } else {
         useAppStore.getState().addErrorMessage(`Error: ${msg}`);
@@ -273,16 +298,23 @@ export const ShellScreen: React.FC = () => {
   // toggle the compact sidebars when the terminal is narrow (< 80 cols).
   useEffect(() => {
     const updateCompact = () => {
-      const cols = process.stdout.columns || 80;
-      const compact = cols < 80; // COMPACT_THRESHOLD
+      // Guard: stdout may not be a TTY (e.g., piped output, CI). Default
+      // to non-compact when columns is unavailable.
+      const cols = process.stdout.columns;
+      const compact = typeof cols === 'number' && cols > 0 ? cols < 80 : false;
       useAppStore.getState().setIsCompact(compact);
     };
     // Set initial value
     updateCompact();
-    // Listen for resize events (emitted by TTY on SIGWINCH)
-    process.stdout.on('resize', updateCompact);
+    // Listen for resize events (emitted by TTY on SIGWINCH).
+    // Only attach if stdout is a TTY to avoid errors in non-TTY environments.
+    if (process.stdout.isTTY) {
+      process.stdout.on('resize', updateCompact);
+    }
     return () => {
-      process.stdout.off('resize', updateCompact);
+      if (process.stdout.isTTY) {
+        process.stdout.off('resize', updateCompact);
+      }
     };
   }, []);
 

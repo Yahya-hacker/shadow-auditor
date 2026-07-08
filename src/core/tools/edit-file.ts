@@ -1,7 +1,9 @@
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import { z } from 'zod';
 
 import { confirmFileEdit } from '../../utils/human-in-loop.js';
+import { writeFileAtomic } from '../../utils/fs-atomic.js';
 import { type PathGuard, PathGuardError } from '../policy/path-guard.js';
 
 export function createEditFileTool(pathGuard: PathGuard) {
@@ -42,8 +44,31 @@ export function createEditFileTool(pathGuard: PathGuard) {
           return `── edit_file ── DENIED ──\n[DENIED] User denied file edit: "${filePath}".`;
         }
 
-        const nextContent = content.replace(targetCode, replacementCode);
-        await fs.writeFile(absolutePath, nextContent, 'utf8');
+        // ── TOCTOU mitigation ──────────────────────────────────────────
+        // Re-read the file after confirmation to detect concurrent changes.
+        // If the file changed between the initial read and now, compute a
+        // hash of the original and re-check. This prevents silent corruption
+        // when another process (or agent worker) modified the file while the
+        // confirmation dialog was open.
+        const freshContent = await fs.readFile(absolutePath, 'utf8');
+        if (freshContent !== content) {
+          // Content changed since our initial read — verify target still exists
+          if (!freshContent.includes(targetCode)) {
+            return [
+              `── edit_file ── FAILED: ${filePath} ──`,
+              `[ERROR] File was modified by another process while awaiting confirmation.`,
+              `The target code no longer exists in the current version of the file.`,
+              `💡 Re-read the file and try again with the updated content.`,
+            ].join('\n');
+          }
+          // Target still exists — use the fresh content as the base
+          const nextContent = freshContent.replace(targetCode, replacementCode);
+          await writeFileAtomic(absolutePath, nextContent);
+        } else {
+          const nextContent = content.replace(targetCode, replacementCode);
+          await writeFileAtomic(absolutePath, nextContent);
+        }
+
         return [
           `── edit_file ── SUCCESS: ${filePath} ──`,
           `[SUCCESS] Patch applied to "${filePath}".`,

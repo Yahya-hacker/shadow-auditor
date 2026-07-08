@@ -9,13 +9,9 @@ import { Box, Text, Input } from "../../opentui/components.js";
 import React from 'react';
 
 import { helpKeybinds } from '../keybinds.js';
-import { useAppStore } from '../store/appStore.js';
 import { colors, labels, spacing } from '../theme/chalkTheme.js';
 
 export const HelpOverlay: React.FC = () => {
-  const helpOpen = useAppStore((state) => state.helpOpen);
-  if (!helpOpen) return null;
-
   return (
     <Box
       borderColor={colors.focusBorder} borderStyle={'double'}

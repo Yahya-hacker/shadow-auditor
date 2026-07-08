@@ -438,25 +438,32 @@ export class Blackboard {
 
   /**
    * Save blackboard state.
+   *
+   * Enqueued behind `writeQueue` so that snapshot captures are atomic with
+   * respect to concurrent claim submissions — without this, a snapshot write
+   * could interleave with a `submitClaim` mutation and produce a corrupt or
+   * inconsistent JSON file.
    */
   async saveSnapshot(): Promise<void> {
-    const state: BlackboardState = {
-      agents: [...this.agents.values()],
-      claims: [...this.claims.values()],
-      conflicts: [...this.conflicts.values()],
-      consensusRecords: this.consensusManager.exportRecords(),
-      runId: this.runId,
-      schemaVersion: '1.0.0',
-      snapshotAt: new Date().toISOString(),
-      tasks: this.taskGraph.exportTasks(),
-    };
+    return this.enqueueWrite(async () => {
+      const state: BlackboardState = {
+        agents: [...this.agents.values()],
+        claims: [...this.claims.values()],
+        conflicts: [...this.conflicts.values()],
+        consensusRecords: this.consensusManager.exportRecords(),
+        runId: this.runId,
+        schemaVersion: '1.0.0',
+        snapshotAt: new Date().toISOString(),
+        tasks: this.taskGraph.exportTasks(),
+      };
 
-    const validation = blackboardStateSchema.safeParse(state);
-    if (!validation.success) {
-      throw new Error(`Invalid blackboard state: ${validation.error.message}`);
-    }
+      const validation = blackboardStateSchema.safeParse(state);
+      if (!validation.success) {
+        throw new Error(`Invalid blackboard state: ${validation.error.message}`);
+      }
 
-    await fs.writeFile(this.snapshotPath, JSON.stringify(state, null, 2), 'utf8');
+      await fs.writeFile(this.snapshotPath, JSON.stringify(state, null, 2), 'utf8');
+    });
   }
 
   /**
@@ -679,8 +686,11 @@ export class Blackboard {
         } catch (error) {
           reject(error);
         }
-      }).catch(() => {
+      }).catch((error) => {
         // Ensure the queue continues even if an individual operation fails.
+        // Log the error so it is not silently swallowed — the caller still
+        // receives the rejection via their own promise.
+        console.error('[Blackboard] Queued write operation failed:', error instanceof Error ? error.message : String(error));
       });
     });
   }

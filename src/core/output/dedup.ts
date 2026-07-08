@@ -56,9 +56,11 @@ export function deduplicateFindings(findings: SecurityFinding[]): SecurityFindin
         existing.filePaths.add(fp);
       }
 
-      // Keep the higher CVSS score as representative
+      // Keep the higher CVSS score as representative.
+      // Preserve the original file_paths on the primary so vulnId remains
+      // stable — file_paths is reset after vulnId computation below.
       if ((finding.cvss_v31_score ?? 0) > (existing.primary.cvss_v31_score ?? 0)) {
-        existing.primary = { ...finding, file_paths: [] }; // file_paths merged below
+        existing.primary = { ...finding };
       }
     } else {
       groups.set(key, {

@@ -420,6 +420,14 @@ function hasToolCalls(message: AIMessage): boolean {
 }
 
 function getMessageIterationCount(state: GraphState): number {
+  // Prefer the explicit iterationCount from state (incremented by the
+  // supervisor node each cycle). Fall back to counting AIMessages when
+  // the counter hasn't been wired yet (backward compat). The message
+  // count under-reports after context trimming, so the explicit counter
+  // is the authoritative source for MAX_ITERATIONS enforcement.
+  if (state.iterationCount > 0) {
+    return state.iterationCount;
+  }
   return state.messages.filter((m: BaseMessage) => m instanceof AIMessage).length;
 }
 
@@ -560,6 +568,11 @@ function routeFromSpecialist(state: GraphState): string {
  * Uses regex matching to handle common model output variations
  * (markdown bold, leading whitespace, emoji). Tracks consecutive RETRY
  * count to prevent infinite loops — forces END after 3 straight RETRYs.
+ *
+ * NEW: Also tracks consecutive *unclear* verdicts (neither PASS nor RETRY).
+ * After 3 consecutive unclear verdicts the graph terminates to prevent
+ * an infinite Reflector <-> Supervisor ping-pong when the model produces
+ * commentary instead of a clear verdict.
  */
 function routeFromReflector(state: GraphState): string {
   const lastMessage = state.messages.at(-1);
@@ -593,6 +606,22 @@ function routeFromReflector(state: GraphState): string {
       }
 
       return 'Supervisor';
+    }
+
+    // Unclear verdict (neither PASS nor RETRY): guard against infinite
+    // Reflector <-> Supervisor ping-pong.  If the last 3 Reflector
+    // messages were all unclear, terminate rather than loop forever.
+    const prevReflectorMsgs = state.messages
+      .filter((m) => {
+        if (!(m instanceof AIMessage)) return false;
+        const c = typeof m.content === 'string' ? m.content : '';
+        return !/^\s*(?:PASS|✅|\*\*PASS\*\*)/m.test(c) &&
+               !/^\s*(?:RETRY|🔄|\*\*RETRY\*\*)/m.test(c);
+      })
+      .slice(-3);
+
+    if (prevReflectorMsgs.length >= 3) {
+      return END;
     }
   }
 
@@ -762,6 +791,7 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
       workingMemory: updatedMemory,
       auditedFiles,
       discoveredFindings,
+      iterationCount: (state.iterationCount ?? 0) + 1,
     };
   }
 

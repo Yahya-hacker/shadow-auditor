@@ -10,7 +10,7 @@ import { Box, Text, Input } from "../opentui/components.js";
  * when active), fixing the Yoga sibling-stacking layout issue.
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { debugLog } from '../utils/debug-logger.js';
 import { useAgentSessionRef } from './AgentSessionContext.js';
@@ -30,6 +30,16 @@ export const ConfirmDialog: React.FC = () => {
   const addActivityEvent = useAppStore((state) => state.addActivityEvent);
   const addErrorMessage = useAppStore((state) => state.addErrorMessage);
   const agentSessionRef = useAgentSessionRef();
+
+  // Local state for the question input so users get visual feedback while typing.
+  const [questionInput, setQuestionInput] = useState('');
+
+  // Reset question input whenever a new human-input request arrives.
+  useEffect(() => {
+    if (humanInputRequest?.type === 'question') {
+      setQuestionInput('');
+    }
+  }, [humanInputRequest]);
 
   // ── LangGraph interrupt-driven confirmation ────────────────────────
   if (humanInputRequest && humanInputRequest.type === 'confirmation') {
@@ -89,7 +99,12 @@ export const ConfirmDialog: React.FC = () => {
               </Text>
             </Box>
           )}
-          <OptionList options={options} onSelect={handleSelect} focused={true} />
+          <OptionList
+            options={options}
+            onSelect={handleSelect}
+            onCancel={() => handleSelect('no')}
+            focused={true}
+          />
         </Box>
       </Box>
     );
@@ -101,6 +116,7 @@ export const ConfirmDialog: React.FC = () => {
       const trimmed = answer.trim();
       if (!trimmed) return;
 
+      setQuestionInput('');
       addUserMessage(trimmed);
       setHumanInputRequest(null);
       startStreaming();
@@ -150,8 +166,8 @@ export const ConfirmDialog: React.FC = () => {
           <Box marginTop={1}>
             <Text color={colors.brand} bold>❯ </Text>
             <Input
-              value=""
-              onChange={() => {}}
+              value={questionInput}
+              onChange={(v: string) => setQuestionInput(v)}
               onSubmit={handleQuestionSubmit}
               placeholder="Type your answer..."
             />
@@ -162,7 +178,35 @@ export const ConfirmDialog: React.FC = () => {
   }
 
   // ── Legacy Zustand confirmation ────────────────────────────────────
+  // Also reached when humanInputRequest exists but has an unrecognized type.
   if (!confirmation.open) {
+    // If we have a humanInputRequest with an unknown type, render a generic prompt.
+    if (humanInputRequest) {
+      return (
+        <Box
+          alignItems="center"
+          flexDirection="column"
+          width="100%"
+          height="100%"
+          justifyContent="center"
+        >
+          <Box
+            borderColor={colors.warning} borderStyle={'rounded'}
+            flexDirection="column"
+            padding={1}
+          >
+            <Box marginBottom={1}>
+              <Text color={colors.warning} bold>
+                {humanInputRequest.question || 'Input required'}
+              </Text>
+            </Box>
+            <Text color={colors.muted}>
+              Unsupported prompt type: {humanInputRequest.type}. Press Enter to continue.
+            </Text>
+          </Box>
+        </Box>
+      );
+    }
     return null;
   }
 
@@ -208,7 +252,12 @@ export const ConfirmDialog: React.FC = () => {
             </Text>
           </Box>
         )}
-        <OptionList options={options} onSelect={handleSelect} focused={true} />
+        <OptionList
+          options={options}
+          onSelect={handleSelect}
+          onCancel={() => handleSelect('no')}
+          focused={true}
+        />
       </Box>
     </Box>
   );

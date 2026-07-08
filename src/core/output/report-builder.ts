@@ -316,14 +316,15 @@ export class ReportBuilder {
       // Risk score contribution (defensive NaN guard)
       const score = finding.cvssV31Score;
       if (Number.isNaN(score)) continue;
-      const severityMultiplier = {
+      const severityMultiplier: number = {
         Critical: 10,
         High: 7,
         Info: 0.5,
         Low: 2,
         Medium: 4,
-      }[finding.severityLabel];
-      
+      }[finding.severityLabel] ?? 1; // fallback: treat unknown severity as weight 1
+
+      if (Number.isNaN(severityMultiplier)) continue;
       totalRisk += score * severityMultiplier * finding.confidence;
     }
     

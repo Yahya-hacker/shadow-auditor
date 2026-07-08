@@ -1,9 +1,12 @@
 import * as fs from 'node:fs/promises';
+import * as fsSync from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { z } from 'zod';
 
 import { writeFileAtomic } from './fs-atomic.js';
+
+const CONFIG_FILE_MODE_MASK = 0o077; // Bits that should NOT be set for config file
 
 /**
  * Configuration interface for Shadow Auditor
@@ -15,7 +18,7 @@ export interface ShadowConfig {
   ci?: {
     enabled?: boolean;
     /** Minimum severity that causes a non-zero exit. Default: "high". */
-    failOn?: 'critical' | 'high' | 'low' | 'medium' | 'none';
+    failOn?: 'critical' | 'high' | 'info' | 'low' | 'medium' | 'none';
   };
   commandPolicy?: {
     additionalAllowedCommandPatterns?: string[];
@@ -91,7 +94,7 @@ const shadowConfigSchema = z.object({
   auditMode: z.enum(['balanced', 'deep', 'deep-sast', 'full-report', 'patch-only', 'quick', 'triage']).optional(),
   ci: z.object({
     enabled: z.boolean().optional(),
-    failOn: z.enum(['critical', 'high', 'low', 'medium', 'none']).optional(),
+    failOn: z.enum(['critical', 'high', 'info', 'low', 'medium', 'none']).optional(),
   }).optional(),
   commandPolicy: z.object({
     additionalAllowedCommandPatterns: z.array(z.string()).optional(),
@@ -205,6 +208,20 @@ export async function loadConfig(): Promise<null | ShadowConfig> {
       return null;
     }
 
+    // Check file permissions: warn if config file is readable by group/others
+    try {
+      const stat = await fs.stat(configPath);
+      if ((stat.mode & CONFIG_FILE_MODE_MASK) !== 0) {
+        process.stderr.write(
+          `[ShadowAuditor][WARN] Config file at ${configPath} has overly permissive permissions ` +
+          `(${(stat.mode & 0o777).toString(8)}). It contains your API key. ` +
+          `Run: chmod 600 ${configPath} to secure it.\n`,
+        );
+      }
+    } catch {
+      // Stat failed — file may have been deleted between read and stat; non-fatal
+    }
+
     // Track if API key was in plaintext config (for warning)
     const hadPlaintextApiKey = parsed.apiKey !== '';
 
@@ -217,6 +234,10 @@ export async function loadConfig(): Promise<null | ShadowConfig> {
     }
 
     if (parsed.provider !== 'ollama' && !parsed.apiKey) {
+      process.stderr.write(
+        `[ShadowAuditor][WARN] No API key configured for provider "${parsed.provider}". ` +
+        'Run with --reconfigure to set up your API key, or switch to Ollama with --provider ollama.\n',
+      );
       return null;
     }
 

@@ -19,7 +19,7 @@ const taskGlyphs: Array<{ color: string; glyph: string; status: string }> = [
 ];
 
 const SwarmStatus: React.FC<{ snapshot: SwarmStateSnapshot }> = memo(({ snapshot }) => {
-  const stats = snapshot.taskStats;
+  const stats = snapshot.taskStats ?? {};
   return (
     <>
       {taskGlyphs.map(({ color, glyph, status }) => {
@@ -33,9 +33,9 @@ const SwarmStatus: React.FC<{ snapshot: SwarmStateSnapshot }> = memo(({ snapshot
         );
       })}
       <Text color={colors.muted}>│ </Text>
-      <Text color={colors.info}>claims {snapshot.claims}</Text>
+      <Text color={colors.info}>claims {snapshot.claims ?? 0}</Text>
       <Text color={colors.muted}> │ </Text>
-      <Text color={colors.borderSecondary}>◍{snapshot.consensus}</Text>
+      <Text color={colors.borderSecondary}>◍{snapshot.consensus ?? '—'}</Text>
     </>
   );
 });

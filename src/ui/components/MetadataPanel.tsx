@@ -103,7 +103,7 @@ export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = fal
       </Text>
       {swarmState && (
         <Text backgroundColor={lightBg} color={colors.focusBorder}>
-          {`Swarm: ${swarmState.agents.length} agents, ${swarmState.claims} claims`
+          {`Swarm: ${swarmState.agents?.length ?? 0} agents, ${swarmState.claims ?? 0} claims`
             .slice(0, panelInnerWidth).padEnd(panelInnerWidth)}
         </Text>
       )}

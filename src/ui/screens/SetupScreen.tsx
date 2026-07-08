@@ -71,6 +71,11 @@ export const SetupScreen: React.FC = () => {
     if (value === 'yes') {
       setStep('provider');
     } else {
+      // Gracefully exit via process.exit after flushing pending writes.
+      // This is the initial setup trust gate — refusing means the user
+      // does not want to proceed, so exiting is the correct action.
+      setStep('trust');
+      process.stdout.write('Aborted by user. Goodbye.\n');
       process.exit(0);
     }
   };
@@ -102,14 +107,25 @@ export const SetupScreen: React.FC = () => {
     }
     setApiKey(value.trim());
     setError('');
-    if (value.trim()) await saveApiKey(provider, value.trim());
+    try {
+      if (value.trim()) await saveApiKey(provider, value.trim());
+    } catch {
+      // Keychain save failure is non-fatal — the key is still held in memory
+      // for this session, and the config will be written to disk.
+    }
     if (isOpenAICompatibleProvider(provider) && value.trim()) {
       setFetching(true);
       setStep('fetching');
-      const fetched = await fetchApiModels(provider, value.trim(), customBaseUrl || undefined);
-      setFetching(false);
-      if (fetched && fetched.length > 0) setModels(fetched);
-      else setModels(getProviderModels(provider) ?? []);
+      try {
+        const fetched = await fetchApiModels(provider, value.trim(), customBaseUrl || undefined);
+        setFetching(false);
+        if (fetched && fetched.length > 0) setModels(fetched);
+        else setModels(getProviderModels(provider) ?? []);
+      } catch (fetchErr) {
+        setFetching(false);
+        setError(`Failed to fetch models: ${(fetchErr as Error).message}`);
+        setModels(getProviderModels(provider) ?? []);
+      }
     } else {
       setModels(getProviderModels(provider) ?? []);
     }
@@ -175,7 +191,7 @@ export const SetupScreen: React.FC = () => {
   ], [models]);
 
   const embeddingOptions = useMemo(() => [
-    { label: `Cloud embeddings via ${provider}`, value: 'cloud' },
+    { label: `Cloud embeddings via ${provider || 'provider'}`, value: 'cloud' },
     { label: 'Local Ollama embeddings (nomic-embed-text)', value: 'ollama' },
     { label: 'Skip semantic indexing', value: 'skip' },
   ], [provider]);
@@ -204,7 +220,11 @@ export const SetupScreen: React.FC = () => {
                 Do you trust this folder and its contents?
               </Text>
             </Box>
-            <OptionList options={trustOptions} onSelect={handleTrustSelect} />
+            <OptionList
+              options={trustOptions}
+              onSelect={handleTrustSelect}
+              onCancel={() => handleTrustSelect('no')}
+            />
           </>
         )}
 

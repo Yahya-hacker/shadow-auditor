@@ -72,15 +72,12 @@ port.on('message', async (msg: WorkerInMessage) => {
       case 'init': {
         const { config, options, repoMap, targetPath } = msg;
         agent = new AgentSession(config, repoMap, targetPath, options);
-        // Wait for initialization to complete
-        await (agent as any).initialized;
+        // Wait for initialization to complete via public API.
+        await agent.waitForReady();
         port.postMessage({ type: 'ready' });
-        // Forward any runtime warnings
-        const warnings = (agent as any).runtimeWarnings as string[] | undefined;
-        if (warnings) {
-          for (const w of warnings) {
-            port.postMessage({ message: w, type: 'warning' });
-          }
+        // Forward any runtime warnings via public getter.
+        for (const w of agent.warnings) {
+          port.postMessage({ message: w, type: 'warning' });
         }
 
         break;

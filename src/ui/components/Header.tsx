@@ -33,7 +33,7 @@ export const Header: React.FC = memo(() => {
   const config = useAppStore((state) => state.config);
   const findingCount = useAppStore((state) => state.hitCount);
 
-  const effectivePhase = streaming ? 'ready' : sessionPhase;
+  const effectivePhase = streaming ? 'initializing' : sessionPhase;
   const status = statusLabels[effectivePhase] ?? { color: colors.muted, label: effectivePhase };
 
   const agentStatus = getAgentStatus(swarmState);

@@ -38,7 +38,7 @@ export interface BoxProps {
 }
 
 export const Box = memo<BoxProps>((props) =>
-  React.createElement('box', stripUndefined(props), props.children)
+  React.createElement('box' as any, stripUndefined(props) as any, props.children)
 );
 Box.displayName = 'Box';
 
@@ -55,7 +55,7 @@ export interface TextProps {
 }
 
 export const Text = memo<TextProps>((props) =>
-  React.createElement('text', stripUndefined(props), props.children)
+  React.createElement('text' as any, stripUndefined(props) as any, props.children)
 );
 Text.displayName = 'Text';
 
@@ -71,7 +71,7 @@ export interface InputProps {
 }
 
 export const Input = memo<InputProps>((props) =>
-  React.createElement('input', stripUndefined(props))
+  React.createElement('input' as any, stripUndefined(props) as any)
 );
 Input.displayName = 'Input';
 

@@ -155,6 +155,52 @@ export class AttackStepManager {
   }
 
   /**
+   * Add a prerequisite to a step.
+   * Creates a new step object (immutable update) so the change is
+   * visible to all consumers and tracked via updatedAt.
+   */
+  addPrerequisite(stepId: string, prerequisiteId: string): Result<AttackStep, string> {
+    const step = this.steps.get(stepId);
+    if (!step) {
+      return err(`Step not found: ${stepId}`);
+    }
+
+    // Validate prerequisite exists
+    if (!this.steps.has(prerequisiteId)) {
+      return err(`Prerequisite step not found: ${prerequisiteId}`);
+    }
+
+    // Prevent self-dependency
+    if (stepId === prerequisiteId) {
+      return err('A step cannot be its own prerequisite.');
+    }
+
+    // Prevent duplicates
+    if (step.prerequisites.includes(prerequisiteId)) {
+      return ok(step); // Already a prerequisite
+    }
+
+    const updated: AttackStep = {
+      ...step,
+      prerequisites: [...step.prerequisites, prerequisiteId],
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Check for cyclic dependencies before committing
+    const prev = this.steps.get(stepId);
+    this.steps.set(stepId, updated);
+    if (this.hasCyclicDependency(stepId)) {
+      // Roll back
+      if (prev) {
+        this.steps.set(stepId, prev);
+      }
+      return err('Adding this prerequisite would create a cyclic dependency.');
+    }
+
+    return ok(updated);
+  }
+
+  /**
    * Link entity to step.
    */
   linkEntity(stepId: string, entityId: string): Result<AttackStep, string> {

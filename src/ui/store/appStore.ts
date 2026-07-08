@@ -131,6 +131,10 @@ export interface AppState {
   startStreaming: () => void;
   streaming: boolean;
   streamingText: string;
+  // Monotonically increasing generation counter. Incremented each time
+  // startStreaming() is called so appendStreamChunk can discard chunks
+  // from a previous (aborted) stream.
+  streamGeneration: number;
   // Live swarm snapshot (task stats, agents, claims, consensus) streamed from
   // the supervisor's evaluateConsensus node; rendered by the swarm panel and
   // status bar.
@@ -269,7 +273,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setElapsedTime: (elapsedTime) => set({ elapsedTime }),
   setFilter: (key, value) =>
     set((state) => ({ filters: { ...state.filters, [key]: value } })),
-  setFocus: (focus) => set({ focus }),
+  setFocus: (focus) => set({ focus, scrollOffset: 0 }),
   setFocusScope: (focusScope) => set({ focusScope }),
   setHelpOpen: (helpOpen) => set({ helpOpen }),
   setHitCount: (hitCount) => set({ hitCount }),
@@ -283,7 +287,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setScreen: (screen) => set({ screen }),
   setScrollOffset: (scrollOffset) => set({ scrollOffset }),
   setSearchActive: (searchActive) => set({ searchActive }),
-  setSearchQuery: (searchQuery) => set({ searchActive: searchQuery.length > 0, searchQuery }),
+  setSearchQuery: (searchQuery) => set({ searchQuery }),
   setSessionError: (error) =>
     set((state) => ({ session: { ...state.session, error } })),
   setSessionPhase: (phase) =>
@@ -292,9 +296,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({ session: { ...state.session, targetPath } })),
   setSwarmState: (swarmState) => set({ swarmState }),
   setUserName: (userName) => set({ userName }),
-  startStreaming: () => set({ streaming: true, streamingText: '' }),
+  startStreaming: () => set((s) => ({ streaming: true, streamingText: '', streamGeneration: s.streamGeneration + 1 })),
   streaming: false,
   streamingText: '',
+  streamGeneration: 0,
   swarmState: null,
   toggleFilter: (key) =>
     set((state) => ({ filters: { ...state.filters, [key]: !state.filters[key] } })),

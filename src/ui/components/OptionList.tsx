@@ -7,15 +7,17 @@ import { Box, Text, Input } from "../../opentui/components.js";
  * Enter to confirm selection, Esc to cancel (selects first option).
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 
 import { colors } from '../theme/chalkTheme.js';
 
 interface OptionListProps {
   /** The selectable options */
   options: Array<{ label: string; value: string }>;
-  /** Called with the selected value on Enter or Esc */
+  /** Called with the selected value on Enter */
   onSelect: (value: string) => void;
+  /** Called when the user presses Escape to cancel. If omitted, Escape is a no-op. */
+  onCancel?: () => void;
   /** Whether the list should respond to keyboard events */
   focused?: boolean;
 }
@@ -23,32 +25,41 @@ interface OptionListProps {
 export const OptionList: React.FC<OptionListProps> = ({
   options,
   onSelect,
+  onCancel,
   focused = true,
 }) => {
   const [highlighted, setHighlighted] = useState(0);
 
+  // Stable refs so the key handler callback never changes due to prop identity.
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+
   const handleKey = useCallback(
     (evt: React.KeyboardEvent) => {
       if (!focused) return;
+      const opts = optionsRef.current;
       switch (evt.key) {
         case 'ArrowDown':
         case 'j':
-          setHighlighted((p) => Math.min(p + 1, options.length - 1));
+          setHighlighted((p) => Math.min(p + 1, opts.length - 1));
           break;
         case 'ArrowUp':
         case 'k':
           setHighlighted((p) => Math.max(p - 1, 0));
           break;
         case 'Enter':
-          onSelect(options[highlighted]!.value);
+          onSelectRef.current(opts[highlighted]!.value);
           break;
         case 'Escape':
-          // Cancel: select the first option (typically the "safe" default)
-          onSelect(options[0]!.value);
+          onCancelRef.current?.();
           break;
       }
     },
-    [focused, highlighted, options, onSelect],
+    [focused, highlighted],
   );
 
   return (

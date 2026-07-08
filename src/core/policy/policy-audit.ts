@@ -96,12 +96,14 @@ export class PolicyAuditManager extends EventEmitter {
   private dirty = false;
   private readonly entries: Map<string, PolicyAuditEntry> = new Map();
   private entryCount = 0;
+  private readonly maxEntries: number;
   private readonly runId: string;
   
-  constructor(runId: string, auditDir: string) {
+  constructor(runId: string, auditDir: string, maxEntries = 10_000) {
     super();
     this.runId = runId;
     this.auditDir = auditDir;
+    this.maxEntries = maxEntries;
   }
   
   /**
@@ -417,6 +419,16 @@ export class PolicyAuditManager extends EventEmitter {
   // ===========================================================================
   
   private addEntry(entry: PolicyAuditEntry): void {
+    // Enforce maximum entry limit: evict oldest entries when limit exceeded
+    if (this.entries.size >= this.maxEntries) {
+      const oldest = [...this.entries.entries()]
+        .sort(([, a], [, b]) => a.timestamp.localeCompare(b.timestamp))
+        .slice(0, Math.ceil(this.maxEntries * 0.1)) // Evict 10%
+        .map(([id]) => id);
+      for (const id of oldest) {
+        this.entries.delete(id);
+      }
+    }
     this.entries.set(entry.id, entry);
     this.dirty = true;
     this.emit('decision', entry);

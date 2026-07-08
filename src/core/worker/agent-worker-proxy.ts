@@ -72,8 +72,8 @@ export class AgentSessionWorker {
       options,
       repoMap,
       targetPath,
-      type: 'init',
-    } as any);
+      type: 'init' as const,
+    });
   }
 
   /** Resolves once the agent is initialized. */

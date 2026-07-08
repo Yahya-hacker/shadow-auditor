@@ -123,8 +123,12 @@ export class ChainBuilder {
 
       if (sourceStep.ok) {
         stepIds.unshift(sourceStep.value.stepId);
-        // Main step depends on source step
-        this.stepManager.getStep(mainStep.stepId)!.prerequisites.push(sourceStep.value.stepId);
+        // Main step depends on source step — use the manager API so the
+        // update is properly tracked (updatedAt, cycle detection).
+        const prereqResult = this.stepManager.addPrerequisite(mainStep.stepId, sourceStep.value.stepId);
+        if (!prereqResult.ok) {
+          return err(prereqResult.error);
+        }
       }
     }
 

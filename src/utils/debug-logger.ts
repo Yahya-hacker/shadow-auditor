@@ -1,11 +1,54 @@
-import * as fs from 'node:fs';
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
 const LOG_DIR = path.join(process.cwd(), '.shadow-auditor');
 const LOG_FILE = path.join(LOG_DIR, 'shadow_debug.log');
+const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5 MB rotation threshold
 
 let lastLogTime = 0;
 const THROTTLE_MS = 100;
+let logInitialized = false;
+
+/**
+ * Ensure the log directory exists. Called lazily on first write.
+ */
+async function ensureLogDir(): Promise<void> {
+  if (logInitialized) return;
+  logInitialized = true;
+  try {
+    await fs.mkdir(LOG_DIR, { recursive: true });
+  } catch {
+    // Silently fail — logging is best-effort
+  }
+}
+
+/**
+ * Rotate the log file if it exceeds the maximum size.
+ * Renames current file to .1, .2, etc. (max 3 rotation files).
+ */
+async function rotateIfNeeded(): Promise<void> {
+  try {
+    const stat = await fs.stat(LOG_FILE);
+    if (stat.size > MAX_LOG_SIZE) {
+      // Shift rotation chain: .2 -> .3, .1 -> .2, current -> .1
+      for (let i = 2; i >= 1; i--) {
+        const oldPath = `${LOG_FILE}.${i}`;
+        const newPath = `${LOG_FILE}.${i + 1}`;
+        try {
+          if (i === 2) {
+            await fs.rm(newPath, { force: true });
+          }
+          await fs.rename(oldPath, newPath);
+        } catch {
+          // Rotation file may not exist yet — that's fine
+        }
+      }
+      await fs.rename(LOG_FILE, `${LOG_FILE}.1`);
+    }
+  } catch {
+    // File may not exist yet — that's fine
+  }
+}
 
 /**
  * Throttled debug logger that writes to an external file (shadow_debug.log).
@@ -14,8 +57,11 @@ const THROTTLE_MS = 100;
  * ANSI byte collisions and stdout race conditions with Ink's renderer.
  * Throttled to a maximum of 100ms intervals to prevent I/O bottlenecks
  * during high-frequency Blackboard/Swarm updates.
+ *
+ * Now fully async: uses fs/promises with non-blocking I/O.
+ * Includes automatic log rotation at 5 MB, keeping up to 3 rotated files.
  */
-export function debugLog(message: string): void {
+export async function debugLog(message: string): Promise<void> {
   const now = Date.now();
   if (now - lastLogTime < THROTTLE_MS) {
     return;
@@ -24,12 +70,11 @@ export function debugLog(message: string): void {
   lastLogTime = now;
 
   try {
-    if (!fs.existsSync(LOG_DIR)) {
-      fs.mkdirSync(LOG_DIR, { recursive: true });
-    }
+    await ensureLogDir();
+    await rotateIfNeeded();
 
     const timestamp = new Date().toISOString();
-    fs.appendFileSync(LOG_FILE, `[${timestamp}] ${message}\n`, 'utf8');
+    await fs.appendFile(LOG_FILE, `[${timestamp}] ${message}\n`, 'utf8');
   } catch {
     // Silently fail to avoid crashing the agent or interfering with the TUI
   }
