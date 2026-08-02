@@ -2,6 +2,9 @@
   <img src="https://github.com/user-attachments/assets/df96b04f-7324-4a07-9100-ff81526e0d31" alt="Shadow Auditor">
 </div>
 
+> [!IMPORTANT]
+> Shadow Auditor is under active development and may contain significant bugs. Development is currently most active on the `langgraph-migration` branch.
+
 # 🌑 Shadow Auditor: Autonomous AI-Powered Security Analysis
 
 > *In the realm of application security, silence is dangerous. Shadow Auditor hunts in the silence—mapping vast codebases, finding the vulnerabilities your static tools missed, and delivering evidence-backed findings that prove beyond doubt where the risk lies.*
@@ -378,7 +381,7 @@ src/
 
 ## License
 
-MIT
+ARR
 
 ---
 
