@@ -25,6 +25,7 @@ import { chunkJsTs } from './chunkers/js-ts-chunker.js';
 import {
   getLanguageForExt,
   GUARANTEED_LANGUAGE_KEYS,
+  type LanguageInfo,
   Parser,
 } from './tree-sitter-languages.js';
 import {parseTreeSitterSource} from './tree-sitter-parser.js';
@@ -160,9 +161,9 @@ export class SemanticIndex {
     this.semanticSearchAvailable = options.semanticSearchEnabled ?? true;
     this.maxChunkChars = options.maxChunkChars ?? 4000;
     this.cacheFingerprint = [
-      'semantic-index-schema-v4',
+      'semantic-index-schema-v5',
       'tree-sitter-parser-callback-v1',
-      'chunkers-v3-lossless-windows',
+      'chunkers-v4-ast-relationships',
       `max-chars:${this.maxChunkChars}`,
       `guaranteed-grammars:${GUARANTEED_LANGUAGE_KEYS.join(',')}`,
     ].join('|');
@@ -256,47 +257,12 @@ export class SemanticIndex {
       return 0;
     }
 
-    const languageName = langInfo.name;
-    const isStructured = langInfo.isStructured;
     let embeddingInProgress = false;
 
     try {
-      let language: unknown;
-      let grammarWarning: string | undefined;
-      try {
-        language = await langInfo.load();
-      } catch {
-        signal?.throwIfAborted();
-        grammarWarning = `Tree-sitter grammar "${langInfo.key}" unavailable; ` +
-          'indexed with whole-file lexical chunks';
-      }
-
-      signal?.throwIfAborted();
-
-      // Use language-specific AST chunking for JS/TS (detailed knowledge),
-      // generic cross-language chunking for other structured languages
-      // (Python, Go, Rust, Java, etc.), and whole-file chunks for
-      // data/config/markup formats.
-      let newChunks: CodeChunk[];
-      if (language) {
-        try {
-          this.parser.setLanguage(language as Parameters<Parser['setLanguage']>[0]);
-          const tree = parseTreeSitterSource(this.parser, sourceCode);
-          newChunks = isStructured
-            ? (langInfo.key === 'javascript' || langInfo.key === 'typescript')
-              ? chunkJsTs(tree.rootNode, sourceCode, filePath, languageName, this.maxChunkChars)
-              : chunkGeneric(tree.rootNode, sourceCode, filePath, languageName, this.maxChunkChars)
-            : chunkWholeFile(sourceCode, filePath, languageName, this.maxChunkChars);
-        } catch (error) {
-          signal?.throwIfAborted();
-          const detail = error instanceof Error ? error.message : String(error);
-          grammarWarning = `Tree-sitter grammar "${langInfo.key}" failed (${detail}); ` +
-            'indexed with whole-file lexical chunks';
-          newChunks = chunkWholeFile(sourceCode, filePath, languageName, this.maxChunkChars);
-        }
-      } else {
-        newChunks = chunkWholeFile(sourceCode, filePath, languageName, this.maxChunkChars);
-      }
+      const chunkResult = await this.chunkSource(filePath, sourceCode, langInfo, signal);
+      let newChunks = chunkResult.chunks;
+      const {grammarWarning} = chunkResult;
 
       if (newChunks.length === 0) {
         this.invalidateFile(filePath);
@@ -320,42 +286,11 @@ export class SemanticIndex {
 
       // Reuse vectors for unchanged semantic blocks, even when surrounding
       // edits move their line numbers and therefore change their chunk IDs.
-      const reusableVectors = new Map(
-        existingChunks.flatMap((chunk) => {
-          const entry = this.vectorStore.get(chunk.id);
-          return entry ? [[chunk.contentHash, entry.vector] as const] : [];
-        }),
-      );
-      const embeddings: Array<number[] | undefined> = Array.from({length: newChunks.length});
-      const changedIndexes: number[] = [];
-      for (const [index, chunk] of newChunks.entries()) {
-        const reusable = reusableVectors.get(chunk.contentHash);
-        if (reusable) embeddings[index] = reusable;
-        else changedIndexes.push(index);
-      }
-
       // Generate every missing replacement vector before mutating the active
       // index. A transient provider failure leaves the last good index intact.
-      if (changedIndexes.length > 0) {
-        embeddingInProgress = true;
-        const generated = await this.provider.embed(
-          changedIndexes.map((index) => this.buildEmbeddingText(newChunks[index]!)),
-          signal,
-        );
-        embeddingInProgress = false;
-        if (
-          generated.length !== changedIndexes.length ||
-          generated.some((embedding) => !embedding)
-        ) {
-          throw new Error(
-            `Embedding provider returned ${generated.length} vectors for ${changedIndexes.length} changed chunks.`,
-          );
-        }
-
-        for (const [position, chunkIndex] of changedIndexes.entries()) {
-          embeddings[chunkIndex] = generated[position];
-        }
-      }
+      embeddingInProgress = true;
+      const embeddings = await this.createEmbeddings(newChunks, existingChunks, signal);
+      embeddingInProgress = false;
 
       this.invalidateFile(filePath);
       const fileChunkIds = new Set<string>();
@@ -545,6 +480,98 @@ export class SemanticIndex {
     parts.push(chunk.rawContent);
 
     return parts.join('\n');
+  }
+
+  private async chunkSource(
+    filePath: string,
+    sourceCode: string,
+    langInfo: LanguageInfo,
+    signal?: AbortSignal,
+  ): Promise<{chunks: CodeChunk[]; grammarWarning?: string}> {
+    let language: unknown;
+    let grammarWarning: string | undefined;
+    try {
+      language = await langInfo.load();
+    } catch {
+      signal?.throwIfAborted();
+      grammarWarning = `Tree-sitter grammar "${langInfo.key}" unavailable; ` +
+        'indexed with whole-file lexical chunks';
+    }
+
+    signal?.throwIfAborted();
+    if (!language) {
+      return {
+        chunks: chunkWholeFile(sourceCode, filePath, langInfo.name, this.maxChunkChars),
+        grammarWarning,
+      };
+    }
+
+    try {
+      this.parser.setLanguage(language as Parameters<Parser['setLanguage']>[0]);
+      const root = parseTreeSitterSource(this.parser, sourceCode).rootNode;
+      if (!langInfo.isStructured) {
+        return {chunks: chunkWholeFile(sourceCode, filePath, langInfo.name, this.maxChunkChars)};
+      }
+
+      const chunkOptions = {
+        filePath,
+        language: langInfo.name,
+        maxChunkChars: this.maxChunkChars,
+        root,
+        sourceCode,
+      };
+      return {
+        chunks: langInfo.key === 'javascript' || langInfo.key === 'typescript'
+          ? chunkJsTs(chunkOptions)
+          : chunkGeneric(chunkOptions),
+      };
+    } catch (error) {
+      signal?.throwIfAborted();
+      const detail = error instanceof Error ? error.message : String(error);
+      return {
+        chunks: chunkWholeFile(sourceCode, filePath, langInfo.name, this.maxChunkChars),
+        grammarWarning: `Tree-sitter grammar "${langInfo.key}" failed (${detail}); ` +
+          'indexed with whole-file lexical chunks',
+      };
+    }
+  }
+
+  private async createEmbeddings(
+    chunks: CodeChunk[],
+    existingChunks: CodeChunk[],
+    signal?: AbortSignal,
+  ): Promise<Array<number[] | undefined>> {
+    const reusableVectors = new Map(
+      existingChunks.flatMap((chunk) => {
+        const entry = this.vectorStore.get(chunk.id);
+        return entry ? [[chunk.contentHash, entry.vector] as const] : [];
+      }),
+    );
+    const embeddings: Array<number[] | undefined> = Array.from({length: chunks.length});
+    const changedIndexes: number[] = [];
+    for (const [index, chunk] of chunks.entries()) {
+      const reusable = reusableVectors.get(chunk.contentHash);
+      if (reusable) embeddings[index] = reusable;
+      else changedIndexes.push(index);
+    }
+
+    if (changedIndexes.length === 0) return embeddings;
+
+    const generated = await this.provider.embed(
+      changedIndexes.map((index) => this.buildEmbeddingText(chunks[index]!)),
+      signal,
+    );
+    if (generated.length !== changedIndexes.length || generated.some((embedding) => !embedding)) {
+      throw new Error(
+        `Embedding provider returned ${generated.length} vectors for ${changedIndexes.length} changed chunks.`,
+      );
+    }
+
+    for (const [position, chunkIndex] of changedIndexes.entries()) {
+      embeddings[chunkIndex] = generated[position];
+    }
+
+    return embeddings;
   }
 
   private embeddingFingerprint(chunk: CodeChunk): string {

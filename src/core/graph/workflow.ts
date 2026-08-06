@@ -647,32 +647,25 @@ function reporterEvidence(
   );
   const confirmedIds = new Set(confirmedVerdicts.keys());
   const history = getStageHistory(state, 'reporting');
-  const reportCalls: Array<{args: Record<string, unknown>; id?: string}> = [];
-  const finishCalls: Array<{id?: string}> = [];
-
-  for (const message of history) {
-    for (const call of getToolCalls(message)) {
-      if (call.name === 'report_finding') {
-        reportCalls.push({
-          args: call.args as Record<string, unknown>,
-          id: call.id,
-        });
-      } else if (call.name === 'finish_task') {
-        finishCalls.push({id: call.id});
-      }
-    }
-  }
+  const toolCalls = history.flatMap((message) => getToolCalls(message));
+  const reportCalls = toolCalls
+    .filter((call) => call.name === 'report_finding')
+    .map((call) => ({args: call.args as Record<string, unknown>, id: call.id}));
+  const finishCalls = toolCalls
+    .filter((call) => call.name === 'finish_task')
+    .map((call) => ({id: call.id}));
 
   const acceptedFindings: EnhancedFinding[] = [];
   const recordedClaimIds = new Set<string>();
-  for (const call of reportCalls) {
-    if (!call.id) throw new Error('report_finding emitted a call without an ID.');
+  const acceptReportCall = (call: typeof reportCalls[number]): EnhancedFinding | undefined => {
+    const callId = call.id;
+    if (!callId) throw new Error('report_finding emitted a call without an ID.');
     const resultMessage = history.find((message) =>
-      isToolMessageFor(message, call.id!),
+      isToolMessageFor(message, callId),
     );
-    if (!resultMessage) continue;
+    if (!resultMessage) return undefined;
     if (!toolSucceeded(resultMessage)) {
-      throw new Error(`report_finding tool call ${call.id} failed.`);
+      throw new Error(`report_finding tool call ${callId} failed.`);
     }
 
     const result = parseToolResult(resultMessage);
@@ -683,7 +676,7 @@ function reporterEvidence(
       result.accepted !== true
     ) {
       throw new Error(
-        `report_finding tool call ${call.id} was rejected; the pipeline will not publish an unrecorded finding.`,
+        `report_finding tool call ${callId} was rejected; the pipeline will not publish an unrecorded finding.`,
       );
     }
 
@@ -719,7 +712,7 @@ function reporterEvidence(
       verdict.verification.evidenceArtifactIds,
       sourceClaimId,
     ) ?? [];
-    acceptedFindings.push({
+    return {
       ...parsedFinding,
       evidenceRefs: [
         ...(parsedFinding.evidenceRefs ?? []),
@@ -740,7 +733,12 @@ function reporterEvidence(
           truncated: false,
         })),
       ],
-    });
+    };
+  };
+
+  for (const call of reportCalls) {
+    const accepted = acceptReportCall(call);
+    if (accepted) acceptedFindings.push(accepted);
   }
 
   let completionSucceeded = false;
@@ -873,13 +871,16 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
   }
 
   async function parseOrRepairHandoff<T>(
-    state: AgentStateType,
-    stage: Exclude<AuditStage, 'reporting'>,
-    task: string,
-    response: BaseMessage,
-    parse: (content: string) => T,
-    signal?: AbortSignal,
+    options: {
+      parse: (content: string) => T;
+      response: BaseMessage;
+      signal?: AbortSignal;
+      stage: Exclude<AuditStage, 'reporting'>;
+      state: AgentStateType;
+      task: string;
+    },
   ): Promise<{artifact: T; messages: BaseMessage[]}> {
+    const {parse, response, signal, stage, state, task} = options;
     try {
       return {artifact: parse(stringifyContent(response)), messages: [response]};
     } catch (error) {
@@ -943,14 +944,14 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
     }
 
     assertStageUsedTools(state, 'codebase_intelligence');
-    const {artifact, messages} = await parseOrRepairHandoff(
-      state,
-      'codebase_intelligence',
-      task,
+    const {artifact, messages} = await parseOrRepairHandoff({
+      parse: parseCodebaseIntelligenceArtifact,
       response,
-      parseCodebaseIntelligenceArtifact,
-      config.signal,
-    );
+      signal: config.signal,
+      stage: 'codebase_intelligence',
+      state,
+      task,
+    });
     return {
       activeStage: 'sast_audit' as const,
       codebaseIntelligence: artifact,
@@ -989,14 +990,14 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
     }
 
     assertStageUsedTools(state, 'sast_audit');
-    const {artifact, messages} = await parseOrRepairHandoff(
-      state,
-      'sast_audit',
-      task,
+    const {artifact, messages} = await parseOrRepairHandoff({
+      parse: parseSastAuditArtifact,
       response,
-      parseSastAuditArtifact,
-      config.signal,
-    );
+      signal: config.signal,
+      stage: 'sast_audit',
+      state,
+      task,
+    });
     for (const candidate of artifact.candidates) {
       const evidence = verifiedExecutionEvidence(
         candidate.proofOfConcept.evidenceArtifactIds,
@@ -1074,14 +1075,14 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
       return {activeStage: 'devils_advocate' as const, messages: [response], stageIterations};
     }
 
-    const {artifact: parsedArtifact, messages} = await parseOrRepairHandoff(
-      state,
-      'devils_advocate',
-      task,
+    const {artifact: parsedArtifact, messages} = await parseOrRepairHandoff({
+      parse: parseDevilsAdvocateArtifact,
       response,
-      parseDevilsAdvocateArtifact,
-      config.signal,
-    );
+      signal: config.signal,
+      stage: 'devils_advocate',
+      state,
+      task,
+    });
     const suppressedIds: string[] = [];
     const artifact = {
       ...parsedArtifact,

@@ -32,13 +32,22 @@ const defaultDependencies: RuntimeToolAssemblerDependencies = {
   detectTestRunner: TestRunner.detect,
 };
 
-export async function assembleRuntimeTools(
-  config: ShadowConfig,
-  targetPath: string,
-  runId: string,
-  dependencies: RuntimeToolAssemblerDependencies = defaultDependencies,
-  confirmPatch?: (request: PatchReviewRequest) => Promise<PatchReviewDecision>,
-): Promise<RuntimeToolAssembly> {
+export interface RuntimeToolAssemblerOptions {
+  config: ShadowConfig;
+  confirmPatch?: (request: PatchReviewRequest) => Promise<PatchReviewDecision>;
+  dependencies?: RuntimeToolAssemblerDependencies;
+  runId: string;
+  targetPath: string;
+}
+
+export async function assembleRuntimeTools(options: RuntimeToolAssemblerOptions): Promise<RuntimeToolAssembly> {
+  const {
+    config,
+    confirmPatch,
+    dependencies = defaultDependencies,
+    runId,
+    targetPath,
+  } = options;
   const tools: ToolSet = {};
   let evidenceStore: SignedExecutionEvidenceStore | undefined;
   let sandboxManager: null | SandboxManager = null;

@@ -13,6 +13,26 @@ import { z } from 'zod';
 import { AgentWorker } from '../src/core/hivemind/agent-worker.js';
 import { Blackboard } from '../src/core/hivemind/blackboard.js';
 import { SwarmCoordinator } from '../src/core/hivemind/swarm-coordinator.js';
+import { collectPatchCompetitionProposals } from '../src/core/hivemind/swarm-supervisor.js';
+
+function createPatchProposal(
+  agentRole: 'language_patterns' | 'security_boundaries' | 'tui_state_machine',
+  index: number,
+) {
+  return {
+    agentRole,
+    confidence: 0.9,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    filesAffected: [`src/patch-${index}.ts`],
+    metadata: {},
+    patchDiff: `--- a/src/patch-${index}.ts\n+++ b/src/patch-${index}.ts\n@@ -1 +1 @@\n-old\n+new`,
+    proposalId: `proposal-${index}`,
+    rationale: `Apply the ${agentRole} fix.`,
+    severity: 'high',
+    targetLanguage: 'typescript',
+    vulnerabilityType: 'CWE-20',
+  };
+}
 
 describe('SwarmCoordinator', () => {
   let tmpDir: string;
@@ -81,6 +101,111 @@ describe('SwarmCoordinator', () => {
 
     // Await the coordination promise which should terminate gracefully now
     await promise;
+  });
+
+  it('runs patch-only mode as a three-perspective competition', async () => {
+    const coordinator = new SwarmCoordinator({
+      allTools: {
+        finish_task: {
+          description: 'Finish task tool',
+          execute: async () => ({ text: 'Task completed successfully.' }),
+        } as any,
+      },
+      auditMode: 'patch-only',
+      config: {
+        auditMode: 'patch-only',
+        model: 'test-model',
+        provider: 'test-provider',
+        swarm: {maxWorkers: 8},
+      } as any,
+      model: {} as any,
+      runId: 'test-patch-competition',
+      storagePath: storageDir,
+    });
+
+    const promise = coordinator.executeMission('Fix verified findings').catch((error: unknown) => error);
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 300);
+    });
+    const tasks = coordinator.getBlackboard().getTaskGraph().getAllTasks();
+    const patchTasks = tasks.filter((task) => task.requiredRole === 'patch-engineer');
+    expect(patchTasks, JSON.stringify(tasks)).to.have.length(3);
+    expect(patchTasks.map((task) => task.parameters.patchPerspective)).to.have.members([
+      'security_boundaries',
+      'language_patterns',
+      'tui_state_machine',
+    ]);
+    const reporter = tasks.find((task) => task.taskType === 'report');
+    expect(reporter?.dependencies).to.include.members(patchTasks.map((task) => task.taskId));
+
+    const patchWorkers = coordinator.getBlackboard().getRegisteredAgents()
+      .filter((worker) => worker.role === 'patch-engineer');
+    expect(patchWorkers).to.have.length(3);
+    for (const worker of (coordinator as any).workers.values()) {
+      worker.terminate();
+    }
+
+    await promise;
+  });
+
+  it('requires one submitted claim for every patch perspective', async () => {
+    const blackboard = await Blackboard.create({
+      runId: 'test-patch-claims',
+      storagePath: storageDir,
+    });
+    const roles = [
+      'security_boundaries',
+      'language_patterns',
+      'tui_state_machine',
+    ] as const;
+    const taskGraph = blackboard.getTaskGraph();
+
+    for (const [index, role] of roles.entries()) {
+      const registration = blackboard.registerAgent('patch-engineer');
+      if (!registration.ok) throw new Error(registration.error);
+      const task = taskGraph.createTask({
+        description: `Create the ${role} proposal`,
+        parameters: { patchPerspective: role },
+        requiredRole: 'patch-engineer',
+        taskType: `patch_${role}`,
+      });
+      if (!task.ok) throw new Error(task.error);
+      if (!taskGraph.claimTask(task.value.taskId, registration.value.agentId).ok) {
+        throw new Error('Task claim failed');
+      }
+
+      if (!taskGraph.startTask(task.value.taskId).ok) throw new Error('Task start failed');
+      if (!taskGraph.completeTask(task.value.taskId, 'finish_task completed').ok) {
+        throw new Error('Task completion failed');
+      }
+
+      if (index < roles.length - 1) {
+        const claim = await blackboard.submitClaim(
+          registration.value.agentId,
+          'patch_proposal',
+          createPatchProposal(role, index),
+        );
+        if (!claim.ok) throw new Error(claim.error);
+      }
+    }
+
+    expect(() => collectPatchCompetitionProposals(blackboard)).to.throw(
+      'must submit exactly one valid tui_state_machine proposal',
+    );
+
+    const finalTask = taskGraph.getAllTasks().find(
+      (task) => task.parameters.patchPerspective === 'tui_state_machine',
+    );
+    if (!finalTask?.assignedAgent) throw new Error('Final patch task was not assigned');
+    const finalClaim = await blackboard.submitClaim(
+      finalTask.assignedAgent,
+      'patch_proposal',
+      createPatchProposal('tui_state_machine', 2),
+    );
+    if (!finalClaim.ok) throw new Error(finalClaim.error);
+
+    expect(collectPatchCompetitionProposals(blackboard).map((proposal) => proposal.agentRole))
+      .to.have.members(roles);
   });
 
   it('verifies blackboard claim pub/sub and consensus channels', async () => {

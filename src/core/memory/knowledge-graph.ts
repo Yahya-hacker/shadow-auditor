@@ -337,17 +337,17 @@ export class KnowledgeGraph {
 
     for (const source of sourceEntities) {
       const visited = new Set<string>();
-      this.queryPathsDepthFirst(
-        source.canonicalId,
-        targetType,
+      this.queryPathsDepthFirst({
+        currentEdges: [],
+        currentId: source.canonicalId,
+        currentPath: [],
+        depth: 0,
         edgeType,
-        [],
-        [],
-        0,
         maxDepth,
-        visited,
         results,
-      );
+        targetType,
+        visited,
+      });
     }
 
     return results;
@@ -531,17 +531,28 @@ export class KnowledgeGraph {
     }
   }
 
-  private queryPathsDepthFirst(
-    currentId: string,
-    targetType: EntityType,
-    edgeType: EdgeType,
-    currentPath: BaseEntity[],
-    currentEdges: GraphEdge[],
-    depth: number,
-    maxDepth: number,
-    visited: Set<string>,
-    results: Array<{ edges: GraphEdge[]; entities: BaseEntity[] }>,
-  ): void {
+  private queryPathsDepthFirst(options: {
+    currentEdges: GraphEdge[];
+    currentId: string;
+    currentPath: BaseEntity[];
+    depth: number;
+    edgeType: EdgeType;
+    maxDepth: number;
+    results: Array<{edges: GraphEdge[]; entities: BaseEntity[]}>;
+    targetType: EntityType;
+    visited: Set<string>;
+  }): void {
+    const {
+      currentEdges,
+      currentId,
+      currentPath,
+      depth,
+      edgeType,
+      maxDepth,
+      results,
+      targetType,
+      visited,
+    } = options;
     if (depth > maxDepth) return;
 
     const currentEntity = this.entities.get(currentId);
@@ -562,17 +573,17 @@ export class KnowledgeGraph {
       if (!visited.has(nextId)) {
         const nextEntity = this.entities.get(nextId);
         if (nextEntity) {
-          this.queryPathsDepthFirst(
-            nextId,
-            targetType,
+          this.queryPathsDepthFirst({
+            currentEdges: [...currentEdges, edge],
+            currentId: nextId,
+            currentPath: [...currentPath, currentEntity],
+            depth: depth + 1,
             edgeType,
-            [...currentPath, currentEntity],
-            [...currentEdges, edge],
-            depth + 1,
             maxDepth,
-            visited,
             results,
-          );
+            targetType,
+            visited,
+          });
         }
       }
     }

@@ -13,6 +13,7 @@ import type { Parser } from '../tree-sitter-languages.js';
 import type { CodeChunk } from './types.js';
 
 import {finalizeChunks} from './chunk-windows.js';
+import {extractCodeRelationships} from './code-relationships.js';
 
 /** AST node types that represent meaningful code boundaries (JS/TS-specific) */
 const _CHUNK_BOUNDARY_TYPES = new Set([
@@ -66,29 +67,185 @@ function extractClassHeader(node: Parser.SyntaxNode): string {
  * Chunk a parsed JS/TS AST into semantically meaningful code blocks.
  * Handles JS/TS with detailed AST knowledge.
  */
-export function chunkJsTs(
-  root: Parser.SyntaxNode,
-  sourceCode: string,
-  filePath: string,
-  language: string,
-  maxChunkChars: number,
-): CodeChunk[] {
+export interface JsTsChunkOptions {
+  filePath: string;
+  language: string;
+  maxChunkChars: number;
+  root: Parser.SyntaxNode;
+  sourceCode: string;
+}
+
+type ChunkFactory = (
+  node: Parser.SyntaxNode,
+  structuralType: string,
+  symbol: string,
+  parentContext: string,
+) => CodeChunk;
+
+interface ChunkingContext {
+  chunks: CodeChunk[];
+  createChunk: ChunkFactory;
+  fileContext: string;
+  maxChunkChars: number;
+}
+
+function chunkClass(
+  node: Parser.SyntaxNode,
+  context: ChunkingContext,
+  exportedNode?: Parser.SyntaxNode,
+): void {
+  const className = node.childForFieldName('name')?.text ?? 'Anonymous';
+  const prefix = exportedNode ? 'export ' : '';
+  const classContext = `${context.fileContext}\n\n${prefix}${extractClassHeader(node)} {`;
+  const body = node.childForFieldName('body');
+  if (!body) {
+    if (exportedNode) {
+      context.chunks.push(context.createChunk(exportedNode, 'class', `export ${className}`, context.fileContext));
+    }
+
+    return;
+  }
+
+  let hasMethodChunks = false;
+  for (const member of body.namedChildren) {
+    if (member.type !== 'method_definition') continue;
+    const methodName = member.childForFieldName('name')?.text ?? 'anonymous';
+    context.chunks.push(context.createChunk(
+      member,
+      'method',
+      `${className}.${methodName}`,
+      classContext,
+    ));
+    hasMethodChunks = true;
+  }
+
+  if (!hasMethodChunks || node.text.length <= context.maxChunkChars) {
+    const chunkNode = exportedNode ?? node;
+    const symbol = exportedNode ? `export ${className}` : className;
+    context.chunks.push(context.createChunk(chunkNode, 'class', symbol, context.fileContext));
+  }
+}
+
+function chunkLexicalDeclaration(
+  declaration: Parser.SyntaxNode,
+  chunkNode: Parser.SyntaxNode,
+  context: ChunkingContext,
+  prefix = '',
+): void {
+  for (const declarator of declaration.namedChildren) {
+    if (declarator.type !== 'variable_declarator') continue;
+    const value = declarator.childForFieldName('value');
+    const name = declarator.childForFieldName('name')?.text ?? 'anonymous';
+    const structuralType = value && (value.type === 'arrow_function' || value.type === 'function')
+      ? 'function'
+      : 'declaration';
+    context.chunks.push(context.createChunk(
+      chunkNode,
+      structuralType,
+      `${prefix}${name}`,
+      context.fileContext,
+    ));
+  }
+}
+
+function chunkExport(node: Parser.SyntaxNode, context: ChunkingContext): void {
+  const declaration = node.namedChildren.find((child) =>
+    child.type === 'function_declaration' ||
+    child.type === 'class_declaration' ||
+    child.type === 'lexical_declaration',
+  );
+  if (!declaration) {
+    if (node.text.length > 20) {
+      context.chunks.push(context.createChunk(node, 'export', 'export', context.fileContext));
+    }
+
+    return;
+  }
+
+  if (declaration.type === 'class_declaration') {
+    chunkClass(declaration, context, node);
+  } else if (declaration.type === 'function_declaration') {
+    const name = declaration.childForFieldName('name')?.text ?? 'anonymous';
+    context.chunks.push(context.createChunk(node, 'function', `export ${name}`, context.fileContext));
+  } else {
+    chunkLexicalDeclaration(declaration, node, context, 'export ');
+  }
+}
+
+function chunkTopLevelNode(node: Parser.SyntaxNode, context: ChunkingContext): void {
+  switch (node.type) {
+    case 'class_declaration': {
+      chunkClass(node, context);
+      break;
+    }
+
+    case 'enum_declaration': {
+      const name = node.childForFieldName('name')?.text ?? 'anonymous';
+      context.chunks.push(context.createChunk(node, 'enum', name, context.fileContext));
+      break;
+    }
+
+    case 'export_statement': {
+      chunkExport(node, context);
+      break;
+    }
+
+    case 'function_declaration': {
+      const name = node.childForFieldName('name')?.text ?? 'anonymous';
+      context.chunks.push(context.createChunk(node, 'function', name, context.fileContext));
+      break;
+    }
+
+    case 'interface_declaration': {
+      const name = node.childForFieldName('name')?.text ?? 'anonymous';
+      context.chunks.push(context.createChunk(
+        node,
+        node.type.replace('_declaration', ''),
+        name,
+        context.fileContext,
+      ));
+      break;
+    }
+
+    case 'lexical_declaration': {
+      chunkLexicalDeclaration(node, node, context);
+      break;
+    }
+
+    case 'type_alias_declaration': {
+      const name = node.childForFieldName('name')?.text ?? 'anonymous';
+      context.chunks.push(context.createChunk(
+        node,
+        node.type.replace('_declaration', ''),
+        name,
+        context.fileContext,
+      ));
+      break;
+    }
+  }
+}
+
+export function chunkJsTs(options: JsTsChunkOptions): CodeChunk[] {
+  const {filePath, language, maxChunkChars, root, sourceCode} = options;
+  const fileDependencies = extractCodeRelationships(root).dependencies;
+  const lines = sourceCode.split('\n');
   const chunks: CodeChunk[] = [];
   const fileContext = extractFileContext(root);
-  const lines = sourceCode.split('\n');
-
-  function createChunk(
+  const createChunk: ChunkFactory = (
     node: Parser.SyntaxNode,
     structuralType: string,
     symbol: string,
     parentContext: string,
-  ): CodeChunk {
+  ) => {
     const rawContent = node.text;
     const startLine = node.startPosition.row + 1;
     const endLine = node.endPosition.row + 1;
+    const relationships = extractCodeRelationships(node);
 
     return {
+      calls: relationships.calls,
       contentHash: crypto.createHash('sha256').update(rawContent).digest('hex').slice(0, 16),
+      dependencies: fileDependencies,
       endLine,
       filePath,
       id: `chunk_${crypto.createHash('sha256').update(`${filePath}:${startLine}:${endLine}`).digest('hex').slice(0, 16)}`,
@@ -99,149 +256,14 @@ export function chunkJsTs(
       structuralType,
       symbol,
     };
-  }
+  };
 
-  // Process top-level declarations
   for (const child of root.namedChildren) {
-    if (child.type === 'import_statement') {
-      continue; // Imports are captured as parent context, not standalone chunks
-    }
-
-    if (child.type === 'class_declaration') {
-      const className = child.childForFieldName('name')?.text ?? 'Anonymous';
-      const classHeader = extractClassHeader(child);
-      const classContext = `${fileContext}\n\n${classHeader} {`;
-
-      // Chunk each method within the class separately
-      const body = child.childForFieldName('body');
-      if (body) {
-        let hasMethodChunks = false;
-        for (const member of body.namedChildren) {
-          if (member.type === 'method_definition') {
-            const methodName = member.childForFieldName('name')?.text ?? 'anonymous';
-            chunks.push(createChunk(
-              member,
-              'method',
-              `${className}.${methodName}`,
-              classContext,
-            ));
-            hasMethodChunks = true;
-          }
-        }
-
-        // If class has no methods or is small, chunk the entire class
-        if (!hasMethodChunks || child.text.length <= maxChunkChars) {
-          chunks.push(createChunk(child, 'class', className, fileContext));
-        }
-      }
-
-      continue;
-    }
-
-    if (child.type === 'function_declaration') {
-      const name = child.childForFieldName('name')?.text ?? 'anonymous';
-      chunks.push(createChunk(child, 'function', name, fileContext));
-      continue;
-    }
-
-    if (child.type === 'export_statement') {
-      const declaration = child.namedChildren.find((c) =>
-        c.type === 'function_declaration' ||
-        c.type === 'class_declaration' ||
-        c.type === 'lexical_declaration',
-      );
-
-      if (declaration) {
-        switch (declaration.type) {
-        case 'class_declaration': {
-          const className = declaration.childForFieldName('name')?.text ?? 'Anonymous';
-          const classHeader = extractClassHeader(declaration);
-          const classContext = `${fileContext}\n\nexport ${classHeader} {`;
-
-          const body = declaration.childForFieldName('body');
-          if (body) {
-            let hasMethodChunks = false;
-            for (const member of body.namedChildren) {
-              if (member.type === 'method_definition') {
-                const methodName = member.childForFieldName('name')?.text ?? 'anonymous';
-                chunks.push(createChunk(
-                  member,
-                  'method',
-                  `${className}.${methodName}`,
-                  classContext,
-                ));
-                hasMethodChunks = true;
-              }
-            }
-
-            if (!hasMethodChunks || declaration.text.length <= maxChunkChars) {
-              chunks.push(createChunk(child, 'class', `export ${className}`, fileContext));
-            }
-          } else {
-            chunks.push(createChunk(child, 'class', `export ${className}`, fileContext));
-          }
-
-          break;
-        }
-
-        case 'function_declaration': {
-          const name = declaration.childForFieldName('name')?.text ?? 'anonymous';
-          chunks.push(createChunk(child, 'function', `export ${name}`, fileContext));
-          break;
-        }
-
-        case 'lexical_declaration': {
-          for (const declarator of declaration.namedChildren) {
-            if (declarator.type === 'variable_declarator') {
-              const value = declarator.childForFieldName('value');
-              const name = declarator.childForFieldName('name')?.text ?? 'anonymous';
-              if (value && (value.type === 'arrow_function' || value.type === 'function')) {
-                chunks.push(createChunk(child, 'function', `export ${name}`, fileContext));
-              } else {
-                chunks.push(createChunk(child, 'declaration', `export ${name}`, fileContext));
-              }
-            }
-          }
-
-          break;
-        }
-        }
-      } else if (child.text.length > 20) {
-        chunks.push(createChunk(child, 'export', 'export', fileContext));
-      }
-
-      continue;
-    }
-
-    if (child.type === 'lexical_declaration') {
-      for (const declarator of child.namedChildren) {
-        if (declarator.type === 'variable_declarator') {
-          const name = declarator.childForFieldName('name')?.text ?? 'anonymous';
-          const value = declarator.childForFieldName('value');
-          const structType = value && (value.type === 'arrow_function' || value.type === 'function')
-            ? 'function'
-            : 'declaration';
-          chunks.push(createChunk(child, structType, name, fileContext));
-        }
-      }
-
-      continue;
-    }
-
-    if (child.type === 'interface_declaration' || child.type === 'type_alias_declaration') {
-      const name = child.childForFieldName('name')?.text ?? 'anonymous';
-      chunks.push(createChunk(child, child.type.replace('_declaration', ''), name, fileContext));
-      continue;
-    }
-
-    if (child.type === 'enum_declaration') {
-      const name = child.childForFieldName('name')?.text ?? 'anonymous';
-      chunks.push(createChunk(child, 'enum', name, fileContext));
-      continue;
+    if (child.type !== 'import_statement') {
+      chunkTopLevelNode(child, {chunks, createChunk, fileContext, maxChunkChars});
     }
   }
 
-  // If no structural chunks were found, chunk the file as a whole
   if (chunks.length === 0 && sourceCode.trim().length > 0) {
     chunks.push({
       contentHash: crypto.createHash('sha256').update(sourceCode).digest('hex').slice(0, 16),

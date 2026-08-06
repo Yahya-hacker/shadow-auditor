@@ -545,50 +545,23 @@ export const SetupScreen: React.FC = () => {
 
   useKeyHandler(handleKeyDown);
 
-  return (
-    <Box flexDirection="column" paddingX={spacing.panelPadX}>
-      <Box
-        borderColor={colors.brand} borderStyle={'rounded'}
-        paddingX={spacing.panelPadX}
-        paddingY={spacing.panelPadY}
-      >
-        <Text bold color={colors.brand}>
-          ◈ Shadow Auditor — Environment Setup
-        </Text>
-      </Box>
-
-      <Box flexDirection="column" marginTop={1}>
-        {step === 'provider' && (
+  const renderAzureStep = () => {
+    switch (step) {
+      case 'azureApiMode': {
+        return (
           <>
-            <Text color={colors.bright}>Select your LLM provider:</Text>
-            <OptionList highlightedIndex={optIndex} onSelect={handleProviderSelect} options={providerOptions} />
-          </>
-        )}
-
-        {step === 'azureEndpointType' && (
-          <>
-            <Text color={colors.bright}>Select the Azure API endpoint surface:</Text>
+            <Text color={colors.bright}>Select the Azure model API mode:</Text>
             <OptionList
               highlightedIndex={optIndex}
-              onSelect={handleAzureEndpointTypeSelect}
-              options={azureEndpointOptions}
+              onSelect={handleAzureApiModeSelect}
+              options={azureApiModeOptions}
             />
           </>
-        )}
+        );
+      }
 
-        {step === 'azureEndpoint' && (
-          <>
-            <Text color={colors.bright}>Enter the Azure or Foundry endpoint:</Text>
-            <Input
-              onChange={setAzureEndpoint}
-              onSubmit={handleAzureEndpointSubmit}
-              placeholder="https://resource.openai.azure.com"
-              value={azureEndpoint}
-            />
-          </>
-        )}
-
-        {step === 'azureApiVersion' && (
+      case 'azureApiVersion': {
+        return (
           <>
             <Text color={colors.bright}>Enter the API version required by this deployment:</Text>
             <Input
@@ -598,9 +571,11 @@ export const SetupScreen: React.FC = () => {
               value={azureApiVersion}
             />
           </>
-        )}
+        );
+      }
 
-        {step === 'azureAuth' && (
+      case 'azureAuth': {
+        return (
           <>
             <Text color={colors.bright}>Select Azure authentication:</Text>
             <OptionList
@@ -609,20 +584,11 @@ export const SetupScreen: React.FC = () => {
               options={azureAuthOptions}
             />
           </>
-        )}
+        );
+      }
 
-        {step === 'azureCredential' && (
-          <>
-            <Text color={colors.bright}>Select the Microsoft Entra credential chain:</Text>
-            <OptionList
-              highlightedIndex={optIndex}
-              onSelect={handleAzureCredentialSelect}
-              options={azureCredentialOptions}
-            />
-          </>
-        )}
-
-        {step === 'azureClientId' && (
+      case 'azureClientId': {
+        return (
           <>
             <Text color={colors.bright}>
               Enter a user-assigned managed identity client ID (Enter for system-assigned):
@@ -633,9 +599,24 @@ export const SetupScreen: React.FC = () => {
               value={azureClientId}
             />
           </>
-        )}
+        );
+      }
 
-        {step === 'azureDeployment' && (
+      case 'azureCredential': {
+        return (
+          <>
+            <Text color={colors.bright}>Select the Microsoft Entra credential chain:</Text>
+            <OptionList
+              highlightedIndex={optIndex}
+              onSelect={handleAzureCredentialSelect}
+              options={azureCredentialOptions}
+            />
+          </>
+        );
+      }
+
+      case 'azureDeployment': {
+        return (
           <>
             <Text color={colors.bright}>
               Enter the Azure model deployment name (not the catalog model ID):
@@ -646,9 +627,116 @@ export const SetupScreen: React.FC = () => {
               value={azureDeployment}
             />
           </>
-        )}
+        );
+      }
 
-        {step === 'baseUrl' && (
+      case 'azureEmbeddingDeployment': {
+        return (
+          <>
+            <Text color={colors.bright}>Enter the Azure embedding deployment name:</Text>
+            <Input
+              onChange={setAzureEmbeddingDeployment}
+              onSubmit={handleAzureEmbeddingDeploymentSubmit}
+              value={azureEmbeddingDeployment}
+            />
+          </>
+        );
+      }
+
+      case 'azureEmbeddingDimension': {
+        return (
+          <>
+            <Text color={colors.bright}>Enter the embedding deployment output dimension:</Text>
+            <Input
+              onChange={setAzureEmbeddingDimension}
+              onSubmit={handleAzureEmbeddingDimensionSubmit}
+              placeholder="1536"
+              value={azureEmbeddingDimension}
+            />
+          </>
+        );
+      }
+
+      case 'azureEndpoint': {
+        return (
+          <>
+            <Text color={colors.bright}>Enter the Azure or Foundry endpoint:</Text>
+            <Input
+              onChange={setAzureEndpoint}
+              onSubmit={handleAzureEndpointSubmit}
+              placeholder="https://resource.openai.azure.com"
+              value={azureEndpoint}
+            />
+          </>
+        );
+      }
+
+      case 'azureEndpointType': {
+        return (
+          <>
+            <Text color={colors.bright}>Select the Azure API endpoint surface:</Text>
+            <OptionList
+              highlightedIndex={optIndex}
+              onSelect={handleAzureEndpointTypeSelect}
+              options={azureEndpointOptions}
+            />
+          </>
+        );
+      }
+
+      case 'azureReasoning': {
+        return (
+          <>
+            <Text color={colors.bright}>Select the model reasoning effort:</Text>
+            <OptionList
+              highlightedIndex={optIndex}
+              onSelect={handleAzureReasoningSelect}
+              options={azureReasoningOptions}
+            />
+          </>
+        );
+      }
+
+      case 'azureVerbosity': {
+        return (
+          <>
+            <Text color={colors.bright}>Select response verbosity:</Text>
+            <OptionList
+              highlightedIndex={optIndex}
+              onSelect={handleAzureVerbositySelect}
+              options={azureVerbosityOptions}
+            />
+          </>
+        );
+      }
+
+      default: {
+        return null;
+      }
+    }
+  };
+
+  const renderGeneralStep = () => {
+    switch (step) {
+      case 'apiKey': {
+        return (
+          <>
+            <Text color={colors.bright}>
+              Enter your {provider === 'azure' ? 'Azure ' : ''}API key (stored securely in OS vault):
+            </Text>
+            <Input
+              mask="*"
+              onChange={(v: string) => setApiKey(v)}
+              onSubmit={handleApiKeySubmit}
+              placeholder="••••••••"
+              value={apiKey}
+            />
+          </>
+        );
+      }
+
+      case 'baseUrl': {
+        return (
           <>
             <Text color={colors.bright}>
               {provider === 'qwen'
@@ -664,70 +752,11 @@ export const SetupScreen: React.FC = () => {
               value={customBaseUrl}
             />
           </>
-        )}
+        );
+      }
 
-        {step === 'apiKey' && (
-          <>
-            <Text color={colors.bright}>
-              Enter your {provider === 'azure' ? 'Azure ' : ''}API key (stored securely in OS vault):
-            </Text>
-            <Input
-              mask="*"
-              onChange={(v: string) => setApiKey(v)}
-              onSubmit={handleApiKeySubmit}
-              placeholder="••••••••"
-              value={apiKey}
-            />
-          </>
-        )}
-
-        {step === 'fetching' && (
-          <Text color={colors.agent}>Fetching live models from API...</Text>
-        )}
-
-        {step === 'model' && (
-          <>
-            <Text color={colors.bright}>
-              {fetching ? 'Select a model (live list):' : 'Select a model:'}
-            </Text>
-            <OptionList highlightedIndex={optIndex} onSelect={handleModelSelect} options={modelOptions} />
-          </>
-        )}
-
-        {step === 'azureApiMode' && (
-          <>
-            <Text color={colors.bright}>Select the Azure model API mode:</Text>
-            <OptionList
-              highlightedIndex={optIndex}
-              onSelect={handleAzureApiModeSelect}
-              options={azureApiModeOptions}
-            />
-          </>
-        )}
-
-        {step === 'azureReasoning' && (
-          <>
-            <Text color={colors.bright}>Select the model reasoning effort:</Text>
-            <OptionList
-              highlightedIndex={optIndex}
-              onSelect={handleAzureReasoningSelect}
-              options={azureReasoningOptions}
-            />
-          </>
-        )}
-
-        {step === 'azureVerbosity' && (
-          <>
-            <Text color={colors.bright}>Select response verbosity:</Text>
-            <OptionList
-              highlightedIndex={optIndex}
-              onSelect={handleAzureVerbositySelect}
-              options={azureVerbosityOptions}
-            />
-          </>
-        )}
-
-        {step === 'customModel' && (
+      case 'customModel': {
+        return (
           <>
             <Text color={colors.bright}>Enter the model name:</Text>
             <Input
@@ -736,39 +765,32 @@ export const SetupScreen: React.FC = () => {
               value={model}
             />
           </>
-        )}
+        );
+      }
 
-        {step === 'embedding' && (
+      case 'done': {
+        return (
+          <Text color={colors.success}>
+            Configuration saved! Entering Shadow Auditor...
+          </Text>
+        );
+      }
+
+      case 'embedding': {
+        return (
           <>
             <Text color={colors.bright}>Choose embedding strategy:</Text>
             <OptionList highlightedIndex={optIndex} onSelect={handleEmbeddingSelect} options={embeddingOptions} />
           </>
-        )}
+        );
+      }
 
-        {step === 'azureEmbeddingDeployment' && (
-          <>
-            <Text color={colors.bright}>Enter the Azure embedding deployment name:</Text>
-            <Input
-              onChange={setAzureEmbeddingDeployment}
-              onSubmit={handleAzureEmbeddingDeploymentSubmit}
-              value={azureEmbeddingDeployment}
-            />
-          </>
-        )}
+      case 'fetching': {
+        return <Text color={colors.agent}>Fetching live models from API...</Text>;
+      }
 
-        {step === 'azureEmbeddingDimension' && (
-          <>
-            <Text color={colors.bright}>Enter the embedding deployment output dimension:</Text>
-            <Input
-              onChange={setAzureEmbeddingDimension}
-              onSubmit={handleAzureEmbeddingDimensionSubmit}
-              placeholder="1536"
-              value={azureEmbeddingDimension}
-            />
-          </>
-        )}
-
-        {step === 'license' && (
+      case 'license': {
+        return (
           <>
             <Text color={colors.bright}>
               Enter your license key (press Enter to skip):
@@ -780,13 +802,50 @@ export const SetupScreen: React.FC = () => {
               value={licenseKey}
             />
           </>
-        )}
+        );
+      }
 
-        {step === 'done' && (
-          <Text color={colors.success}>
-            Configuration saved! Entering Shadow Auditor...
-          </Text>
-        )}
+      case 'model': {
+        return (
+          <>
+            <Text color={colors.bright}>
+              {fetching ? 'Select a model (live list):' : 'Select a model:'}
+            </Text>
+            <OptionList highlightedIndex={optIndex} onSelect={handleModelSelect} options={modelOptions} />
+          </>
+        );
+      }
+
+      case 'provider': {
+        return (
+          <>
+            <Text color={colors.bright}>Select your LLM provider:</Text>
+            <OptionList highlightedIndex={optIndex} onSelect={handleProviderSelect} options={providerOptions} />
+          </>
+        );
+      }
+
+      default: {
+        return null;
+      }
+    }
+  };
+
+  return (
+    <Box flexDirection="column" paddingX={spacing.panelPadX}>
+      <Box
+        borderColor={colors.brand} borderStyle={'rounded'}
+        paddingX={spacing.panelPadX}
+        paddingY={spacing.panelPadY}
+      >
+        <Text bold color={colors.brand}>
+          ◈ Shadow Auditor — Environment Setup
+        </Text>
+      </Box>
+
+      <Box flexDirection="column" marginTop={1}>
+        {renderAzureStep()}
+        {renderGeneralStep()}
 
         {error && (
           <Box marginTop={1}>

@@ -235,18 +235,29 @@ async function removeAbandonedLock(lockPath: string): Promise<boolean> {
 }
 
 export class FalsePositiveStore {
+  private readonly guard: PathGuard;
   private invalidRecords = 0;
+  private readonly key: Buffer;
+  private readonly now: () => Date;
   private operationTail = Promise.resolve();
   private records: SuppressionRecord[] = [];
+  private readonly repositoryId: string;
   private storeError?: string;
+  private readonly storePath: string;
 
-  private constructor(
-    private readonly guard: PathGuard,
-    private readonly key: Buffer,
-    private readonly repositoryId: string,
-    private readonly storePath: string,
-    private readonly now: () => Date,
-  ) {}
+  private constructor(options: {
+    guard: PathGuard;
+    key: Buffer;
+    now: () => Date;
+    repositoryId: string;
+    storePath: string;
+  }) {
+    this.guard = options.guard;
+    this.key = options.key;
+    this.now = options.now;
+    this.repositoryId = options.repositoryId;
+    this.storePath = options.storePath;
+  }
 
   static async open(
     repositoryPath: string,
@@ -259,13 +270,13 @@ export class FalsePositiveStore {
     const keyPath = options.keyPath ?? path.join(os.homedir(), KEY_FILE_NAME);
     const key = await loadOrCreateKey(keyPath);
     const storePath = await guard.resolvePathForWrite(STORE_RELATIVE_PATH);
-    const store = new FalsePositiveStore(
+    const store = new FalsePositiveStore({
       guard,
       key,
+      now: options.now ?? (() => new Date()),
       repositoryId,
       storePath,
-      options.now ?? (() => new Date()),
-    );
+    });
     await store.withInterprocessLock(() => store.load());
     return store;
   }
@@ -505,13 +516,15 @@ export class FalsePositiveStore {
     ownerPath: string,
     token: string,
   ): Promise<void> {
+    const releasedPath = `${lockPath}.released-${token}`;
     try {
       const owner = JSON.parse(await fs.readFile(ownerPath, 'utf8')) as {token?: string};
       if (owner.token !== token) {
         throw new Error('False-positive memory lock ownership changed unexpectedly.');
       }
 
-      await fs.rm(lockPath, {force: true, recursive: true});
+      await fs.rename(lockPath, releasedPath);
+      await fs.rm(releasedPath, {force: true, recursive: true});
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }

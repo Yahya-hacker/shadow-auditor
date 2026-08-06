@@ -3,7 +3,10 @@
 </div>
 
 > [!IMPORTANT]
-> Shadow Auditor is under active development and may contain significant bugs. Development is currently most active on the `langgraph-migration` branch.
+> Shadow Auditor 1.0 is a release candidate. Its release gate covers Node 24,
+> native Tree-sitter loading, the complete test/lint/build pipeline, clean
+> tarball installation, and CLI smoke tests. Pin the version in automated
+> environments and validate the selected external model provider before rollout.
 
 # 🌑 Shadow Auditor: Autonomous AI-Powered Security Analysis
 
@@ -13,17 +16,19 @@
 
 ## What Is Shadow Auditor?
 
-**Shadow Auditor** is a production-grade, autonomous AI-powered SAST platform built on LangGraph. It deploys specialized AI agents that reason about your codebase, hunt vulnerabilities with methodical precision, and produce evidence-backed findings ready for CI integration and security audits.
+**Shadow Auditor** is an autonomous AI-powered SAST CLI built on LangGraph. It
+deploys specialized agents that inspect code, challenge vulnerability
+candidates, and produce evidence-backed findings for CI and human review.
 
 ### Core Capabilities
 
 | Capability | Description |
 |------------|-------------|
-| **Codebase Mapping** | Tree-sitter AST parsing builds a compressed architecture map — every function, class, and dependency indexed |
+| **Codebase Mapping** | Tree-sitter AST parsing indexes supported structural declarations plus resolved import and call relationships; unavailable grammars are reported explicitly |
 | **Deterministic Audit Pipeline** | LangGraph executes Codebase Intelligence → SAST Audit → Devil's Advocate → Reporting with validated handoffs |
-| **Hybrid Retrieval** | Semantic + lexical + knowledge-graph search via `context_retrieval` — never dump whole files |
+| **Hybrid Retrieval** | Semantic + lexical + knowledge-graph search via `context_retrieval`, followed by targeted line-range reads |
 | **Multi-Agent Swarm** | 5 specialized roles (Recon, TaintTracer, ExploitAnalyst, Verifier, Reporter) with shared Blackboard |
-| **Patch Competition** | 3 competing agents propose fixes → orchestrator detects conflicts → synthesizes unified Super Patch |
+| **Patch Competition** | In swarm `patch-only` mode, 3 perspective-specific agents propose fixes → orchestrator detects conflicts → synthesizes a unified candidate patch |
 | **Human-in-the-Loop** | Policy-gated tools, timeout auto-deny, decision history for intelligent re-approval |
 | **CI Integration** | SARIF, JSON, Markdown reports with stable `SHADOW-<CWE>-<HEX8>` finding IDs |
 
@@ -34,12 +39,15 @@
 ### Install from npm
 
 ```bash
-npm install --global shadow-auditor
+npm install --global shadow-auditor --allow-scripts=@tree-sitter-grammars/tree-sitter-markdown,tree-sitter,tree-sitter-c,tree-sitter-c-sharp,tree-sitter-cpp,tree-sitter-elixir,tree-sitter-go,tree-sitter-haskell,tree-sitter-html,tree-sitter-java,tree-sitter-javascript,tree-sitter-json,tree-sitter-php,tree-sitter-python,tree-sitter-ruby,tree-sitter-rust,tree-sitter-scala,tree-sitter-toml,tree-sitter-typescript,tree-sitter-yaml,unrs-resolver
 ```
 
 The package is release-ready but is **not currently published** on the public
 npm registry. The command above will work after a maintainer publishes the
-first release. Node.js 24 is required.
+first release. Node.js 24 and npm 11 are required. npm intentionally makes the
+installer choose which dependency lifecycle scripts may run; the explicit
+allowlist permits only Shadow Auditor's native parsers and resolver. A
+dependency cannot silently weaken the consuming project's install policy.
 
 ### Installation from source
 
@@ -168,20 +176,20 @@ published as a finding.
 | Feature | Description |
 |---------|-------------|
 | **Working Memory** | Auto-updating summary of findings, files examined, and hypotheses — survives context trimming |
-| **Typed Handoffs** | Every stage consumes the validated, persisted artifact from the preceding stage |
+| **Typed Handoffs** | Each downstream stage consumes the validated, persisted artifact from its predecessor |
 | **Evidence Review** | Devil's Advocate independently confirms or rejects every candidate finding |
 | **Durable Resume** | Checkpoints preserve artifacts and confirmation identity across interrupted runs |
 | **Bounded Execution** | Duplicate-call detection and model-aware tool budgets force a final synthesis |
 
 ### Tool Intelligence
 
-Every tool is designed for maximum agent efficiency:
+The agent tools expose bounded, composable operations:
 
 | Tool | Enhancement |
 |------|-------------|
 | `context_retrieval` | Hybrid semantic+lexical+graph search. Clean output format with chaining hints |
 | `search_codebase` | Results grouped by file with match counts. Shows top matches, hides noise |
-| `read_file_content` | **Line-range reads** (`startLine`/`endLine`). Auto-overview for large files. 40x token savings |
+| `read_file_content` | Line-range reads (`startLine`/`endLine`) and an automatic structural overview for large files |
 | `list_directory` | Structured output: directories first, file counts, chaining hints |
 | `execute_command` | Policy-gated host command execution with approval, timeout, and output limits |
 | `edit_file` | Exact-match validation, confirmation flow, line-change summary |
@@ -208,13 +216,15 @@ Every tool is designed for maximum agent efficiency:
 Each role has a **recommended tool workflow** to minimize thrashing:
 - Recon: `list_directory` → `context_retrieval` → `execute_command` → `submit_claim`
 - TaintTracer: `query_claims` → `context_retrieval` per entry → `search_codebase` → `submit_claim`
-- ExploitAnalyst: `query_claims` → `read_file` → `context_retrieval` mitigations → classify CWE
-- Verifier: `query_claims` → `read_file` → `context_retrieval` → `verify_claim`/`contest_claim`
+- ExploitAnalyst: `query_claims` → `read_file_content` → `context_retrieval` mitigations → classify CWE
+- Verifier: `query_claims` → `read_file_content` → `context_retrieval` → `verify_claim`/`contest_claim`
 - Reporter: `query_claims` → organize by severity → `finish_task`
 
 ### Patch Competition & Orchestrator Engine
 
-Three co-equal agents produce competing patches. The orchestrator resolves conflicts:
+With `--swarm --mode patch-only`, three co-equal agents produce competing
+patch proposals from security-boundary, language-pattern, and TUI-state-machine
+perspectives. The orchestrator resolves conflicts:
 
 ```
 Agent A (Security)  ──► PatchProposal ──┐
@@ -241,43 +251,65 @@ Agent C (TUI Logic) ──► PatchProposal ──┘      │
 |---------|----------|
 | **Decision History** | Previously approved operations auto-approved for 1 hour |
 | **Timeout** | 5-minute auto-deny for unanswered confirmations |
-| **Signature Tracking** | Same tool called again after resume returns `true` without re-prompting |
+| **Signature Tracking** | The same recently approved operation signature can resume without a duplicate prompt |
 | **LangGraph Command** | Tools throw `Command` → graph pauses at `HumanIntervention` → TUI shows question |
 
 ---
 
 ## Provider Ecosystem
 
-Shadow Auditor is provider-agnostic. Use any supported AI provider:
+Shadow Auditor supports the providers below. Model names are setup-wizard
+examples, not a guarantee that a provider account has access to that model;
+custom model names are accepted where the provider API supports them.
 
 | Provider | Models | Notes |
 |----------|--------|-------|
-| **Anthropic** | Claude 5 Fable, Claude 4.6/4.7/4.8 Opus | Security-optimized |
-| **OpenAI** | GPT-5, GPT-5.4, o1, o3 | Broad capability |
-| **Google** | Gemini 3.1 Pro, Gemini 3/3.5 Flash | High throughput |
-| **Mistral** | Mistral Large, Codestral | Cost-effective |
-| **DeepSeek** | DeepSeek-V4-Pro, DeepSeek-R1 | OpenAI-compatible |
-| **Ollama** | Llama 3, Qwen 2.5, CodeQwen | Local, privacy-first |
+| **Anthropic** | Claude Sonnet 4, Claude Opus 4, Claude Haiku/Sonnet 3.5 | Native Anthropic API |
+| **Azure / Microsoft Foundry** | GPT-5.6 Sol, GPT-5.4, GPT-5.x, GPT-4.1 | API key or Entra authentication; deployment names are configurable |
+| **OpenAI** | GPT-4o, GPT-4o mini, GPT-4.1, o1, o3-mini | Native OpenAI API |
+| **Google** | Gemini 3.6/3.5 Flash, Gemini 2.5 Pro | Native Google API |
+| **Mistral** | Mistral Large/Medium/Small, Codestral | Native Mistral API |
+| **DeepSeek** | DeepSeek V4 Pro/Flash | OpenAI-compatible transport with reasoning normalization |
+| **Qwen** | Qwen Plus/Turbo/Max/Coder Plus | DashScope OpenAI-compatible transport |
+| **Moonshot** | Kimi K3, Kimi K2.7 Code, Kimi K2.6 | OpenAI-compatible transport |
+| **NVIDIA** | Llama 3.1, Nemotron 4 | NVIDIA OpenAI-compatible transport |
+| **OpenRouter** | OpenRouter Auto and routed vendor models | OpenAI-compatible transport |
+| **Ollama** | Llama 3.1, Qwen 2.5 Coder | Local, privacy-first |
 | **Custom** | Any OpenAI-compatible endpoint | Bring your own |
+
+Perplexity Sonar is intentionally not offered by the setup wizard because its
+chat API does not expose the external tool contract required by the
+deterministic pipeline.
+
+Provider payload, schema, tool-loop, replay, and error contracts are covered by
+the automated test suite. Microsoft Foundry with Entra authentication has also
+been exercised live against `gpt-5.6-sol`; other hosted providers require
+customer credentials and should be smoke-tested in the deployment environment.
 
 ---
 
 ## Output & Artifacts
 
-Every run produces a persistent artifact folder:
+Every started run creates a persistent artifact folder and
+`session-meta.json`. Message and tool-event logs are appended when those events
+occur. Pipeline handoffs and final reports are written only after their
+respective stages complete; cancelled or failed runs intentionally retain
+partial recovery evidence without masquerading as completed reports.
 
 ```
 <target>/.shadow-auditor/runs/<ISO-timestamp>-<id>/
-├── session-meta.json      # Run metadata, config, timing
-├── messages.jsonl         # Complete conversation history
-├── tool-events.jsonl      # All tool invocations and results
-├── report.json            # Structured findings (deduplicated, stable IDs)
-├── report.sarif           # SARIF for GitHub Code Scanning / GitLab
-├── report.md              # Human-readable Markdown
-└── langgraph-checkpoints/ # LangGraph state checkpoints
+├── session-meta.json      # Provider/model, target, budgets, warnings, timestamps
+├── messages.jsonl         # Messages recorded so far (when present)
+├── tool-events.jsonl      # Tool calls/results recorded so far (when present)
+├── pipeline/              # Completed typed stage handoffs (when present)
+├── report.json            # Completed structured findings
+├── report.sarif           # Completed SARIF export
+├── report.md              # Completed human-readable report
+└── langgraph-checkpoints/ # Persisted LangGraph state
 ```
 
-**Stable Finding IDs:** `SHADOW-<CWE>-<HEX8>` — deterministic, reproducible, derived from title + CWE + file path + evidence.
+**Stable Finding IDs:** `SHADOW-<CWE>-<HEX8>` — deterministic and derived
+from normalized title, CWE, primary file, symbol, and line numbers.
 
 ---
 
@@ -312,7 +344,7 @@ API keys are stored in the OS keychain (via `keychain` adapter). For backward co
 ## Requirements
 
 - **Node.js** >= 24 and < 25
-- **npm** (or pnpm/yarn)
+- **npm 11** (the lockfile and native-install allowlist are npm-managed)
 - Optional: **Ollama** for local embeddings (`ollama pull nomic-embed-text`)
 
 ---
@@ -396,11 +428,13 @@ src/
 
 ## Safety & Governance
 
+- **Review Boundary**: Model output can miss vulnerabilities; treat reports as
+  decision support and retain human review for release-critical findings.
 - **Command Policy**: Safe families by default (`git status`, `npm test`). Destructive patterns denied.
 - **Expert Mode** (`--expert-unsafe`): Broader capabilities with explicit warnings.
 - **Confirmation Gates**: File edits and command execution require explicit approval.
 - **Timeouts**: Unanswered confirmations auto-deny after 5 minutes.
-- **Decision History**: Repeated similar operations auto-approved within 1 hour.
+- **Decision History**: Exact approved operation signatures can be reused within 1 hour.
 
 ---
 

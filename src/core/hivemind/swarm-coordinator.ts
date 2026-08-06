@@ -22,6 +22,7 @@ import {
 } from '../orchestrator/orchestrator-engine.js';
 import {
   type PatchProposal,
+  patchProposalAgentRoleSchema,
   patchProposalSchema,
   type SynthesisResult,
 } from '../orchestrator/patch-competition-schema.js';
@@ -177,10 +178,27 @@ export class SwarmCoordinator implements SwarmCoordinatorRuntime {
   }
 
   async finalizePatchCompetition(results: unknown[]): Promise<null | SynthesisResult> {
+    if (results.length === 0) return null;
+
     const proposals = results
       .map((result) => parsePatchProposalResult(result))
       .filter((proposal): proposal is PatchProposal => proposal !== null);
-    if (proposals.length === 0) return null;
+    if (proposals.length !== results.length) {
+      throw new Error('Patch competition received an invalid proposal.');
+    }
+
+    const expectedRoles = patchProposalAgentRoleSchema.options;
+    const submittedRoles = proposals.map((proposal) => proposal.agentRole);
+    const uniqueRoles = new Set(submittedRoles);
+    if (
+      proposals.length !== expectedRoles.length
+      || uniqueRoles.size !== expectedRoles.length
+      || expectedRoles.some((role) => !uniqueRoles.has(role))
+    ) {
+      throw new Error(
+        `Patch competition requires exactly one proposal from each perspective: ${expectedRoles.join(', ')}.`,
+      );
+    }
 
     this.lastSynthesis = this.runPatchCompetition(proposals);
     await fs.mkdir(this.storagePath, { recursive: true });
@@ -237,7 +255,8 @@ export class SwarmCoordinator implements SwarmCoordinatorRuntime {
   }
 
   isPatchEnabled(): boolean {
-    return this.config.swarm?.roles?.includes('patch-engineer') ?? false;
+    return this.auditMode === 'patch-only' ||
+      (this.config.swarm?.roles?.includes('patch-engineer') ?? false);
   }
 
   registerWorker(agentId: string, worker: AgentWorker): void {

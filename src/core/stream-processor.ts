@@ -292,585 +292,684 @@ function mayRenderReasoningSummary(options: ProcessAgentStreamOptions): boolean 
  * - Post-stream interrupt detection (pendingHumanInput)
  * - Error recovery with nested interrupt checking
  */
-export async function processAgentStream(
-  onChunk: (text: string) => void,
-  emitEvent: (event: Omit<AgentStreamEvent, 'timestamp'>) => void,
-  options: ProcessAgentStreamOptions,
-): Promise<ProcessAgentStreamResult> {
-  const { inputs, lcConfig, logLabel, recordToolEvent, workflow } = options;
+type StreamEmitEvent = (event: Omit<AgentStreamEvent, 'timestamp'>) => void;
+type ProtocolEvent = Record<string, unknown> & {
+  method?: string;
+  params?: Record<string, unknown>;
+  type?: string;
+};
 
-  let fullResponse = '';
-  let eventsProcessed = 0;
-  let currentMessageBlock = '';
-  let currentPublicSafeBlock = '';
-  let currentReasoningSummary = '';
-  let currentPrivateReasoningObserved = false;
-  let currentPublicBlockEmitted = false;
-  let previousPublicBlock = '';
-  let deepSeekPublicProtocol = false;
-  let deepSeekPublicPending = '';
-  const emittedToolCalls = new Set<string>();
-  const emittedToolResults = new Set<string>();
-  const emittedUsageIds = new Set<string>();
-  const pendingToolCalls = new Map<string, { args: unknown; name: string }>();
-  const emittedStages = new Set<string>();
-  const candidateIds = new Set<string>();
-  const verifiedFindingIds = new Set<string>();
-  const inspectedPaths = new Set<string>();
-  let evidenceActions = 0;
-  let finishTaskCompleted = false;
-  let reportFindingsAccepted = true;
+interface StreamState {
+  candidateIds: Set<string>;
+  currentMessageBlock: string;
+  currentPrivateReasoningObserved: boolean;
+  currentPublicBlockEmitted: boolean;
+  currentPublicSafeBlock: string;
+  currentReasoningSummary: string;
+  deepSeekPublicPending: string;
+  deepSeekPublicProtocol: boolean;
+  emittedStages: Set<string>;
+  emittedToolCalls: Set<string>;
+  emittedToolResults: Set<string>;
+  emittedUsageIds: Set<string>;
+  eventsProcessed: number;
+  evidenceActions: number;
+  finishTaskCompleted: boolean;
+  fullResponse: string;
+  inspectedPaths: Set<string>;
+  pendingToolCalls: Map<string, {args: unknown; name: string}>;
+  previousPublicBlock: string;
+  reportFindingsAccepted: boolean;
+  verifiedFindingIds: Set<string>;
+}
 
-  const announceStage = (stage: AuditStage) => {
-    if (emittedStages.has(stage)) return;
-    emittedStages.add(stage);
-    emitEvent({
-      ...stageIdentity(stage),
-      kind: 'status',
-      message: STAGE_LABELS[stage],
-    });
-    const handoff = STAGE_HANDOFF_LABELS[stage];
-    if (handoff) {
-      emitEvent({
-        ...stageIdentity(stage),
-        kind: 'status',
-        message: handoff,
-      });
-    }
+interface StreamContext {
+  emitEvent: StreamEmitEvent;
+  onChunk: (text: string) => void;
+  options: ProcessAgentStreamOptions;
+  state: StreamState;
+}
 
-    emitEvent({
-      auditTelemetry: {
-        activeStage: stage,
-        candidateIds: [...candidateIds],
-        verifiedFindingIds: [...verifiedFindingIds],
-      },
-      kind: 'audit_telemetry',
-      message: 'Audit stage updated.',
-    });
+function createStreamState(): StreamState {
+  return {
+    candidateIds: new Set(),
+    currentMessageBlock: '',
+    currentPrivateReasoningObserved: false,
+    currentPublicBlockEmitted: false,
+    currentPublicSafeBlock: '',
+    currentReasoningSummary: '',
+    deepSeekPublicPending: '',
+    deepSeekPublicProtocol: false,
+    emittedStages: new Set(),
+    emittedToolCalls: new Set(),
+    emittedToolResults: new Set(),
+    emittedUsageIds: new Set(),
+    eventsProcessed: 0,
+    evidenceActions: 0,
+    finishTaskCompleted: false,
+    fullResponse: '',
+    inspectedPaths: new Set(),
+    pendingToolCalls: new Map(),
+    previousPublicBlock: '',
+    reportFindingsAccepted: true,
+    verifiedFindingIds: new Set(),
   };
+}
 
-  const auditEvidence = () => ({
-    evidenceActions,
-    finishTaskCompleted,
-    inspectedPaths: [...inspectedPaths],
-    reportFindingsAccepted,
+function announceStage(context: StreamContext, stage: AuditStage): void {
+  const {emitEvent, state} = context;
+  if (state.emittedStages.has(stage)) return;
+  state.emittedStages.add(stage);
+  emitEvent({...stageIdentity(stage), kind: 'status', message: STAGE_LABELS[stage]});
+  const handoff = STAGE_HANDOFF_LABELS[stage];
+  if (handoff) {
+    emitEvent({...stageIdentity(stage), kind: 'status', message: handoff});
+  }
+
+  emitEvent({
+    auditTelemetry: {
+      activeStage: stage,
+      candidateIds: [...state.candidateIds],
+      verifiedFindingIds: [...state.verifiedFindingIds],
+    },
+    kind: 'audit_telemetry',
+    message: 'Audit stage updated.',
   });
+}
 
-  const emitPublicText = (text: string, prependSeparator: boolean) => {
-    if (prependSeparator && fullResponse.trim()) {
-      onChunk('\n\n');
-      fullResponse += '\n\n';
-    }
-
-    onChunk(text);
-    fullResponse += text;
+function auditEvidence(state: StreamState) {
+  return {
+    evidenceActions: state.evidenceActions,
+    finishTaskCompleted: state.finishTaskCompleted,
+    inspectedPaths: [...state.inspectedPaths],
+    reportFindingsAccepted: state.reportFindingsAccepted,
   };
+}
 
-  const filterPublicText = (text: string, finish = false): string => {
-    if (options.providerHint?.trim().toLowerCase() !== 'deepseek') return text;
+function emitPublicText(context: StreamContext, text: string, prependSeparator: boolean): void {
+  const {onChunk, state} = context;
+  if (prependSeparator && state.fullResponse.trim()) {
+    onChunk('\n\n');
+    state.fullResponse += '\n\n';
+  }
 
-    const markers = ['<｜｜DSML｜｜', '<｜DSML｜'];
-    const endMarkers = ['</｜｜DSML｜｜tool_calls>', '</｜DSML｜tool_calls>'];
+  onChunk(text);
+  state.fullResponse += text;
+}
 
-    let remaining = deepSeekPublicPending + text;
-    let safe = '';
-    deepSeekPublicPending = '';
+function consumeDeepSeekProtocol(context: StreamContext, text: string): string {
+  const {state} = context;
+  const markers = ['<｜｜DSML｜｜', '<｜DSML｜'];
+  const endMarkers = ['</｜｜DSML｜｜tool_calls>', '</｜DSML｜tool_calls>'];
+  let remaining = state.deepSeekPublicPending + text;
+  let safe = '';
+  state.deepSeekPublicPending = '';
 
-    while (remaining) {
-      if (deepSeekPublicProtocol) {
-        const end = findProtocolToken(remaining, endMarkers);
-        if (!end) {
-          const retained = retainedProtocolPrefixLength(remaining, endMarkers);
-          deepSeekPublicPending = retained ? remaining.slice(-retained) : '';
-          break;
-        }
-
-        remaining = remaining.slice(end.index + end.token.length);
-        deepSeekPublicProtocol = false;
-        continue;
-      }
-
-      const marker = findProtocolToken(remaining, markers);
-      const orphanEnd = findProtocolToken(remaining, endMarkers);
-      if (orphanEnd && (!marker || orphanEnd.index < marker.index)) {
-        safe += remaining.slice(0, orphanEnd.index);
-        remaining = remaining.slice(orphanEnd.index + orphanEnd.token.length);
-        continue;
-      }
-
-      if (marker) {
-        safe += remaining.slice(0, marker.index);
-        remaining = remaining.slice(marker.index + marker.token.length);
-        deepSeekPublicProtocol = true;
-        continue;
-      }
-
-      const retained = retainedProtocolPrefixLength(remaining, [...markers, ...endMarkers]);
-      safe += remaining.slice(0, remaining.length - retained);
-      deepSeekPublicPending = remaining.slice(remaining.length - retained);
+  while (remaining) {
+    const tokens = state.deepSeekPublicProtocol ? endMarkers : markers;
+    const token = findProtocolToken(remaining, tokens);
+    const orphanEnd = state.deepSeekPublicProtocol ? undefined : findProtocolToken(remaining, endMarkers);
+    const next = orphanEnd && (!token || orphanEnd.index < token.index) ? orphanEnd : token;
+    if (!next) {
+      const retained = retainedProtocolPrefixLength(remaining, state.deepSeekPublicProtocol
+        ? endMarkers
+        : [...markers, ...endMarkers]);
+      if (!state.deepSeekPublicProtocol) safe += remaining.slice(0, remaining.length - retained);
+      state.deepSeekPublicPending = retained ? remaining.slice(-retained) : '';
       break;
     }
 
-    if (finish) {
-      deepSeekPublicPending = '';
-      deepSeekPublicProtocol = false;
+    if (!state.deepSeekPublicProtocol) safe += remaining.slice(0, next.index);
+    remaining = remaining.slice(next.index + next.token.length);
+    state.deepSeekPublicProtocol = !state.deepSeekPublicProtocol && next === token;
+  }
+
+  return safe;
+}
+
+function filterPublicText(context: StreamContext, text: string, finish = false): string {
+  if (context.options.providerHint?.trim().toLowerCase() !== 'deepseek') return text;
+  const safe = consumeDeepSeekProtocol(context, text);
+  if (finish) {
+    context.state.deepSeekPublicPending = '';
+    context.state.deepSeekPublicProtocol = false;
+  }
+
+  return safe;
+}
+
+function emitPublicDelta(context: StreamContext, text: string): void {
+  const {state} = context;
+  if (!text) return;
+  state.currentPublicSafeBlock += text;
+  if (state.currentPublicBlockEmitted) {
+    emitPublicText(context, text, false);
+    return;
+  }
+
+  if (state.previousPublicBlock.startsWith(state.currentPublicSafeBlock)) return;
+  const commonPrefixLength = [...state.currentPublicSafeBlock].findIndex(
+    (character, index) => state.previousPublicBlock[index] !== character,
+  );
+  const suffix = commonPrefixLength === -1
+    ? state.currentPublicSafeBlock.slice(state.previousPublicBlock.length)
+    : state.currentPublicSafeBlock.slice(commonPrefixLength);
+  emitPublicText(context, suffix || state.currentPublicSafeBlock, true);
+  state.currentPublicBlockEmitted = true;
+}
+
+function resetMessageBlock(state: StreamState): void {
+  state.currentMessageBlock = '';
+  state.currentPublicSafeBlock = '';
+  state.currentReasoningSummary = '';
+  state.currentPrivateReasoningObserved = false;
+  state.currentPublicBlockEmitted = false;
+}
+
+function emitProgress(context: StreamContext, stage: AuditStage, message: string): void {
+  context.emitEvent({...stageIdentity(stage), kind: 'agent_progress', message});
+}
+
+function handleReasoningDelta(
+  context: StreamContext,
+  delta: Record<string, unknown>,
+  stage: AuditStage,
+): void {
+  const {state} = context;
+  if (mayRenderReasoningSummary(context.options)) {
+    state.currentReasoningSummary += reasoningSummaryText(delta);
+  } else {
+    state.currentPrivateReasoningObserved = true;
+  }
+
+  const ready = state.currentReasoningSummary.includes('\n') ||
+    state.currentReasoningSummary.length >= 160;
+  if (!ready) return;
+  const progress = progressPreview(state.currentReasoningSummary);
+  if (progress) emitProgress(context, stage, progress);
+  state.currentReasoningSummary = '';
+}
+
+function handleMessageDelta(
+  context: StreamContext,
+  message: Record<string, unknown>,
+  stage: AuditStage,
+  isPublicNode: boolean,
+): void {
+  const delta = message.delta as Record<string, unknown> | undefined;
+  if (!delta) return;
+  if (isReasoningSummaryBlock(delta)) {
+    handleReasoningDelta(context, delta, stage);
+    return;
+  }
+
+  if (delta.type !== 'text-delta' || typeof delta.text !== 'string') return;
+  const safeText = filterPublicText(context, delta.text);
+  context.state.currentMessageBlock += safeText;
+  if (isPublicNode) emitPublicDelta(context, safeText);
+}
+
+function finishReasoningProgress(
+  context: StreamContext,
+  content: Record<string, unknown> | undefined,
+  stage: AuditStage,
+): void {
+  const {state} = context;
+  if (content &&
+    !state.currentReasoningSummary &&
+    isReasoningSummaryBlock(content) &&
+    mayRenderReasoningSummary(context.options)
+  ) {
+    state.currentReasoningSummary += reasoningSummaryText(content);
+  }
+
+  const progress = progressPreview(state.currentReasoningSummary);
+  if (progress) {
+    emitProgress(context, stage, progress);
+  } else if (state.currentPrivateReasoningObserved) {
+    emitProgress(context, stage, 'Analyzing evidence and selecting the next audit action.');
+  }
+
+  state.currentReasoningSummary = '';
+  state.currentPrivateReasoningObserved = false;
+}
+
+function recoverFinishedText(
+  context: StreamContext,
+  content: Record<string, unknown> | undefined,
+  isPublicNode: boolean,
+): void {
+  if (context.state.currentMessageBlock ||
+    content?.type !== 'text' ||
+    typeof content.text !== 'string' ||
+    !content.text
+  ) return;
+  context.state.currentMessageBlock = filterPublicText(context, content.text);
+  if (isPublicNode) emitPublicDelta(context, context.state.currentMessageBlock);
+}
+
+function finishMessageBlock(
+  context: StreamContext,
+  message: Record<string, unknown>,
+  stage: AuditStage,
+  isPublicNode: boolean,
+): void {
+  const {state} = context;
+  const content = message.content as Record<string, unknown> | undefined;
+  finishReasoningProgress(context, content, stage);
+  recoverFinishedText(context, content, isPublicNode);
+  const publicBlock = context.options.providerHint?.trim().toLowerCase() === 'deepseek'
+    ? state.currentPublicSafeBlock
+    : state.currentMessageBlock;
+  if (isPublicNode && publicBlock && publicBlock !== state.previousPublicBlock) {
+    if (!state.currentPublicBlockEmitted) emitPublicText(context, publicBlock, true);
+    state.previousPublicBlock = publicBlock;
+  } else if (!isPublicNode) {
+    const progress = progressPreview(state.currentMessageBlock);
+    if (progress) emitProgress(context, stage, progress);
+  }
+
+  state.currentMessageBlock = '';
+  state.currentPublicBlockEmitted = false;
+}
+
+function handleMessageEvent(
+  context: StreamContext,
+  data: unknown,
+  nodeName: unknown,
+  stage: AuditStage | undefined,
+): void {
+  context.state.eventsProcessed++;
+  const message = data as Record<string, unknown>;
+  const messageEvent = message.event as string | undefined;
+  const isPublicNode = nodeName === PUBLIC_MESSAGE_NODE && context.state.finishTaskCompleted;
+  if (messageEvent === 'content-block-start') {
+    resetMessageBlock(context.state);
+  } else if (messageEvent === 'content-block-delta' && stage) {
+    handleMessageDelta(context, message, stage, isPublicNode);
+  } else if (messageEvent === 'content-block-finish' && stage) {
+    finishMessageBlock(context, message, stage, isPublicNode);
+  }
+}
+
+function updateFindingTelemetry(
+  context: StreamContext,
+  nodeUpdate: Record<string, unknown>,
+  stage: AuditStage | undefined,
+  eventStage: AuditStage | undefined,
+): void {
+  const {candidateIds, verifiedFindingIds} = context.state;
+  const sastAudit = nodeUpdate.sastAudit as undefined | {candidates?: Array<{findingId?: unknown}>};
+  const verdicts = nodeUpdate.verdicts as Array<{findingId?: unknown; verdict?: unknown}> | undefined;
+  const findings = nodeUpdate.pipelineFindings as Array<{vulnId?: unknown}> | undefined;
+  if (Array.isArray(sastAudit?.candidates)) {
+    candidateIds.clear();
+    for (const candidate of sastAudit.candidates) {
+      if (typeof candidate.findingId === 'string' && candidate.findingId.length > 0) {
+        candidateIds.add(candidate.findingId);
+      }
+    }
+  }
+
+  for (const verdict of verdicts ?? []) {
+    if (typeof verdict.findingId !== 'string' || verdict.findingId.length === 0) continue;
+    candidateIds.delete(verdict.findingId);
+    if (verdict.verdict === 'CONFIRMED') verifiedFindingIds.add(verdict.findingId);
+  }
+
+  for (const finding of findings ?? []) {
+    if (typeof finding.vulnId !== 'string' || finding.vulnId.length === 0) continue;
+    candidateIds.delete(finding.vulnId);
+    verifiedFindingIds.add(finding.vulnId);
+  }
+
+  if (!sastAudit && !verdicts && !findings) return;
+  context.emitEvent({
+    auditTelemetry: {
+      activeStage: stage ?? eventStage ?? 'codebase_intelligence',
+      candidateIds: [...candidateIds],
+      verifiedFindingIds: [...verifiedFindingIds],
+    },
+    kind: 'audit_telemetry',
+    message: 'Audit telemetry updated.',
+  });
+}
+
+function emitTokenUsage(
+  context: StreamContext,
+  message: Record<string, unknown>,
+  usageId: string | undefined,
+  stage: AuditStage | undefined,
+): void {
+  const usage = normalizeTokenUsage(message);
+  if (!usage || !usageId || context.state.emittedUsageIds.has(usageId)) return;
+  context.state.emittedUsageIds.add(usageId);
+  context.emitEvent({
+    ...stageIdentity(stage),
+    kind: 'token_usage',
+    message: 'Model usage recorded.',
+    usage,
+  });
+}
+
+async function emitToolCalls(
+  context: StreamContext,
+  message: Record<string, unknown>,
+  stage: AuditStage | undefined,
+): Promise<void> {
+  if (!Array.isArray(message.tool_calls)) return;
+  for (const toolCall of message.tool_calls as Array<Record<string, unknown>>) {
+    const toolCallId = typeof toolCall.id === 'string' ? toolCall.id : undefined;
+    if (toolCallId && context.state.emittedToolCalls.has(toolCallId)) continue;
+    if (toolCallId) {
+      context.state.emittedToolCalls.add(toolCallId);
+      context.state.pendingToolCalls.set(toolCallId, {
+        args: toolCall.args,
+        name: String(toolCall.name),
+      });
     }
 
-    return safe;
-  };
-
-  const emitPublicDelta = (text: string) => {
-    if (!text) return;
-    currentPublicSafeBlock += text;
-    if (currentPublicBlockEmitted) {
-      emitPublicText(text, false);
-      return;
+    const detail = toolDetail(String(toolCall.name), toolCall.args);
+    context.emitEvent({
+      ...stageIdentity(stage),
+      ...(detail ? {detail} : {}),
+      ...(toolCallId ? {toolCallId} : {}),
+      kind: 'tool_call',
+      message: toolActivity(String(toolCall.name), false),
+      toolName: toolCall.name as string,
+    });
+    if (context.options.recordToolEvent) {
+      await context.options.recordToolEvent({
+        data: toolCall.args,
+        event: 'call',
+        timestamp: new Date().toISOString(),
+        toolCallId: toolCallId ?? `anonymous-${context.state.eventsProcessed}`,
+        toolName: String(toolCall.name),
+      });
     }
+  }
+}
 
-    if (previousPublicBlock.startsWith(currentPublicSafeBlock)) return;
-    const commonPrefixLength = [...currentPublicSafeBlock].findIndex(
-      (character, index) => previousPublicBlock[index] !== character,
-    );
-    const suffix = commonPrefixLength === -1
-      ? currentPublicSafeBlock.slice(previousPublicBlock.length)
-      : currentPublicSafeBlock.slice(commonPrefixLength);
-    emitPublicText(suffix || currentPublicSafeBlock, true);
-    currentPublicBlockEmitted = true;
-  };
+function isToolMessage(message: Record<string, unknown>): boolean {
+  if (message.type === 'tool') return true;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return typeof (message as any)._getType === 'function' && (message as any)._getType() === 'tool';
+}
 
+function acceptReportFinding(state: StreamState, toolOutput: string): boolean {
   try {
-    const stream = await workflow.streamEvents(inputs, lcConfig);
+    const reportResult = JSON.parse(toolOutput) as {accepted?: unknown};
+    if (reportResult.accepted === true) return true;
+  } catch {
+    // Invalid report results are rejected below.
+  }
 
+  state.reportFindingsAccepted = false;
+  return false;
+}
+
+function addReadPath(state: StreamState, pendingCall: undefined | {args: unknown; name: string}): void {
+  const filePath = (pendingCall?.args as undefined | {filePath?: unknown})?.filePath;
+  if (typeof filePath === 'string' && filePath.trim()) state.inspectedPaths.add(filePath.trim());
+}
+
+function addRetrievedPaths(state: StreamState, toolOutput: string): void {
+  const matchedFiles = /^Files matched: (.+)$/m.exec(toolOutput)?.[1];
+  for (const filePath of matchedFiles?.split(',') ?? []) {
+    if (filePath.trim()) state.inspectedPaths.add(filePath.trim());
+  }
+}
+
+function addSearchPaths(state: StreamState, toolOutput: string): void {
+  for (const match of toolOutput.matchAll(/^📄 (.+?) — \d+ matches?$/gm)) {
+    if (match[1]?.trim()) state.inspectedPaths.add(match[1].trim());
+  }
+}
+
+interface CompletedTool {
+  pendingCall: undefined | {args: unknown; name: string};
+  succeeded: boolean;
+  toolName: string | undefined;
+  toolOutput: string;
+}
+
+function recordCompletedTool(state: StreamState, completed: CompletedTool): void {
+  const {pendingCall, succeeded, toolName, toolOutput} = completed;
+  if (toolName === 'finish_task' && succeeded) {
+    state.finishTaskCompleted = true;
+    return;
+  }
+
+  const evidenceTool = toolName === 'context_retrieval' ||
+    toolName === 'read_file_content' ||
+    toolName === 'search_codebase';
+  if (!succeeded || !evidenceTool) return;
+  state.evidenceActions++;
+  if (toolName === 'read_file_content') addReadPath(state, pendingCall);
+  if (toolName === 'context_retrieval') addRetrievedPaths(state, toolOutput);
+  if (toolName === 'search_codebase') addSearchPaths(state, toolOutput);
+}
+
+async function emitToolResult(
+  context: StreamContext,
+  message: Record<string, unknown>,
+  stage: AuditStage | undefined,
+): Promise<void> {
+  if (!isToolMessage(message)) return;
+  const toolCallId = typeof message.tool_call_id === 'string' ? message.tool_call_id : undefined;
+  if (toolCallId && context.state.emittedToolResults.has(toolCallId)) return;
+  if (toolCallId) context.state.emittedToolResults.add(toolCallId);
+  const pendingCall = toolCallId ? context.state.pendingToolCalls.get(toolCallId) : undefined;
+  const toolOutput = typeof message.content === 'string' ? message.content : '';
+  const completedToolName = typeof message.name === 'string' ? message.name : pendingCall?.name;
+  let succeeded = toolResultSucceeded(message, toolOutput);
+  if (completedToolName === 'report_finding') {
+    succeeded = succeeded && acceptReportFinding(context.state, toolOutput);
+  }
+
+  recordCompletedTool(context.state, {pendingCall, succeeded, toolName: completedToolName, toolOutput});
+  if (toolCallId) context.state.pendingToolCalls.delete(toolCallId);
+  const resultPreview = firstOutputLine(message.content);
+  context.emitEvent({
+    ...stageIdentity(stage),
+    ...(resultPreview ? {resultPreview} : {}),
+    ...(toolCallId ? {toolCallId} : {}),
+    kind: 'tool_result',
+    message: toolActivity(String(message.name), true),
+    succeeded,
+    toolName: message.name as string,
+  });
+  if (context.options.recordToolEvent && completedToolName) {
+    await context.options.recordToolEvent({
+      data: message.content,
+      event: 'result',
+      timestamp: new Date().toISOString(),
+      toolCallId: toolCallId ?? `anonymous-${context.state.eventsProcessed}`,
+      toolName: completedToolName,
+    });
+  }
+}
+
+interface UpdatedMessagesContext {
+  event: ProtocolEvent;
+  eventStage: AuditStage | undefined;
+  messages: unknown;
+  nodeName: unknown;
+  params: Record<string, unknown>;
+  stage: AuditStage | undefined;
+}
+
+async function handleUpdatedMessages(
+  context: StreamContext,
+  update: UpdatedMessagesContext,
+): Promise<void> {
+  if (!Array.isArray(update.messages)) return;
+  for (const [messageIndex, value] of update.messages.entries()) {
+    const message = value as Record<string, unknown>;
+    const usageId = usageMessageId(message) ??
+      usageEventId(update.event, update.params, update.nodeName, messageIndex);
+    emitTokenUsage(context, message, usageId, update.stage ?? update.eventStage);
+    await emitToolCalls(context, message, update.stage);
+    await emitToolResult(context, message, update.stage);
+  }
+}
+
+function updateEntries(updates: Record<string, unknown>): Array<[string, unknown]> {
+  return typeof updates.node === 'string' &&
+    updates.values &&
+    typeof updates.values === 'object' &&
+    !Array.isArray(updates.values)
+    ? [[updates.node, updates.values]]
+    : Object.entries(updates);
+}
+
+interface UpdatesEventContext {
+  data: unknown;
+  event: ProtocolEvent;
+  eventStage: AuditStage | undefined;
+  nodeName: unknown;
+  params: Record<string, unknown>;
+}
+
+async function handleUpdatesEvent(
+  context: StreamContext,
+  update: UpdatesEventContext,
+): Promise<void> {
+  context.state.eventsProcessed++;
+  for (const [updatedNode, value] of updateEntries(update.data as Record<string, unknown>)) {
+    const stage = STAGE_NODES[updatedNode];
+    if (stage) announceStage(context, stage);
+    const nodeUpdate = value as Record<string, unknown>;
+    updateFindingTelemetry(context, nodeUpdate, stage, update.eventStage);
+    await handleUpdatedMessages(context, {
+      event: update.event,
+      eventStage: update.eventStage,
+      messages: nodeUpdate.messages,
+      nodeName: update.nodeName,
+      params: update.params,
+      stage,
+    });
+  }
+}
+
+async function processProtocolEvent(context: StreamContext, protocolEvent: unknown): Promise<void> {
+  const event = protocolEvent as ProtocolEvent;
+  if (event.type !== 'event') return;
+  const params = event.params ?? {};
+  const data = params.data;
+  const nodeName = params.node;
+  const eventStage = typeof nodeName === 'string' ? STAGE_NODES[nodeName] : undefined;
+  if (eventStage) announceStage(context, eventStage);
+  if (event.method === 'messages' && data) {
+    handleMessageEvent(context, data, nodeName, eventStage);
+  }
+
+  if (event.method === 'updates' && data) {
+    await handleUpdatesEvent(context, {data, event, eventStage, nodeName, params});
+  }
+}
+
+function emitHumanInput(context: StreamContext, pendingInput: HumanInputRequest): void {
+  context.emitEvent({
+    humanInputRequest: {
+      context: pendingInput.context,
+      question: pendingInput.question,
+      requestId: pendingInput.requestId,
+      type: pendingInput.type,
+    },
+    kind: 'human_input_required',
+    message: pendingInput.question,
+  });
+}
+
+function interruptedResult(
+  state: StreamState,
+  pendingInput: HumanInputRequest,
+  findings: EnhancedFinding[],
+): ProcessAgentStreamResult {
+  return {
+    ...auditEvidence(state),
+    findings,
+    fullResponse: `[AWAITING_HUMAN_INPUT] ${pendingInput.question}`,
+    humanInputRequest: pendingInput,
+  };
+}
+
+async function finishStream(context: StreamContext): Promise<ProcessAgentStreamResult> {
+  const {options, state} = context;
+  if (state.eventsProcessed === 0 && !state.fullResponse) {
+    logToStderr(`[${options.logLabel}] WARNING: No processable events in stream.`);
+    context.emitEvent({kind: 'status', message: 'No response received from the model. Check provider logs.'});
+  }
+
+  const workflowState = await getWorkflowState(options.workflow, options.lcConfig);
+  for (const file of workflowState.auditedFiles) state.inspectedPaths.add(file);
+  state.evidenceActions = Math.max(state.evidenceActions, workflowState.evidenceActions);
+  if (workflowState.pipelineReport.trim()) state.finishTaskCompleted = true;
+  if (workflowState.pendingHumanInput) {
+    emitHumanInput(context, workflowState.pendingHumanInput);
+    return interruptedResult(state, workflowState.pendingHumanInput, workflowState.pipelineFindings);
+  }
+
+  if (workflowState.pipelineReport) {
+    const report = options.providerHint?.trim().toLowerCase() === 'deepseek'
+      ? filterPublicText(context, workflowState.pipelineReport, true)
+      : workflowState.pipelineReport;
+    if (!state.fullResponse) {
+      emitPublicText(context, report, false);
+    } else if (state.fullResponse.trim() !== report.trim()) {
+      throw new Error('The streamed reporter response did not match the checkpointed final report.');
+    }
+  }
+
+  const pipelineArtifacts = workflowState.codebaseIntelligence &&
+    workflowState.sastAudit &&
+    workflowState.devilsAdvocate &&
+    workflowState.pipelineReport
+    ? {
+        adversarialReport: workflowState.devilsAdvocate.reportMarkdown,
+        codebaseReport: workflowState.codebaseIntelligence.reportMarkdown,
+        finalReport: workflowState.pipelineReport,
+        repoMap: workflowState.codebaseIntelligence.repoMap,
+        sastReport: workflowState.sastAudit.reportMarkdown,
+        verdicts: workflowState.devilsAdvocate.verdicts,
+      }
+    : undefined;
+  return {
+    ...auditEvidence(state),
+    findings: workflowState.pipelineFindings,
+    fullResponse: state.fullResponse,
+    ...(pipelineArtifacts ? {pipelineArtifacts} : {}),
+  };
+}
+
+export async function processAgentStream(
+  onChunk: (text: string) => void,
+  emitEvent: StreamEmitEvent,
+  options: ProcessAgentStreamOptions,
+): Promise<ProcessAgentStreamResult> {
+  const context: StreamContext = {emitEvent, onChunk, options, state: createStreamState()};
+  try {
+    const stream = await options.workflow.streamEvents(options.inputs, options.lcConfig);
     for await (const protocolEvent of stream) {
       try {
-        const event = protocolEvent as unknown as Record<string, unknown> & {
-          method?: string;
-          params?: Record<string, unknown>;
-          type?: string;
-        };
-        if (event.type === 'event') {
-          const method = event.method;
-          const params = event.params ?? {};
-          const data = params.data;
-          const nodeName = params.node;
-          const eventStage =
-            typeof nodeName === 'string' ? STAGE_NODES[nodeName] : undefined;
-          if (eventStage) announceStage(eventStage);
-
-          // Stream message content from 'messages' events (v3 ProtocolEvent)
-          if (method === 'messages' && data) {
-            eventsProcessed++;
-            const msgData = data as Record<string, unknown>;
-            const msgEvent = msgData.event as string | undefined;
-            const isPublicNode =
-              nodeName === PUBLIC_MESSAGE_NODE && finishTaskCompleted;
-
-            if (msgEvent === 'content-block-start') {
-              currentMessageBlock = '';
-              currentPublicSafeBlock = '';
-              currentReasoningSummary = '';
-              currentPrivateReasoningObserved = false;
-              currentPublicBlockEmitted = false;
-            } else if (msgEvent === 'content-block-delta' && eventStage) {
-              const delta = msgData.delta as Record<string, unknown> | undefined;
-              if (delta && isReasoningSummaryBlock(delta)) {
-                if (mayRenderReasoningSummary(options)) {
-                  currentReasoningSummary += reasoningSummaryText(delta);
-                } else {
-                  currentPrivateReasoningObserved = true;
-                }
-
-                if (
-                  currentReasoningSummary.includes('\n') ||
-                  currentReasoningSummary.length >= 160
-                ) {
-                  const progress = progressPreview(currentReasoningSummary);
-                  if (progress) {
-                    emitEvent({
-                      ...stageIdentity(eventStage),
-                      kind: 'agent_progress',
-                      message: progress,
-                    });
-                  }
-
-                  currentReasoningSummary = '';
-                }
-              } else if (delta && typeof delta === 'object' && delta.type === 'text-delta' && typeof delta.text === 'string') {
-                const safeText = filterPublicText(delta.text);
-                currentMessageBlock += safeText;
-                if (isPublicNode) {
-                  emitPublicDelta(safeText);
-                }
-              }
-            } else if (msgEvent === 'content-block-finish' && eventStage) {
-              const content = msgData.content as Record<string, unknown> | undefined;
-              if (
-                content &&
-                !currentReasoningSummary &&
-                isReasoningSummaryBlock(content) &&
-                mayRenderReasoningSummary(options)
-              ) {
-                currentReasoningSummary += reasoningSummaryText(content);
-              }
-
-              const reasoningProgress = progressPreview(currentReasoningSummary);
-              if (reasoningProgress) {
-                emitEvent({
-                  ...stageIdentity(eventStage),
-                  kind: 'agent_progress',
-                  message: reasoningProgress,
-                });
-              } else if (currentPrivateReasoningObserved) {
-                emitEvent({
-                  ...stageIdentity(eventStage),
-                  kind: 'agent_progress',
-                  message: 'Analyzing evidence and selecting the next audit action.',
-                });
-              }
-
-              currentReasoningSummary = '';
-              currentPrivateReasoningObserved = false;
-              if (!currentMessageBlock &&
-                content &&
-                typeof content === 'object' &&
-                content.type === 'text' &&
-                typeof content.text === 'string' &&
-                content.text
-              ) {
-                currentMessageBlock = filterPublicText(content.text);
-                if (isPublicNode) {
-                  emitPublicDelta(currentMessageBlock);
-                }
-              }
-
-              const publicBlock = options.providerHint?.trim().toLowerCase() === 'deepseek'
-                ? currentPublicSafeBlock
-                : currentMessageBlock;
-              if (isPublicNode && publicBlock && publicBlock !== previousPublicBlock) {
-                if (!currentPublicBlockEmitted) {
-                  emitPublicText(publicBlock, true);
-                }
-
-                previousPublicBlock = publicBlock;
-              } else if (!isPublicNode) {
-                const progress = progressPreview(currentMessageBlock);
-                if (progress) {
-                  emitEvent({
-                    ...stageIdentity(eventStage),
-                    kind: 'agent_progress',
-                    message: progress,
-                  });
-                }
-              }
-
-              currentMessageBlock = '';
-              currentPublicBlockEmitted = false;
-            }
-          }
-
-          // Track tool invocations and results from 'updates' events
-          if (method === 'updates' && data) {
-            eventsProcessed++;
-            const updates = data as Record<string, unknown>;
-            const updateEntries: Array<[string, unknown]> =
-              typeof updates.node === 'string' &&
-              updates.values &&
-              typeof updates.values === 'object' &&
-              !Array.isArray(updates.values)
-                ? [[updates.node, updates.values]]
-                : Object.entries(updates);
-            for (const [updatedNode, value] of updateEntries) {
-              const stage = STAGE_NODES[updatedNode];
-              if (stage) announceStage(stage);
-
-              const nodeUpdate = value as Record<string, unknown>;
-              const sastAudit = nodeUpdate?.sastAudit as
-                | undefined
-                | {candidates?: Array<{findingId?: unknown}>};
-              if (Array.isArray(sastAudit?.candidates)) {
-                candidateIds.clear();
-                for (const candidate of sastAudit.candidates) {
-                  if (typeof candidate.findingId === 'string' && candidate.findingId.length > 0) {
-                    candidateIds.add(candidate.findingId);
-                  }
-                }
-              }
-
-              const verdicts = nodeUpdate?.verdicts as
-                | Array<{findingId?: unknown; verdict?: unknown}>
-                | undefined;
-              if (Array.isArray(verdicts)) {
-                for (const verdict of verdicts) {
-                  if (typeof verdict.findingId !== 'string' || verdict.findingId.length === 0) continue;
-                  candidateIds.delete(verdict.findingId);
-                  if (verdict.verdict === 'CONFIRMED') {
-                    verifiedFindingIds.add(verdict.findingId);
-                  }
-                }
-              }
-
-              const pipelineFindings = nodeUpdate?.pipelineFindings as
-                | Array<{vulnId?: unknown}>
-                | undefined;
-              if (Array.isArray(pipelineFindings)) {
-                for (const finding of pipelineFindings) {
-                  if (typeof finding.vulnId === 'string' && finding.vulnId.length > 0) {
-                    candidateIds.delete(finding.vulnId);
-                    verifiedFindingIds.add(finding.vulnId);
-                  }
-                }
-              }
-
-              if (sastAudit || verdicts || pipelineFindings) {
-                emitEvent({
-                  auditTelemetry: {
-                    activeStage: stage ?? eventStage ?? 'codebase_intelligence',
-                    candidateIds: [...candidateIds],
-                    verifiedFindingIds: [...verifiedFindingIds],
-                  },
-                  kind: 'audit_telemetry',
-                  message: 'Audit telemetry updated.',
-                });
-              }
-
-              const msgs = nodeUpdate?.messages;
-              if (Array.isArray(msgs)) {
-                for (const [messageIndex, msg] of msgs.entries()) {
-                  const msgObj = msg as Record<string, unknown>;
-                  const usage = normalizeTokenUsage(msgObj);
-                  const usageId = usageMessageId(msgObj) ??
-                    usageEventId(event, params, nodeName, messageIndex);
-                  if (usage && usageId && !emittedUsageIds.has(usageId)) {
-                    emittedUsageIds.add(usageId);
-                    emitEvent({
-                      ...stageIdentity(stage ?? eventStage),
-                      kind: 'token_usage',
-                      message: 'Model usage recorded.',
-                      usage,
-                    });
-                  }
-
-                  if (msgObj.tool_calls && Array.isArray(msgObj.tool_calls)) {
-                    for (const tc of msgObj.tool_calls as Array<Record<string, unknown>>) {
-                      const toolCallId = typeof tc.id === 'string' ? tc.id : undefined;
-                      if (toolCallId && emittedToolCalls.has(toolCallId)) continue;
-                      if (toolCallId) emittedToolCalls.add(toolCallId);
-                      if (toolCallId) {
-                        pendingToolCalls.set(toolCallId, {
-                          args: tc.args,
-                          name: String(tc.name),
-                        });
-                      }
-
-                      const detail = toolDetail(String(tc.name), tc.args);
-                      emitEvent({
-                        ...stageIdentity(stage),
-                        ...(detail ? { detail } : {}),
-                        ...(toolCallId ? { toolCallId } : {}),
-                        kind: 'tool_call',
-                        message: toolActivity(String(tc.name), false),
-                        toolName: tc.name as string,
-                      });
-                      if (recordToolEvent) {
-                        await recordToolEvent({
-                          data: tc.args,
-                          event: 'call',
-                          timestamp: new Date().toISOString(),
-                          toolCallId: toolCallId ?? `anonymous-${eventsProcessed}`,
-                          toolName: String(tc.name),
-                        });
-                      }
-                    }
-                  }
-
-                  if (
-                    msgObj.type === 'tool' ||
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    (typeof (msgObj as any)._getType === 'function' && (msgObj as any)._getType() === 'tool')
-                  ) {
-                    const toolCallId = typeof msgObj.tool_call_id === 'string' ? msgObj.tool_call_id : undefined;
-                    if (toolCallId && emittedToolResults.has(toolCallId)) continue;
-                    if (toolCallId) emittedToolResults.add(toolCallId);
-                    const pendingToolCall = toolCallId ? pendingToolCalls.get(toolCallId) : undefined;
-                    const toolOutput = typeof msgObj.content === 'string' ? msgObj.content : '';
-                    let toolSucceeded = toolResultSucceeded(msgObj, toolOutput);
-                    const completedToolName = typeof msgObj.name === 'string'
-                      ? msgObj.name
-                      : pendingToolCall?.name;
-                    if (completedToolName === 'report_finding') {
-                      try {
-                        const reportResult = JSON.parse(toolOutput) as { accepted?: unknown };
-                        if (reportResult.accepted !== true) {
-                          reportFindingsAccepted = false;
-                          toolSucceeded = false;
-                        }
-                      } catch {
-                        reportFindingsAccepted = false;
-                        toolSucceeded = false;
-                      }
-                    }
-
-                    if (completedToolName === 'finish_task' && toolSucceeded) {
-                      finishTaskCompleted = true;
-                    } else if (toolSucceeded && (
-                      completedToolName === 'context_retrieval' ||
-                      completedToolName === 'read_file_content' ||
-                      completedToolName === 'search_codebase'
-                    )) {
-                      evidenceActions++;
-                      if (completedToolName === 'read_file_content' && pendingToolCall) {
-                        const filePath = (pendingToolCall.args as { filePath?: unknown }).filePath;
-                        if (typeof filePath === 'string' && filePath.trim()) {
-                          inspectedPaths.add(filePath.trim());
-                        }
-                      } else if (completedToolName === 'context_retrieval') {
-                        const matchedFiles = /^Files matched: (.+)$/m.exec(toolOutput)?.[1];
-                        for (const filePath of matchedFiles?.split(',') ?? []) {
-                          if (filePath.trim()) inspectedPaths.add(filePath.trim());
-                        }
-                      } else if (completedToolName === 'search_codebase') {
-                        for (const match of toolOutput.matchAll(/^📄 (.+?) — \d+ matches?$/gm)) {
-                          if (match[1]?.trim()) inspectedPaths.add(match[1].trim());
-                        }
-                      }
-                    }
-
-                    if (toolCallId) pendingToolCalls.delete(toolCallId);
-
-                    const resultPreview = firstOutputLine(msgObj.content);
-                    emitEvent({
-                      ...stageIdentity(stage),
-                      ...(resultPreview ? { resultPreview } : {}),
-                      ...(toolCallId ? { toolCallId } : {}),
-                      kind: 'tool_result',
-                      message: toolActivity(String(msgObj.name), true),
-                      succeeded: toolSucceeded,
-                      toolName: msgObj.name as string,
-                    });
-                    if (recordToolEvent && completedToolName) {
-                      await recordToolEvent({
-                        data: msgObj.content,
-                        event: 'result',
-                        timestamp: new Date().toISOString(),
-                        toolCallId: toolCallId ?? `anonymous-${eventsProcessed}`,
-                        toolName: completedToolName,
-                      });
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
+        await processProtocolEvent(context, protocolEvent);
       } catch (streamError) {
         throw new Error(
-          `Malformed ${logLabel} stream event: ${
+          `Malformed ${options.logLabel} stream event: ${
             streamError instanceof Error ? streamError.message : String(streamError)
           }`,
-          { cause: streamError },
+          {cause: streamError},
         );
       }
     }
 
-    // Detect silent failures
-    if (eventsProcessed === 0 && !fullResponse) {
-      logToStderr(
-        `[${logLabel}] WARNING: No processable events in stream.`,
-      );
-      emitEvent({
-        kind: 'status',
-        message: 'No response received from the model. Check provider logs.',
-      });
-    }
-
-    // Check for HumanIntervention interrupt
-    const state = await getWorkflowState(workflow, lcConfig);
-    for (const file of state.auditedFiles) inspectedPaths.add(file);
-    evidenceActions = Math.max(evidenceActions, state.evidenceActions);
-    if (state.pipelineReport.trim()) {
-      finishTaskCompleted = true;
-    }
-
-    const pendingInput = state.pendingHumanInput;
-    if (pendingInput) {
-      emitEvent({
-        humanInputRequest: {
-          context: pendingInput.context,
-          question: pendingInput.question,
-          requestId: pendingInput.requestId,
-          type: pendingInput.type,
-        },
-        kind: 'human_input_required',
-        message: pendingInput.question,
-      });
-
-      return {
-        ...auditEvidence(),
-        findings: state.pipelineFindings,
-        fullResponse: `[AWAITING_HUMAN_INPUT] ${pendingInput.question}`,
-        humanInputRequest: pendingInput,
-      };
-    }
-
-    if (state.pipelineReport) {
-      const safePipelineReport = options.providerHint?.trim().toLowerCase() === 'deepseek'
-        ? filterPublicText(state.pipelineReport, true)
-        : state.pipelineReport;
-      if (!fullResponse) {
-        emitPublicText(safePipelineReport, false);
-      } else if (fullResponse.trim() !== safePipelineReport.trim()) {
-        throw new Error(
-          'The streamed reporter response did not match the checkpointed final report.',
-        );
-      }
-    }
-
-    // Persist messages if the caller wants it
-
-
-    const pipelineArtifacts =
-      state.codebaseIntelligence &&
-      state.sastAudit &&
-      state.devilsAdvocate &&
-      state.pipelineReport
-        ? {
-            adversarialReport: state.devilsAdvocate.reportMarkdown,
-            codebaseReport: state.codebaseIntelligence.reportMarkdown,
-            finalReport: state.pipelineReport,
-            repoMap: state.codebaseIntelligence.repoMap,
-            sastReport: state.sastAudit.reportMarkdown,
-            verdicts: state.devilsAdvocate.verdicts,
-          }
-        : undefined;
-    return {
-      ...auditEvidence(),
-      findings: state.pipelineFindings,
-      fullResponse,
-      ...(pipelineArtifacts ? {pipelineArtifacts} : {}),
-    };
+    return await finishStream(context);
   } catch (error) {
-    // The graph may have paused at HumanIntervention before the stream error
-    const pendingInput = await getPendingHumanInput(workflow, lcConfig);
-    if (pendingInput) {
-      emitEvent({
-        humanInputRequest: {
-          context: pendingInput.context,
-          question: pendingInput.question,
-          requestId: pendingInput.requestId,
-          type: pendingInput.type,
-        },
-        kind: 'human_input_required',
-        message: pendingInput.question,
-      });
-      return {
-        ...auditEvidence(),
-        findings: [],
-        fullResponse: `[AWAITING_HUMAN_INPUT] ${pendingInput.question}`,
-        humanInputRequest: pendingInput,
-      };
-    }
-
-    throw error;
+    const pendingInput = await getPendingHumanInput(options.workflow, options.lcConfig);
+    if (!pendingInput) throw error;
+    emitHumanInput(context, pendingInput);
+    return interruptedResult(context.state, pendingInput, []);
   }
 }
 

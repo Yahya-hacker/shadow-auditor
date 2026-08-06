@@ -36,6 +36,31 @@ interface SynthesizedFile {
   unresolvedConflicts: PatchConflict[];
 }
 
+interface ConflictResolutionTarget {
+  conflict: PatchConflict;
+  fileUnresolved: PatchConflict[];
+  hunks: HunkWithSource[];
+  synthesizedHunks: DiffHunk[];
+}
+
+function buildSynthesisSummary(counts: {
+  accepted: number;
+  files: number;
+  merged: number;
+  rejected: number;
+  resolved: number;
+  unresolved: number;
+}): string {
+  const parts: string[] = [];
+  if (counts.accepted > 0) parts.push(`${counts.accepted} proposal(s) fully accepted`);
+  if (counts.merged > 0) parts.push(`${counts.merged} proposal(s) merged`);
+  if (counts.resolved > 0) parts.push(`${counts.resolved} conflict(s) auto-resolved`);
+  if (counts.unresolved > 0) parts.push(`${counts.unresolved} conflict(s) require manual review`);
+  if (counts.rejected > 0) parts.push(`${counts.rejected} proposal(s) rejected`);
+  parts.push(`${counts.files} file(s) modified`);
+  return parts.join(', ');
+}
+
 /**
  * Synthesize multiple patch proposals into a single unified diff.
  *
@@ -127,6 +152,72 @@ export function synthesizePatches(
 
   // Synthesize each file
   const synthesizedFiles: SynthesizedFile[] = [];
+  const resolveConflict = ({
+    conflict,
+    fileUnresolved,
+    hunks,
+    synthesizedHunks,
+  }: ConflictResolutionTarget): void => {
+    const hunkA = hunks.find((hunk) => hunk.proposalId === conflict.proposalAId);
+    const hunkB = hunks.find((hunk) => hunk.proposalId === conflict.proposalBId);
+    if (conflict.resolutionStrategy === 'combine_alternating' ||
+        conflict.resolutionStrategy === 'merge_both') {
+      if (hunkA) synthesizedHunks.push(hunkA.hunk);
+      if (hunkB) synthesizedHunks.push(hunkB.hunk);
+      resolvedConflicts.push(conflict);
+      mergedSet.add(conflict.proposalAId);
+      mergedSet.add(conflict.proposalBId);
+      return;
+    }
+
+    const preferredRole = conflict.resolutionStrategy === 'prefer_performance'
+      ? 'language_patterns'
+      : conflict.resolutionStrategy === 'prefer_security'
+        ? 'security_boundaries'
+        : undefined;
+    if (preferredRole) {
+      const preferredHunk = hunks.find(
+        (hunk) => hunk.agentRole === preferredRole &&
+          (hunk.proposalId === conflict.proposalAId || hunk.proposalId === conflict.proposalBId),
+      );
+      if (preferredHunk) {
+        synthesizedHunks.push(preferredHunk.hunk);
+        acceptedSet.add(preferredHunk.proposalId);
+      }
+
+      rejectedSet.add(
+        conflict.proposalAId === preferredHunk?.proposalId
+          ? conflict.proposalBId
+          : conflict.proposalAId,
+      );
+      resolvedConflicts.push(conflict);
+      return;
+    }
+
+    const conflictHunk: DiffHunk = {
+      header: `CONFLICT: ${conflict.conflictType} — MANUAL RESOLUTION REQUIRED`,
+      lines: [
+        {
+          content: `<<<<<<< ${conflict.proposalAId} (${hunkA?.agentRole ?? 'unknown'})`,
+          kind: 'context',
+        },
+        ...(hunkA?.hunk.lines ?? []).map((line) => ({...line, kind: 'context' as const})),
+        {content: `=======`, kind: 'context'},
+        ...(hunkB?.hunk.lines ?? []).map((line) => ({...line, kind: 'context' as const})),
+        {
+          content: `>>>>>>> ${conflict.proposalBId} (${hunkB?.agentRole ?? 'unknown'})`,
+          kind: 'context',
+        },
+      ],
+      newCount: conflict.overlappingRangeA.end - conflict.overlappingRangeA.start + 1,
+      newStart: conflict.overlappingRangeA.start,
+      oldCount: conflict.overlappingRangeA.end - conflict.overlappingRangeA.start + 1,
+      oldStart: conflict.overlappingRangeA.start,
+    };
+    synthesizedHunks.push(conflictHunk);
+    fileUnresolved.push(conflict);
+    unresolvedConflicts.push(conflict);
+  };
 
   for (const [filePath, hunks] of fileHunks) {
     const fileConflicts = conflicts.filter((c) => c.filePath === filePath);
@@ -161,109 +252,7 @@ export function synthesizePatches(
     const synthesizedHunks: DiffHunk[] = [];
 
     for (const conflict of fileConflicts) {
-      switch (conflict.resolutionStrategy) {
-        case 'combine_alternating': {
-          // For adjacent edits: interleave both changes
-          const hunkA = hunks.find((h) => h.proposalId === conflict.proposalAId);
-          const hunkB = hunks.find((h) => h.proposalId === conflict.proposalBId);
-          if (hunkA) synthesizedHunks.push(hunkA.hunk);
-          if (hunkB) synthesizedHunks.push(hunkB.hunk);
-          resolvedConflicts.push(conflict);
-          mergedSet.add(conflict.proposalAId);
-          mergedSet.add(conflict.proposalBId);
-          break;
-        }
-
-        case 'merge_both': {
-          // Keep both hunks (e.g., both add imports)
-          const hunkA = hunks.find((h) => h.proposalId === conflict.proposalAId);
-          const hunkB = hunks.find((h) => h.proposalId === conflict.proposalBId);
-          if (hunkA) synthesizedHunks.push(hunkA.hunk);
-          if (hunkB) synthesizedHunks.push(hunkB.hunk);
-          resolvedConflicts.push(conflict);
-          mergedSet.add(conflict.proposalAId);
-          mergedSet.add(conflict.proposalBId);
-          break;
-        }
-
-        case 'prefer_performance': {
-          const perfHunk = hunks.find(
-            (h) => h.agentRole === 'language_patterns' &&
-            (h.proposalId === conflict.proposalAId || h.proposalId === conflict.proposalBId),
-          );
-          if (perfHunk) {
-            synthesizedHunks.push(perfHunk.hunk);
-            acceptedSet.add(perfHunk.proposalId);
-          }
-
-          const otherId = conflict.proposalAId === perfHunk?.proposalId
-            ? conflict.proposalBId : conflict.proposalAId;
-          rejectedSet.add(otherId);
-          resolvedConflicts.push(conflict);
-          break;
-        }
-
-        case 'prefer_security': {
-          // Keep only the security agent's hunk
-          const securityHunk = hunks.find(
-            (h) => h.agentRole === 'security_boundaries' &&
-            (h.proposalId === conflict.proposalAId || h.proposalId === conflict.proposalBId),
-          );
-          if (securityHunk) {
-            synthesizedHunks.push(securityHunk.hunk);
-            acceptedSet.add(securityHunk.proposalId);
-          }
-
-          const otherId = conflict.proposalAId === securityHunk?.proposalId
-            ? conflict.proposalBId : conflict.proposalAId;
-          rejectedSet.add(otherId);
-          resolvedConflicts.push(conflict);
-          break;
-        }
-
-        case 'manual_required':
-        default: {
-          // Can't auto-resolve: include both versions as comments
-          const hunkA = hunks.find((h) => h.proposalId === conflict.proposalAId);
-          const hunkB = hunks.find((h) => h.proposalId === conflict.proposalBId);
-
-          // Create a conflict marker hunk
-          const conflictHunk: DiffHunk = {
-            header: `CONFLICT: ${conflict.conflictType} — MANUAL RESOLUTION REQUIRED`,
-            lines: [
-              {
-                content: `<<<<<<< ${conflict.proposalAId} (${hunkA?.agentRole ?? 'unknown'})`,
-                kind: 'context',
-              },
-              ...(hunkA?.hunk.lines ?? []).map((l) => ({
-                ...l,
-                kind: 'context' as const,
-              })),
-              {
-                content: `=======`,
-                kind: 'context',
-              },
-              ...(hunkB?.hunk.lines ?? []).map((l) => ({
-                ...l,
-                kind: 'context' as const,
-              })),
-              {
-                content: `>>>>>>> ${conflict.proposalBId} (${hunkB?.agentRole ?? 'unknown'})`,
-                kind: 'context',
-              },
-            ],
-            newCount: conflict.overlappingRangeA.end - conflict.overlappingRangeA.start + 1,
-            newStart: conflict.overlappingRangeA.start,
-            oldCount: conflict.overlappingRangeA.end - conflict.overlappingRangeA.start + 1,
-            oldStart: conflict.overlappingRangeA.start,
-          };
-
-          synthesizedHunks.push(conflictHunk);
-          fileUnresolved.push(conflict);
-          unresolvedConflicts.push(conflict);
-          break;
-        }
-      }
+      resolveConflict({conflict, fileUnresolved, hunks, synthesizedHunks});
     }
 
     // Add non-conflicting hunks from this file
@@ -298,28 +287,14 @@ export function synthesizePatches(
   const mergedProposals = [...mergedSet].filter((id) => !acceptedSet.has(id));
   const rejectedProposals = [...rejectedSet];
 
-  const summaryParts: string[] = [];
-  if (acceptedProposals.length > 0) {
-    summaryParts.push(`${acceptedProposals.length} proposal(s) fully accepted`);
-  }
-
-  if (mergedProposals.length > 0) {
-    summaryParts.push(`${mergedProposals.length} proposal(s) merged`);
-  }
-
-  if (resolvedConflicts.length > 0) {
-    summaryParts.push(`${resolvedConflicts.length} conflict(s) auto-resolved`);
-  }
-
-  if (unresolvedConflicts.length > 0) {
-    summaryParts.push(`${unresolvedConflicts.length} conflict(s) require manual review`);
-  }
-
-  if (rejectedProposals.length > 0) {
-    summaryParts.push(`${rejectedProposals.length} proposal(s) rejected`);
-  }
-
-  summaryParts.push(`${filesModified.length} file(s) modified`);
+  const summary = buildSynthesisSummary({
+    accepted: acceptedProposals.length,
+    files: filesModified.length,
+    merged: mergedProposals.length,
+    rejected: rejectedProposals.length,
+    resolved: resolvedConflicts.length,
+    unresolved: unresolvedConflicts.length,
+  });
 
   return {
     acceptedProposals,
@@ -327,7 +302,7 @@ export function synthesizePatches(
     mergedProposals,
     rejectedProposals,
     resolvedConflicts,
-    summary: summaryParts.join(', '),
+    summary,
     unifiedDiff,
     unresolvedConflicts,
   };

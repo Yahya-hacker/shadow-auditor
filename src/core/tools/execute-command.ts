@@ -99,6 +99,10 @@ function hardenPipelineStage(stage: string[]): string[] {
       throw new Error('Git output-file options are not accepted in safe command mode.');
     }
 
+    if (arguments_.some((argument) => /^(?:-O|--order-file)/i.test(argument))) {
+      throw new Error('Git order-file options are not accepted in safe command mode.');
+    }
+
     if (arguments_.some((argument) => /^--show-s/i.test(argument) || argument.includes('%G'))) {
       throw new Error('Git signature-verification options are not accepted in safe command mode.');
     }
@@ -135,7 +139,7 @@ function validateParsedStages(stages: string[][]): string | undefined {
     if (
       normalizedExecutable === 'find' &&
       args.some((argument) =>
-        /^-(?:exec|execdir|ok|okdir|delete|files0-from|fls|fprint|fprint0|fprintf)(?:=|$)/i.test(argument) ||
+        /^-(?:exec|execdir|ok|okdir|delete|files0-from|fls|follow|fprint|fprint0|fprintf)(?:=|$)/i.test(argument) ||
         /^-[HLP]$/.test(argument)
       )
     ) {
@@ -144,13 +148,60 @@ function validateParsedStages(stages: string[][]): string | undefined {
 
     if (
       normalizedExecutable === 'rg' &&
-      args.some((argument) => /^(?:-L|--follow|--pre(?:-glob)?)(?:=|$)/i.test(argument))
+      args.some((argument) =>
+        /^(?:-L|--follow|--pre(?:-glob)?|--file|--ignore-file)(?:=|$)|^-f/i.test(argument)
+      )
     ) {
-      return '[POLICY_DENIED] Ripgrep preprocessors and link-following options are not allowed.';
+      return '[POLICY_DENIED] Ripgrep file loaders, preprocessors, and link-following options are not allowed.';
     }
 
     if (process.platform === 'win32' && ['find', 'printf'].includes(normalizedExecutable)) {
       return `[POLICY_DENIED] ${executable} is not supported by safe command mode on Windows.`;
+    }
+  }
+}
+
+function pathCandidates(argument: string): string[] {
+  if (!argument || argument === '-' || argument === '--') return [];
+  if (!argument.startsWith('-')) return [argument];
+
+  const assignmentIndex = argument.indexOf('=');
+  return assignmentIndex === -1 ? [] : [argument.slice(assignmentIndex + 1)];
+}
+
+function stagePathCandidates(stage: string[]): string[] {
+  const candidates: string[] = [];
+  let operandsOnly = false;
+
+  for (const argument of stage.slice(1)) {
+    if (argument === '--') {
+      operandsOnly = true;
+      continue;
+    }
+
+    candidates.push(...(operandsOnly ? [argument] : pathCandidates(argument)));
+  }
+
+  return candidates;
+}
+
+function validateArgumentPathBoundaries(
+  stages: string[][],
+  workingDirectory: string,
+): string | undefined {
+  const root = canonicalPath(workingDirectory);
+  const candidates = stages.flatMap((stage) => stagePathCandidates(stage));
+
+  for (const candidate of candidates) {
+    try {
+      const resolved = canonicalPath(path.resolve(workingDirectory, candidate));
+      if (!isPathWithin(resolved, root)) {
+        return `[POLICY_DENIED] Command argument "${candidate}" resolves outside the target directory.`;
+      }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      return `[POLICY_DENIED] Command argument "${candidate}" could not be safely resolved.`;
     }
   }
 }
@@ -378,6 +429,39 @@ export interface ExecuteCommandToolOptions {
   workingDirectory: string;
 }
 
+function prepareSafeStages(
+  command: string,
+  policy: CommandPolicyConfig,
+  workingDirectory: string,
+): string | string[][] {
+  try {
+    const stages = parsePipeline(command);
+    const decision = evaluateCommandPolicy(serializeParsedPipeline(stages), policy);
+    if (!decision.allowed) return decision.reason;
+    return validateParsedStages(stages) ?? validateArgumentPathBoundaries(stages, workingDirectory) ?? stages;
+  } catch (error) {
+    return `[DENIED] ${(error as Error).message}`;
+  }
+}
+
+function formatCommandOutput(stdout: string, stderr: string): string {
+  const sections: string[] = [];
+  if (stdout.trim()) sections.push(stdout.trim());
+  if (stderr.trim()) sections.push(`[STDERR]\n${stderr.trim()}`);
+  if (sections.length === 0) sections.push('[INFO] Command completed with no output.');
+  return sections.join('\n\n');
+}
+
+function formatExecutionError(error: unknown): string {
+  const execError = error as { message: string; stderr?: string; stdout?: string };
+  let output = `[ERROR] Command failed: ${execError.message}`;
+  const stdout = execError.stdout?.trim();
+  const stderr = execError.stderr?.trim();
+  if (stdout) output += `\n\n[STDOUT]\n${stdout}`;
+  if (stderr) output += `\n\n[STDERR]\n${stderr}`;
+  return output;
+}
+
 export function createExecuteCommandTool(options: ExecuteCommandToolOptions) {
   return {
     description:
@@ -397,24 +481,9 @@ export function createExecuteCommandTool(options: ExecuteCommandToolOptions) {
 
       let parsedStages: string[][] | undefined;
       if (!options.commandPolicy.expertUnsafe) {
-        try {
-          parsedStages = parsePipeline(command);
-        } catch (error) {
-          return `[DENIED] ${(error as Error).message}`;
-        }
-
-        const parsedDecision = evaluateCommandPolicy(
-          serializeParsedPipeline(parsedStages),
-          options.commandPolicy,
-        );
-        if (!parsedDecision.allowed) {
-          return parsedDecision.reason;
-        }
-
-        const parsedStageDenial = validateParsedStages(parsedStages);
-        if (parsedStageDenial) {
-          return parsedStageDenial;
-        }
+        const prepared = prepareSafeStages(command, options.commandPolicy, options.workingDirectory);
+        if (typeof prepared === 'string') return prepared;
+        parsedStages = prepared;
       }
 
       // Request human confirmation. In LangGraph context this throws a Command
@@ -443,35 +512,10 @@ export function createExecuteCommandTool(options: ExecuteCommandToolOptions) {
               workingDirectory: options.workingDirectory,
             });
 
-        const sections: string[] = [];
-        if (stdout.trim()) {
-          sections.push(stdout.trim());
-        }
-
-        if (stderr.trim()) {
-          sections.push(`[STDERR]\n${stderr.trim()}`);
-        }
-
-        if (!stdout.trim() && !stderr.trim()) {
-          sections.push('[INFO] Command completed with no output.');
-        }
-
-        return sections.join('\n\n');
+        return formatCommandOutput(stdout, stderr);
       } catch (error: unknown) {
         executionOptions?.abortSignal?.throwIfAborted();
-        const execError = error as { message: string; stderr?: string; stdout?: string };
-        let output = `[ERROR] Command failed: ${execError.message}`;
-        const stdoutTrimmed = execError.stdout?.trim() ?? '';
-        if (stdoutTrimmed) {
-          output += `\n\n[STDOUT]\n${stdoutTrimmed}`;
-        }
-
-        const stderrTrimmed = execError.stderr?.trim() ?? '';
-        if (stderrTrimmed) {
-          output += `\n\n[STDERR]\n${stderrTrimmed}`;
-        }
-
-        return output;
+        return formatExecutionError(error);
       }
     },
     inputSchema: z.object({

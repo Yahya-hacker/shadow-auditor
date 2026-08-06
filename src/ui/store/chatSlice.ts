@@ -35,6 +35,87 @@ export interface ActivityEvent {
 
 const MAX_MESSAGES = 200;
 const MAX_ACTIVITY = 2000;
+type AppStateUpdate = AppState | Partial<AppState>;
+
+function routedEventUpdate(state: AppState, event: AgentStreamEvent): AppStateUpdate | undefined {
+  if (event.kind === 'human_input_required' && event.humanInputRequest) {
+    return {humanInputRequest: event.humanInputRequest};
+  }
+
+  if (event.kind === 'swarm_state' && event.swarmState) {
+    return {swarmState: event.swarmState};
+  }
+
+  if (event.kind === 'audit_telemetry' && event.auditTelemetry) {
+    const verified = new Set(event.auditTelemetry.verifiedFindingIds);
+    return {
+      activeAuditStage: event.auditTelemetry.activeStage,
+      currentVulnerabilityIds: [...new Set(event.auditTelemetry.candidateIds)]
+        .filter((id) => !verified.has(id)),
+      verifiedFindingIds: [...verified],
+    };
+  }
+
+  if (event.kind === 'token_usage' && event.usage) {
+    const prompt = state.tokenUsage.prompt + event.usage.prompt;
+    const completion = state.tokenUsage.completion + event.usage.completion;
+    return {tokenUsage: {completion, prompt, total: prompt + completion}};
+  }
+
+  return undefined;
+}
+
+function activityEventId(event: AgentStreamEvent): string {
+  if (event.toolCallId) return `tool-${event.stage ?? 'unscoped'}-${event.toolCallId}`;
+  return `${event.kind}-${event.timestamp}-${event.stage ?? ''}-${event.toolName ?? ''}-${event.message}`;
+}
+
+function existingActivityUpdate(
+  state: AppState,
+  event: AgentStreamEvent,
+  uniqueId: string,
+): AppStateUpdate | undefined {
+  const existingIndex = state.activity.findIndex((item) => item.id === uniqueId);
+  if (existingIndex === -1) return undefined;
+  const existing = state.activity[existingIndex]!;
+  if (event.kind !== 'tool_result' || existing.kind === 'tool_result') return state;
+  const activity = [...state.activity];
+  activity[existingIndex] = {
+    ...existing,
+    ...(event.agent ? {agent: event.agent} : {}),
+    ...(event.detail ? {detail: event.detail} : {}),
+    kind: event.kind,
+    ...(event.resultPreview ? {resultPreview: event.resultPreview} : {}),
+    ...(event.succeeded === undefined ? {} : {succeeded: event.succeeded}),
+    text: event.message,
+  };
+  return {activity};
+}
+
+function updateActivityEvent(state: AppState, event: AgentStreamEvent): AppStateUpdate {
+  const routed = routedEventUpdate(state, event);
+  if (routed) return routed;
+  const uniqueId = activityEventId(event);
+  const existing = existingActivityUpdate(state, event, uniqueId);
+  if (existing) return existing;
+  const sequence = state.timelineSequence + 1;
+  return {
+    activity: [...state.activity, {
+      ...(event.agent ? { agent: event.agent } : {}),
+      ...(event.detail ? { detail: event.detail } : {}),
+      id: uniqueId,
+      kind: event.kind,
+      ...(event.resultPreview ? { resultPreview: event.resultPreview } : {}),
+      sequence,
+      ...(event.stage ? { stage: event.stage } : {}),
+      ...(event.succeeded === undefined ? {} : {succeeded: event.succeeded}),
+      text: event.message,
+      timestamp: event.timestamp,
+      ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+    }].slice(-MAX_ACTIVITY),
+    timelineSequence: sequence,
+  };
+}
 
 export interface ChatSlice {
   activity: ActivityEvent[];
@@ -62,78 +143,7 @@ export interface ChatSlice {
 export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, _get) => ({
   activity: [],
   addActivityEvent: (event) =>
-    set((state) => {
-      // Human-input requests from LangGraph interrupts are routed to the
-      // humanInputRequest slice (rendered by ConfirmDialog/InputArea) instead
-      // of cluttering the activity feed.
-      if (event.kind === 'human_input_required' && event.humanInputRequest) {
-        return { humanInputRequest: event.humanInputRequest };
-      }
-
-      // Structured swarm snapshots are routed to the swarmState slice (rendered
-      // by the panel/status bar) instead of cluttering the activity feed.
-      if (event.kind === 'swarm_state' && event.swarmState) {
-        return { swarmState: event.swarmState };
-      }
-
-      if (event.kind === 'audit_telemetry' && event.auditTelemetry) {
-        const verified = new Set(event.auditTelemetry.verifiedFindingIds);
-        return {
-          activeAuditStage: event.auditTelemetry.activeStage,
-          currentVulnerabilityIds: [...new Set(event.auditTelemetry.candidateIds)]
-            .filter((id) => !verified.has(id)),
-          verifiedFindingIds: [...verified],
-        };
-      }
-
-      if (event.kind === 'token_usage' && event.usage) {
-        const prompt = state.tokenUsage.prompt + event.usage.prompt;
-        const completion = state.tokenUsage.completion + event.usage.completion;
-        const total = prompt + completion;
-        return {tokenUsage: {completion, prompt, total}};
-      }
-
-      const uniqueId = event.toolCallId
-        ? `tool-${event.stage ?? 'unscoped'}-${event.toolCallId}`
-        : `${event.kind}-${event.timestamp}-${event.stage ?? ''}-${event.toolName ?? ''}-${event.message}`;
-      const existingIndex = state.activity.findIndex((item) => item.id === uniqueId);
-      if (existingIndex !== -1) {
-        const existing = state.activity[existingIndex]!;
-        if (event.kind !== 'tool_result' || existing.kind === 'tool_result') {
-          return state;
-        }
-
-        const activity = [...state.activity];
-        activity[existingIndex] = {
-          ...existing,
-          ...(event.agent ? {agent: event.agent} : {}),
-          ...(event.detail ? {detail: event.detail} : {}),
-          kind: event.kind,
-          ...(event.resultPreview ? {resultPreview: event.resultPreview} : {}),
-          ...(event.succeeded === undefined ? {} : {succeeded: event.succeeded}),
-          text: event.message,
-        };
-        return {activity};
-      }
-
-      const sequence = state.timelineSequence + 1;
-      return {
-        activity: [...state.activity, {
-          ...(event.agent ? { agent: event.agent } : {}),
-          ...(event.detail ? { detail: event.detail } : {}),
-          id: uniqueId,
-          kind: event.kind,
-          ...(event.resultPreview ? { resultPreview: event.resultPreview } : {}),
-          sequence,
-          ...(event.stage ? { stage: event.stage } : {}),
-          ...(event.succeeded === undefined ? {} : {succeeded: event.succeeded}),
-          text: event.message,
-          timestamp: event.timestamp,
-          ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
-        }].slice(-MAX_ACTIVITY),
-        timelineSequence: sequence,
-      };
-    }),
+    set((state) => updateActivityEvent(state, event)),
   addAgentMessage: (text) =>
     set((state) => {
       const previous = state.messages.at(-1);

@@ -47,6 +47,7 @@ describe('bash tool policy integration', () => {
         'rg --follow password .',
         'rg --pre "sh exploit.sh" password .',
         'find -L . -name "*.ts"',
+        'find . -follow -name "*.ts"',
       ]) {
         expect(evaluateCommandPolicy(command).allowed, command).to.equal(false);
       }
@@ -189,11 +190,13 @@ describe('bash tool policy integration', () => {
         await tool.execute({command: 'echo input | git diff'});
         const overrideResult = await tool.execute({command: 'echo input | git diff --ext-diff'});
         const outputResult = await tool.execute({command: 'git diff --output=tracked.txt'});
+        const orderFileResult = await tool.execute({command: 'git diff -Ogenerated/order.txt --stat'});
         const signatureResult = await tool.execute({command: 'git log --show-signature -1'});
 
         expect(overrideResult).to.include('[ERROR] Command failed');
         expect(overrideResult).to.include('not accepted in safe command mode');
         expect(outputResult).to.include('Git output-file options are not accepted');
+        expect(orderFileResult).to.include('Git order-file options are not accepted');
         expect(signatureResult).to.include('Git signature-verification options are not accepted');
         expect(await fs.readFile(path.join(workingDirectory, 'tracked.txt'), 'utf8')).to.equal('after\n');
         try {
@@ -222,6 +225,74 @@ describe('bash tool policy integration', () => {
         expect(result).to.not.equal('/etc');
         expect(quotedUnsafeOption).to.include('[POLICY_DENIED]');
       } finally {
+        await fs.rm(workingDirectory, {force: true, recursive: true});
+      }
+    });
+
+    itOnPosix('rejects repository-relative paths that escape through symlinks', async () => {
+      const workingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-'));
+      const outsideDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-secret-'));
+      try {
+        await fs.writeFile(path.join(outsideDirectory, 'credential.txt'), 'host-secret\n');
+        await fs.symlink(outsideDirectory, path.join(workingDirectory, 'generated'), 'dir');
+        const tool = createExecuteCommandTool({
+          commandPolicy: {},
+          humanInteraction: humanInteraction as never,
+          workingDirectory,
+        });
+
+        const result = await tool.execute({command: 'rg host-secret generated/credential.txt'});
+
+        expect(result).to.include('[POLICY_DENIED]');
+        expect(result).to.not.include('host-secret\n');
+      } finally {
+        await fs.rm(outsideDirectory, {force: true, recursive: true});
+        await fs.rm(workingDirectory, {force: true, recursive: true});
+      }
+    });
+
+    itOnPosix('rejects leading-hyphen symlink operands after an option separator', async () => {
+      const workingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-'));
+      const outsideDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-secret-'));
+      try {
+        await fs.writeFile(path.join(outsideDirectory, 'credential.txt'), 'host-secret\n');
+        await fs.symlink(outsideDirectory, path.join(workingDirectory, '-generated'), 'dir');
+        const tool = createExecuteCommandTool({
+          commandPolicy: {},
+          humanInteraction: humanInteraction as never,
+          workingDirectory,
+        });
+
+        const result = await tool.execute({command: "rg '^host-secret' -- -generated/credential.txt"});
+
+        expect(result).to.include('[POLICY_DENIED]');
+        expect(result).to.not.include('host-secret\n');
+      } finally {
+        await fs.rm(outsideDirectory, {force: true, recursive: true});
+        await fs.rm(workingDirectory, {force: true, recursive: true});
+      }
+    });
+
+    itOnPosix('rejects ripgrep pattern-file options with leading-hyphen paths', async () => {
+      const workingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-'));
+      const outsideDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-secret-'));
+      try {
+        await fs.writeFile(path.join(outsideDirectory, 'patterns'), 'host-secret\n');
+        await fs.symlink(
+          path.join(outsideDirectory, 'patterns'),
+          path.join(workingDirectory, '-patterns'),
+        );
+        const tool = createExecuteCommandTool({
+          commandPolicy: {},
+          humanInteraction: humanInteraction as never,
+          workingDirectory,
+        });
+
+        const result = await tool.execute({command: 'rg -f -patterns .'});
+
+        expect(result).to.include('[POLICY_DENIED]');
+      } finally {
+        await fs.rm(outsideDirectory, {force: true, recursive: true});
         await fs.rm(workingDirectory, {force: true, recursive: true});
       }
     });

@@ -66,6 +66,7 @@ Always focus on evidence-based security auditing. Strictly avoid guessing, hand-
 5. A patch is valid if it introduces ZERO new test failures compared to the baseline. Pre-existing failures are tolerated.
 6. If the test fingerprint degrades, the patch is automatically reverted — analyze the failure output, revise your patch, and retry.
 7. If the patch passes, submit a 'patch_proposal' claim to the Blackboard with the diff content and test results.
+8. The task parameter \`patchPerspective\` is mandatory. Your PatchProposal \`agentRole\` must match it exactly so the orchestrator can compare independent security, language, and integration strategies.
 `;
       break;
     }

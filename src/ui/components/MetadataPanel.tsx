@@ -11,6 +11,13 @@ interface MetadataPanelProps {
   compact?: boolean;
 }
 
+function metadataStatus(streaming: boolean, phase: string): {color: string; label: string} {
+  if (streaming) return {color: colors.pending, label: 'Running'};
+  if (phase === 'ready') return {color: colors.success, label: 'Ready'};
+  if (phase === 'error') return {color: colors.error, label: 'Error'};
+  return {color: colors.muted, label: 'Idle'};
+}
+
 export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = false }) => {
   const streaming = useAppStore((s) => s.streaming);
   const config = useAppStore((s) => s.config);
@@ -35,21 +42,12 @@ export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = fal
   const lightBg = colors.panelLightBg;
   const panelInnerWidth = compact ? 14 : layout.MIN_SIDEBAR_WIDTH - 2;
 
-  const statusLabel = streaming ? 'Running'
-    : sessionPhase === 'ready' ? 'Ready'
-    : sessionPhase === 'error' ? 'Error'
-    : 'Idle';
-  const statusColor = streaming ? colors.pending
-    : sessionPhase === 'ready' ? colors.success
-    : sessionPhase === 'error' ? colors.error
-    : colors.muted;
+  const {color: statusColor, label: statusLabel} = metadataStatus(streaming, sessionPhase);
 
   const provider = config?.provider ?? '—';
   const model = config?.model ?? '—';
   const auditMode = config?.auditMode ?? '—';
-  const targetLabel = targetPath
-    ? targetPath.split('/').at(-1) || targetPath
-    : focusScope;
+  const targetLabel = targetPath ? targetPath.split('/').at(-1) || targetPath : focusScope;
 
   const hasTokens = tokenUsage.total > 0;
   const tokenLabel = hasTokens

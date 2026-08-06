@@ -142,13 +142,21 @@ export function verifySynthesizedPatch(
 // Individual verification checks
 // ==========================================================================
 
-function makeCheck(
+type CheckArguments = [
   type: VerificationCheck['checkType'],
   status: VerificationCheck['status'],
   description: string,
   filePath?: string,
   suggestion?: string,
-): VerificationCheck {
+];
+
+function makeCheck(...[
+  type,
+  status,
+  description,
+  filePath,
+  suggestion,
+]: CheckArguments): VerificationCheck {
   return {
     checkId: `check_${crypto.randomBytes(4).toString('hex')}`,
     checkType: type,
@@ -257,25 +265,19 @@ function verifyImportCompleteness(
         /crypto\./, /Buffer\./, /process\./,
       ];
 
-      for (const pattern of apiPatterns) {
-        if (pattern.test(line.content)) {
-          // API usage detected — verify a corresponding import exists
-          // in the file's diff context (added or context lines).
-          const apiName = line.content.match(pattern)?.[0] ?? '';
-          const hasImport = imports.some((imp) =>
-            imp.content.includes(apiName.replace(/[.(]$/, '')),
-          );
-          if (!hasImport) {
-            checks.push(makeCheck(
-              'import_completeness', 'warning',
-              `File ${file.filePath}: API usage "${apiName}" detected but no corresponding import found in diff.`,
-              file.filePath,
-              `Verify that "${apiName}" is imported or available in scope.`,
-            ));
-          }
-
-          break;
-        }
+      const pattern = apiPatterns.find((candidate) => candidate.test(line.content));
+      if (!pattern) continue;
+      const apiName = line.content.match(pattern)?.[0] ?? '';
+      const hasImport = imports.some((imp) =>
+        imp.content.includes(apiName.replace(/[.(]$/, '')),
+      );
+      if (!hasImport) {
+        checks.push(makeCheck(
+          'import_completeness', 'warning',
+          `File ${file.filePath}: API usage "${apiName}" detected but no corresponding import found in diff.`,
+          file.filePath,
+          `Verify that "${apiName}" is imported or available in scope.`,
+        ));
       }
     }
   }

@@ -2,13 +2,39 @@ import { Args, Command, Flags } from '@oclif/core';
 import { render } from 'ink';
 import React from 'react';
 
+import type { ShadowConfig } from '../utils/config.js';
+
 import { runCiAudit } from '../core/ci-runner.js';
-import App from '../ui/App.js';
+import { App } from '../ui/App.js';
 import { buildEffectiveConfig } from '../ui/effective-config.js';
 import { disposeActiveAgentSessions } from '../ui/hooks/useAgentSession.js';
 import { configureShutdown, requestShutdown } from '../ui/shutdown.js';
 import { loadConfig, registerSecretStoreAdapter } from '../utils/config.js';
 import { KeychainAdapter } from '../utils/keychain.js';
+
+interface ShellRuntimeFlags {
+  ci?: boolean;
+  diff?: boolean;
+  'expert-unsafe': boolean;
+  'fail-on'?: Parameters<typeof runCiAudit>[0]['failOn'];
+  since?: string;
+  target?: string;
+}
+
+function resolveShellRuntime(
+  flags: ShellRuntimeFlags,
+  config: null | ShadowConfig,
+  argumentTarget?: string,
+) {
+  return {
+    ciEnabled: Boolean(flags.ci || config?.ci?.enabled),
+    diffBase: flags.since ?? config?.diff?.baseRef,
+    diffEnabled: Boolean(flags.diff || config?.diff?.enabled),
+    expertUnsafe: Boolean(flags['expert-unsafe'] || config?.expertUnsafe),
+    failOn: flags['fail-on'] ?? config?.ci?.failOn ?? 'high',
+    targetPath: argumentTarget ?? flags.target ?? '.',
+  };
+}
 
 export default class Shell extends Command {
   static override args = {
@@ -91,17 +117,19 @@ export default class Shell extends Command {
 
     registerSecretStoreAdapter(new KeychainAdapter());
 
-    let config: import('../utils/config.js').ShadowConfig | null = null;
+    let config: null | ShadowConfig = null;
     if (!flags.reconfigure) {
       config = await loadConfig();
     }
 
-    const ciEnabled = Boolean(flags.ci || config?.ci?.enabled);
-    const diffEnabled = Boolean(flags.diff || config?.diff?.enabled);
-    const diffBase = flags.since ?? config?.diff?.baseRef;
-    const expertUnsafe = Boolean(flags['expert-unsafe'] || config?.expertUnsafe);
-    const failOn = flags['fail-on'] ?? config?.ci?.failOn ?? 'high';
-    const targetPath = args.target ?? flags.target ?? '.';
+    const {
+      ciEnabled,
+      diffBase,
+      diffEnabled,
+      expertUnsafe,
+      failOn,
+      targetPath,
+    } = resolveShellRuntime(flags, config, args.target);
 
     if (ciEnabled) {
       if (!config) {

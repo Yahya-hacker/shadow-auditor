@@ -16,6 +16,20 @@ export interface CommunityAssignment {
   modularity: number;
 }
 
+function totalCommunityDegree(
+  adjacency: Map<string, Map<string, number>>,
+  communities: Map<string, number>,
+  community: number,
+): number {
+  let degree = 0;
+  for (const [node, neighbors] of adjacency) {
+    if (communities.get(node) !== community) continue;
+    for (const weight of neighbors.values()) degree += weight;
+  }
+
+  return degree;
+}
+
 function buildAdjacencyList(edges: Array<[string, string]>): Map<string, Map<string, number>> {
   const adjacency = new Map<string, Map<string, number>>();
 
@@ -112,13 +126,7 @@ export async function detectCommunities(graph: LouvainGraph): Promise<CommunityA
 
       // Pre-compute the total degree of each candidate community.
       for (const [community, edgeWeightToCommunity] of communityWeights) {
-        let communityDegree = 0;
-        for (const [n, nNeighbors] of adjacency) {
-          if (communities.get(n) !== community) continue;
-          for (const w of nNeighbors.values()) {
-            communityDegree += w;
-          }
-        }
+        const communityDegree = totalCommunityDegree(adjacency, communities, community);
 
         const gain = edgeWeightToCommunity / totalWeight - (nodeDegree * communityDegree) / (2 * totalWeight ** 2);
 

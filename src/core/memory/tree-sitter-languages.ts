@@ -235,6 +235,10 @@ export function getLanguageForExt(ext: string): LanguageInfo | null {
   };
 }
 
+export function isSupportedSourceExtension(ext: string): boolean {
+  return Object.hasOwn(EXTENSION_MAP, ext);
+}
+
 /** Check if a language is structured (function/class AST) */
 export function isStructuredLanguage(key: string): boolean {
   return STRUCTURED_LANGUAGE_KEYS.has(key);

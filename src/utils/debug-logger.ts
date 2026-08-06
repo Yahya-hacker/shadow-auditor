@@ -6,6 +6,17 @@ const LOG_FILE = path.join(LOG_DIR, 'shadow_debug.log');
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5 MB rotation threshold
 const THROTTLE_MS = 100;
 
+async function shiftRotationFile(index: number): Promise<void> {
+  const oldPath = `${LOG_FILE}.${index}`;
+  const newPath = `${LOG_FILE}.${index + 1}`;
+  try {
+    if (index === 2) await fs.rm(newPath, { force: true });
+    await fs.rename(oldPath, newPath);
+  } catch {
+    // Rotation file may not exist yet.
+  }
+}
+
 /**
  * Debug logger with per-instance state (no module-level mutable globals).
  *
@@ -70,17 +81,7 @@ export class DebugLogger {
       if (stat.size > MAX_LOG_SIZE) {
         // Shift rotation chain: .2 -> .3, .1 -> .2, current -> .1
         for (let i = 2; i >= 1; i--) {
-          const oldPath = `${LOG_FILE}.${i}`;
-          const newPath = `${LOG_FILE}.${i + 1}`;
-          try {
-            if (i === 2) {
-              await fs.rm(newPath, { force: true });
-            }
-
-            await fs.rename(oldPath, newPath);
-          } catch {
-            // Rotation file may not exist yet — that's fine
-          }
+          await shiftRotationFile(i);
         }
 
         await fs.rename(LOG_FILE, `${LOG_FILE}.1`);

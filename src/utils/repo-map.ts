@@ -229,23 +229,18 @@ async function parseFile(parser: Parser, filePath: string, basePath: string): Pr
 
     const signatures: string[] = [];
     if (language.key === 'javascript' || language.key === 'typescript') {
-      for (const child of root.namedChildren) {
-        if (
-          STRUCTURAL_TYPES.has(child.type) ||
-          child.type === 'export_statement'
-        ) {
-          const sig = extractSignature(child, sourceCode);
-          if (sig.trim()) signatures.push(sig);
-        }
-      }
+      signatures.push(...root.namedChildren
+        .filter((child) => STRUCTURAL_TYPES.has(child.type) || child.type === 'export_statement')
+        .map((child) => extractSignature(child, sourceCode))
+        .filter((signature) => signature.trim()));
     } else {
-      const chunks = chunkGeneric(
+      const chunks = chunkGeneric({
+        filePath,
+        language: language.name,
+        maxChunkChars: 1200,
         root,
         sourceCode,
-        filePath,
-        language.name,
-        1200,
-      );
+      });
       for (const chunk of chunks) {
         signatures.push(
           `${chunk.structuralType} ${chunk.symbol} [L${chunk.startLine}-L${chunk.endLine}]`,

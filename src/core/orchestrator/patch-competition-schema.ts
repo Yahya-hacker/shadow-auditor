@@ -99,7 +99,7 @@ export type PatchConflict = z.infer<typeof patchConflictSchema>;
 /**
  * A single hunk from a unified diff.
  * Example unified diff hunk:
- *   @@ -40,7 +40,8 @@ function authenticate() {
+ *   `@@ -40,7 +40,8 @@ function authenticate() {`
  *    const query = "SELECT * FROM users WHERE id=" + userId;   // removed line
  *   +const query = "SELECT * FROM users WHERE id=?";           // added line
  *    const result = db.execute(query);

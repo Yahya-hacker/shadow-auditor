@@ -351,11 +351,22 @@ export function handleRequest(req: express.Request): string {
 
   describe('indexing', () => {
     it('populates the production knowledge graph from indexed AST chunks', async () => {
+      await writeFile('repository.ts', `
+export function loadUser(id: string): string {
+  return id;
+}
+`);
       await writeFile('service.ts', `
+import { loadUser } from './repository.js';
 export class UserService {
   findUser(id: string): string {
-    return id;
+    return loadUser(id);
   }
+}
+`);
+      await writeFile('unrelated.ts', `
+export function unresolvedReference(id: string): string {
+  return loadUser(id);
 }
 `);
       const index = await createIndex();
@@ -377,6 +388,11 @@ export class UserService {
       expect(chunks).not.to.be.empty;
       expect(graph.getEdges().some((edge) => edge.edgeType === 'contains')).to.equal(true);
       expect(graph.getEdges().some((edge) => edge.edgeType === 'embeds')).to.equal(true);
+      expect(graph.getEdges().some((edge) => edge.edgeType === 'depends_on')).to.equal(true);
+      const callEdges = graph.getEdges().filter((edge) => edge.edgeType === 'calls');
+      expect(callEdges).to.have.length(1);
+      expect(graph.getEntity(callEdges[0].sourceEntityId)?.label).to.equal('UserService.findUser');
+      expect(graph.getEntity(callEdges[0].targetEntityId)?.label).to.equal('export loadUser');
 
       const restored = await KnowledgeGraph.create({
         runId: 'graph-population-test',
@@ -385,6 +401,60 @@ export class UserService {
       expect(restored.getEntitiesByType('function')
         .some((entity) => entity.label === 'UserService.findUser'))
         .to.equal(true);
+    });
+
+    it('does not guess between ambiguous same-file call targets', async () => {
+      await writeFile('ambiguous.ts', `
+class First {
+  get(): number { return 1; }
+}
+class Second {
+  get(): number { return 2; }
+  run(): number { return this.get(); }
+}
+`);
+      const index = await createIndex();
+      await index.indexRepository();
+      const graph = await KnowledgeGraph.create({
+        runId: 'ambiguous-call-test',
+        storagePath: path.join(tmpDir, 'ambiguous-graph'),
+      });
+
+      await populateIndexKnowledgeGraph(graph, index, repoDir);
+
+      const run = graph.getEntitiesByType('function')
+        .find((entity) => entity.label === 'Second.run');
+      expect(run).not.to.equal(undefined);
+      expect(graph.getOutboundEdges(run!.canonicalId)
+        .filter((edge) => edge.edgeType === 'calls')).to.be.empty;
+    });
+
+    it('resolves local C header dependencies and calls', async () => {
+      await writeFile('native/helper.h', 'int helper(void) { return 1; }\n');
+      await writeFile('native/main.c', `
+#include "helper.h"
+int main(void) { return helper(); }
+`);
+      const index = await createIndex();
+      await index.indexRepository();
+      const graph = await KnowledgeGraph.create({
+        runId: 'c-header-dependency-test',
+        storagePath: path.join(tmpDir, 'c-header-graph'),
+      });
+
+      await populateIndexKnowledgeGraph(graph, index, repoDir);
+
+      const dependencyEdge = graph.getEdges().find((edge) => edge.edgeType === 'depends_on');
+      expect(
+        dependencyEdge,
+        'missing local C header dependency edge',
+      ).not.to.equal(undefined);
+      expect(graph.getEntity(dependencyEdge!.sourceEntityId)?.properties.path).to.equal('native/main.c');
+      expect(graph.getEntity(dependencyEdge!.targetEntityId)?.properties.path).to.equal('native/helper.h');
+      const callEdge = graph.getEdges().find((edge) => edge.edgeType === 'calls');
+      expect(callEdge, 'missing C call edge').not.to.equal(undefined);
+      expect(graph.getEntity(callEdge!.sourceEntityId)?.label).to.equal('main');
+      expect(graph.getEntity(callEdge!.targetEntityId)?.label).to.equal('helper');
     });
 
     it('should index an entire repository', async () => {

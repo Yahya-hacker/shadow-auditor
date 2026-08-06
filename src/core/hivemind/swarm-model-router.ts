@@ -143,13 +143,14 @@ export function computeTrustScore(tier: ModelTier): number {
 /** Cache to avoid re-creating provider clients for the same model. */
 const modelCache = new Map<string, BaseChatModel>();
 
-function cacheKey(
-  provider: string,
-  model: string,
-  apiKey = '',
-  customBaseUrl = '',
-  azure?: AzureProviderConfig,
-): string {
+function cacheKey(options: {
+  apiKey?: string;
+  azure?: AzureProviderConfig;
+  customBaseUrl?: string;
+  model: string;
+  provider: string;
+}): string {
+  const {apiKey = '', azure, customBaseUrl = '', model, provider} = options;
   const credentialScope = createHash('sha256')
     .update(JSON.stringify([apiKey, customBaseUrl.trim(), azure]))
     .digest('hex');
@@ -176,13 +177,13 @@ export function resolveWorkerModel(
     return defaultModel;
   }
 
-  const key = cacheKey(
-    override.provider,
-    override.model,
-    override.apiKey,
-    override.customBaseUrl,
-    override.azure,
-  );
+  const key = cacheKey({
+    apiKey: override.apiKey,
+    azure: override.azure,
+    customBaseUrl: override.customBaseUrl,
+    model: override.model,
+    provider: override.provider,
+  });
   const cached = modelCache.get(key);
   if (cached) {
     return cached;

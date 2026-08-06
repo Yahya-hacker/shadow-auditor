@@ -79,12 +79,12 @@ describe('runtime mode wiring', () => {
       sandboxTools: { sandbox_request: createFakeTool() },
     });
 
-    const assembly = await assembleRuntimeTools(
-      { ...baseConfig, dast: { enabled: true } },
-      tempDir,
-      'run-dast',
+    const assembly = await assembleRuntimeTools({
+      config: { ...baseConfig, dast: { enabled: true } },
       dependencies,
-    );
+      runId: 'run-dast',
+      targetPath: tempDir,
+    });
     expect(assembly.tools).to.have.property('sandbox_request');
 
     await assembly.cleanup();
@@ -100,12 +100,12 @@ describe('runtime mode wiring', () => {
       },
     });
 
-    const assembly = await assembleRuntimeTools(
-      { ...baseConfig, remediation: { enabled: true } },
-      tempDir,
-      'run-remediation',
+    const assembly = await assembleRuntimeTools({
+      config: { ...baseConfig, remediation: { enabled: true } },
       dependencies,
-    );
+      runId: 'run-remediation',
+      targetPath: tempDir,
+    });
     expect(events).to.deep.equal(['baseline']);
     expect(assembly.tools).to.have.property('apply_patch_with_validation');
   });
@@ -426,13 +426,46 @@ describe('runtime mode wiring', () => {
       runId: 'run-patch',
       storagePath: tempDir,
     });
-    const synthesis = await coordinator.finalizePatchCompetition([patchProposal]);
+    const proposals = [
+      patchProposal,
+      {
+        ...patchProposal,
+        agentRole: 'language_patterns',
+        proposalId: 'proposal-002',
+      },
+      {
+        ...patchProposal,
+        agentRole: 'tui_state_machine',
+        proposalId: 'proposal-003',
+      },
+    ];
+    const synthesis = await coordinator.finalizePatchCompetition(proposals);
     const persisted = JSON.parse(
       await fs.readFile(path.join(tempDir, 'patch-synthesis.json'), 'utf8'),
     ) as { synthesisId: string };
 
     expect(synthesis?.acceptedProposals).to.include('proposal-001');
     expect(persisted.synthesisId).to.equal(synthesis?.synthesisId);
+  });
+
+  it('rejects incomplete patch competitions before synthesis', async () => {
+    const coordinator = new SwarmCoordinator({
+      allTools: {},
+      config: baseConfig,
+      model: {} as BaseChatModel,
+      runId: 'run-incomplete-patch',
+      storagePath: tempDir,
+    });
+
+    let error: unknown;
+    try {
+      await coordinator.finalizePatchCompetition([patchProposal]);
+    } catch (error_) {
+      error = error_;
+    }
+
+    expect(error).to.be.instanceOf(Error);
+    expect((error as Error).message).to.include('exactly one proposal from each perspective');
   });
 });
 

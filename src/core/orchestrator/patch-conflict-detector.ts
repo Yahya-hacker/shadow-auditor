@@ -23,13 +23,24 @@ function parseHeaderPath(line: string): string {
   return line.slice(4).trim().split('\t', 1)[0]!.replace(/^[ab]\//, '');
 }
 
+function parseHunkHeader(match: RegExpMatchArray): DiffHunk {
+  return {
+    header: match[5]?.trim() ?? '',
+    lines: [],
+    newCount: Number.parseInt(match[4] ?? '1', 10),
+    newStart: Number.parseInt(match[3]!, 10),
+    oldCount: Number.parseInt(match[2] ?? '1', 10),
+    oldStart: Number.parseInt(match[1]!, 10),
+  };
+}
+
 /**
  * Parse a unified git diff string into structured hunks per file.
  *
  * Handles the standard unified diff format:
  *   --- a/file.ts
  *   +++ b/file.ts
- *   @@ -oldStart,oldCount +newStart,newCount @@ context
+ *   `@@ -oldStart,oldCount +newStart,newCount @@ context`
  *    context line
  *   -removed line
  *   +added line
@@ -89,23 +100,9 @@ export function parseUnifiedDiff(diff: string): ParsedFileDiff[] {
         currentFile.hunks.push(currentHunk);
       }
 
-      const oldStart = Number.parseInt(hunkMatch[1]!, 10);
-      const oldCount = Number.parseInt(hunkMatch[2] ?? '1', 10);
-      const newStart = Number.parseInt(hunkMatch[3]!, 10);
-      const newCount = Number.parseInt(hunkMatch[4] ?? '1', 10);
-      const header = hunkMatch[5]?.trim() ?? '';
-
-      oldLineNum = oldStart;
-      newLineNum = newStart;
-
-      currentHunk = {
-        header,
-        lines: [],
-        newCount,
-        newStart,
-        oldCount,
-        oldStart,
-      };
+      currentHunk = parseHunkHeader(hunkMatch);
+      oldLineNum = currentHunk.oldStart;
+      newLineNum = currentHunk.newStart;
       continue;
     }
 
@@ -276,6 +273,50 @@ function determineResolutionStrategy(
   }
 }
 
+type ProposalEntry = {files: ParsedFileDiff[]; proposal: PatchProposal};
+
+function diffLinePrefix(kind: DiffHunk['lines'][number]['kind']): string {
+  if (kind === 'removed') return '-';
+  if (kind === 'added') return '+';
+  return ' ';
+}
+
+function conflictsForEntryPair(
+  filePath: string,
+  entryA: ProposalEntry,
+  entryB: ProposalEntry,
+): PatchConflict[] {
+  const fileDiffA = entryA.files.find((file) => file.filePath === filePath);
+  const fileDiffB = entryB.files.find((file) => file.filePath === filePath);
+  if (!fileDiffA || !fileDiffB) return [];
+  const conflicts: PatchConflict[] = [];
+  for (const hunkA of fileDiffA.hunks) {
+    const rangeA = hunkOriginalRange(hunkA);
+    for (const hunkB of fileDiffB.hunks) {
+      const rangeB = hunkOriginalRange(hunkB);
+      const overlap = rangesOverlap(rangeA, rangeB);
+      if (overlap === null) continue;
+      const conflictType = classifyConflict(hunkA, hunkB, filePath);
+      conflicts.push({
+        conflictId: `conflict_${crypto.randomBytes(6).toString('hex')}`,
+        conflictType,
+        description: buildConflictDescription(conflictType, filePath, entryA.proposal, entryB.proposal),
+        filePath,
+        hunkA: hunkA.lines.map((line) => `${diffLinePrefix(line.kind)}${line.content}`).join('\n'),
+        hunkB: hunkB.lines.map((line) => `${diffLinePrefix(line.kind)}${line.content}`).join('\n'),
+        overlappingRangeA: rangeA,
+        overlappingRangeB: rangeB,
+        proposalAId: entryA.proposal.proposalId,
+        proposalBId: entryB.proposal.proposalId,
+        resolutionStrategy: determineResolutionStrategy(conflictType, entryA.proposal, entryB.proposal),
+        severity: conflictType === 'same_line_edit' ? 'blocking' : 'warning',
+      });
+    }
+  }
+
+  return conflicts;
+}
+
 /**
  * Detect all conflicts between a set of patch proposals.
  *
@@ -293,7 +334,7 @@ export function detectConflicts(proposals: PatchProposal[]): PatchConflict[] {
   }));
 
   // Group by file path
-  const fileProposals = new Map<string, Array<{ files: ParsedFileDiff[]; proposal: PatchProposal; }>>();
+  const fileProposals = new Map<string, ProposalEntry[]>();
   for (const { files, proposal } of parsed) {
     for (const file of files) {
       const existing = fileProposals.get(file.filePath) ?? [];
@@ -309,43 +350,7 @@ export function detectConflicts(proposals: PatchProposal[]): PatchConflict[] {
     // Compare each pair of proposals for this file
     for (let i = 0; i < entries.length; i++) {
       for (let j = i + 1; j < entries.length; j++) {
-        const entryA = entries[i]!;
-        const entryB = entries[j]!;
-        const fileDiffA = entryA.files.find((f) => f.filePath === filePath);
-        const fileDiffB = entryB.files.find((f) => f.filePath === filePath);
-        if (!fileDiffA || !fileDiffB) continue;
-
-        // Compare hunks
-        for (const hunkA of fileDiffA.hunks) {
-          const rangeA = hunkOriginalRange(hunkA);
-
-          for (const hunkB of fileDiffB.hunks) {
-            const rangeB = hunkOriginalRange(hunkB);
-            const overlap = rangesOverlap(rangeA, rangeB);
-
-            if (overlap === null) continue; // No conflict
-
-            const conflictType = classifyConflict(hunkA, hunkB, filePath);
-            const severity: PatchConflict['severity'] =
-              conflictType === 'same_line_edit' ? 'blocking' :
-              overlap === 'adjacent' ? 'warning' : 'warning';
-
-            conflicts.push({
-              conflictId: `conflict_${crypto.randomBytes(6).toString('hex')}`,
-              conflictType,
-              description: buildConflictDescription(conflictType, filePath, entryA.proposal, entryB.proposal),
-              filePath,
-              hunkA: hunkA.lines.map((l) => `${l.kind === 'removed' ? '-' : l.kind === 'added' ? '+' : ' '}${l.content}`).join('\n'),
-              hunkB: hunkB.lines.map((l) => `${l.kind === 'removed' ? '-' : l.kind === 'added' ? '+' : ' '}${l.content}`).join('\n'),
-              overlappingRangeA: rangeA,
-              overlappingRangeB: rangeB,
-              proposalAId: entryA.proposal.proposalId,
-              proposalBId: entryB.proposal.proposalId,
-              resolutionStrategy: determineResolutionStrategy(conflictType, entryA.proposal, entryB.proposal),
-              severity,
-            });
-          }
-        }
+        conflicts.push(...conflictsForEntryPair(filePath, entries[i]!, entries[j]!));
       }
     }
   }

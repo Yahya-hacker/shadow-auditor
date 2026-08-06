@@ -47,10 +47,11 @@ jobs:
           consumer="$RUNNER_TEMP/package-smoke"
           mkdir "$consumer"
           cd "$consumer"
-          npm init -y >/dev/null
+          node -e 'const fs = require("node:fs"); const source = JSON.parse(fs.readFileSync(process.env.GITHUB_WORKSPACE + "/package.json", "utf8")); fs.writeFileSync("package.json", JSON.stringify({name: "shadow-auditor-package-smoke", private: true, allowScripts: source.allowScripts}, null, 2));'
           npm install "$RUNNER_TEMP/$package_name" --no-audit --no-fund
           ./node_modules/.bin/shadow-auditor --help
           ./node_modules/.bin/shadow-auditor --version
+          node -e 'const Parser = require("tree-sitter"); const TypeScript = require("tree-sitter-typescript").typescript; const parser = new Parser(); parser.setLanguage(TypeScript); const tree = parser.parse("const value: number = 1"); if (tree.rootNode.hasError) process.exit(1);'
       - name: Smoke-test npm link
         run: |
           set -euo pipefail

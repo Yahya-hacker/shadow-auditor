@@ -55,15 +55,19 @@ function deepSeekReasoningSettings(
   };
 }
 
+function reasoningSettings(
+  effort: ShadowConfig['reasoningEffort'],
+): undefined | {effort: NonNullable<ShadowConfig['reasoningEffort']>} {
+  return effort ? {effort} : undefined;
+}
+
 export function getLangchainModel(config: ShadowConfig): BaseChatModel {
   const { apiKey, customBaseUrl, model, provider } = config;
   const normalizedProvider = normalizeProviderName(provider);
   const deterministic = config.ci?.enabled === true;
   const maxTokens = config.maxOutputTokens;
   const temperature = deterministicTemperature(deterministic, normalizedProvider, model);
-  const reasoning = config.reasoningEffort
-    ? { effort: config.reasoningEffort }
-    : undefined;
+  const reasoning = reasoningSettings(config.reasoningEffort);
 
   switch (normalizedProvider) {
     case 'anthropic': {

@@ -3,8 +3,12 @@
  */
 
 export interface CodeChunk {
+  /** AST-extracted call targets referenced by this structural chunk. */
+  calls?: string[];
   /** SHA-256 of the raw content for deduplication */
   contentHash: string;
+  /** AST-extracted module, package, or file dependencies visible to this chunk. */
+  dependencies?: string[];
   /** End line (1-indexed, inclusive) */
   endLine: number;
   /** Absolute file path */

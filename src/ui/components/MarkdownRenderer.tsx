@@ -119,6 +119,81 @@ type InlineSegment = InlineBold | InlineCode | InlineItalic | InlineLink | Inlin
 
 const DATA_FLOW_LINE = /^(📥 SOURCE|📤 SINK|🛡️ SANITIZER|→)\s+(.*)$/;
 
+function parseCodeFence(
+  lines: string[],
+  index: number,
+  streaming: boolean,
+): {block: Block; nextIndex: number} {
+  const line = lines[index]!;
+  const language = line.trim().replace(/^```/, '').trim();
+  const closingIndex = lines.findIndex(
+    (candidate, candidateIndex) =>
+      candidateIndex > index && /^```\s*$/.test(candidate.trimStart()),
+  );
+  const closed = closingIndex !== -1;
+  if (!closed && !streaming) {
+    return {block: {text: line, type: 'paragraph'}, nextIndex: index + 1};
+  }
+
+  const end = closed ? closingIndex : lines.length;
+  return {
+    block: {code: lines.slice(index + 1, end).join('\n'), language, type: 'codeBlock'},
+    nextIndex: closed ? end + 1 : lines.length,
+  };
+}
+
+function dataFlowKind(label: string): DataFlowBlock['items'][number]['kind'] {
+  if (label === '📥 SOURCE') return 'source';
+  if (label === '📤 SINK') return 'sink';
+  if (label === '🛡️ SANITIZER') return 'sanitizer';
+  return 'flow';
+}
+
+function parseDataFlow(lines: string[], index: number): {block: DataFlowBlock; nextIndex: number} {
+  const items: DataFlowBlock['items'] = [];
+  let nextIndex = index;
+  while (nextIndex < lines.length) {
+    const match = DATA_FLOW_LINE.exec(lines[nextIndex]!);
+    if (!match) break;
+    items.push({kind: dataFlowKind(match[1]!), text: match[2]!});
+    nextIndex++;
+  }
+
+  return {block: {items, type: 'dataFlow'}, nextIndex};
+}
+
+function collectPrefixedLines({
+  index,
+  lines,
+  pattern,
+  replacement,
+}: {
+  index: number;
+  lines: string[];
+  pattern: RegExp;
+  replacement: RegExp;
+}): {items: string[]; nextIndex: number} {
+  const items: string[] = [];
+  let nextIndex = index;
+  while (nextIndex < lines.length && pattern.test(lines[nextIndex]!)) {
+    items.push(lines[nextIndex]!.replace(replacement, ''));
+    nextIndex++;
+  }
+
+  return {items, nextIndex};
+}
+
+function isParagraphLine(line: string): boolean {
+  return line.trim() !== '' &&
+    !line.startsWith('```') &&
+    !/^#{1,6}\s/.test(line) &&
+    !/^>\s?/.test(line) &&
+    !DATA_FLOW_LINE.test(line) &&
+    !/^\s*[-*+]\s+/.test(line) &&
+    !/^\s*\d+[.)]\s+/.test(line) &&
+    !/^(---+|___+|\*\*\*+)\s*$/.test(line.trim());
+}
+
 export function parseMarkdown(raw: string, streaming: boolean): Block[] {
   const blocks: Block[] = [];
   const lines = raw.split('\n');
@@ -129,30 +204,9 @@ export function parseMarkdown(raw: string, streaming: boolean): Block[] {
 
     // ── Fenced code block ──────────────────────────────────────────────────
     if (/^```\w*$/.test(line.trimStart())) {
-      const lang = line.trim().replace(/^```/, '').trim();
-      const codeLines: string[] = [];
-      let closed = false;
-      let j = i + 1;
-      while (j < lines.length) {
-        if (/^```\s*$/.test(lines[j]!.trimStart())) {
-          closed = true;
-          break;
-        }
-
-        codeLines.push(lines[j]!);
-        j++;
-      }
-
-      // In streaming mode, render unclosed fence as code block with what we have
-      if (closed || streaming) {
-        blocks.push({ code: codeLines.join('\n'), language: lang, type: 'codeBlock' });
-        i = closed ? j + 1 : lines.length;
-        continue;
-      }
-
-      // Not streaming & not closed: render opening fence as paragraph text
-      blocks.push({ text: line, type: 'paragraph' });
-      i++;
+      const parsed = parseCodeFence(lines, i, streaming);
+      blocks.push(parsed.block);
+      i = parsed.nextIndex;
       continue;
     }
 
@@ -177,67 +231,43 @@ export function parseMarkdown(raw: string, streaming: boolean): Block[] {
 
     // ── Blockquote ──────────────────────────────────────────────────────────
     if (/^>\s?/.test(line)) {
-      const quoteLines: string[] = [];
-      let j = i;
-      while (j < lines.length && /^>\s?/.test(lines[j]!)) {
-        quoteLines.push(lines[j]!.replace(/^>\s?/, ''));
-        j++;
-      }
-
-      blocks.push({ text: quoteLines.join(' '), type: 'blockquote' });
-      i = j;
+      const parsed = collectPrefixedLines({index: i, lines, pattern: /^>\s?/, replacement: /^>\s?/});
+      blocks.push({text: parsed.items.join(' '), type: 'blockquote'});
+      i = parsed.nextIndex;
       continue;
     }
 
     // ── Security data-flow trace ────────────────────────────────────────────
     if (DATA_FLOW_LINE.test(line)) {
-      const items: DataFlowBlock['items'] = [];
-      let j = i;
-      while (j < lines.length) {
-        const match = DATA_FLOW_LINE.exec(lines[j]!);
-        if (!match) break;
-        const kind =
-          match[1] === '📥 SOURCE'
-            ? 'source'
-            : match[1] === '📤 SINK'
-              ? 'sink'
-              : match[1] === '🛡️ SANITIZER'
-                ? 'sanitizer'
-                : 'flow';
-        items.push({kind, text: match[2]!});
-        j++;
-      }
-
-      blocks.push({items, type: 'dataFlow'});
-      i = j;
+      const parsed = parseDataFlow(lines, i);
+      blocks.push(parsed.block);
+      i = parsed.nextIndex;
       continue;
     }
 
     // ── Unordered list ─────────────────────────────────────────────────────
     if (/^(\s*[-*+])\s+/.test(line)) {
-      const items: string[] = [];
-      let j = i;
-      while (j < lines.length && /^(\s*[-*+])\s+/.test(lines[j]!)) {
-        items.push(lines[j]!.replace(/^\s*[-*+]\s+/, ''));
-        j++;
-      }
-
-      blocks.push({ items, ordered: false, type: 'list' });
-      i = j;
+      const parsed = collectPrefixedLines({
+        index: i,
+        lines,
+        pattern: /^(\s*[-*+])\s+/,
+        replacement: /^\s*[-*+]\s+/,
+      });
+      blocks.push({items: parsed.items, ordered: false, type: 'list'});
+      i = parsed.nextIndex;
       continue;
     }
 
     // ── Ordered list ───────────────────────────────────────────────────────
     if (/^\s*\d+[.)]\s+/.test(line)) {
-      const items: string[] = [];
-      let j = i;
-      while (j < lines.length && /^\s*\d+[.)]\s+/.test(lines[j]!)) {
-        items.push(lines[j]!.replace(/^\s*\d+[.)]\s+/, ''));
-        j++;
-      }
-
-      blocks.push({ items, ordered: true, type: 'list' });
-      i = j;
+      const parsed = collectPrefixedLines({
+        index: i,
+        lines,
+        pattern: /^\s*\d+[.)]\s+/,
+        replacement: /^\s*\d+[.)]\s+/,
+      });
+      blocks.push({items: parsed.items, ordered: true, type: 'list'});
+      i = parsed.nextIndex;
       continue;
     }
 
@@ -250,17 +280,7 @@ export function parseMarkdown(raw: string, streaming: boolean): Block[] {
     // ── Paragraph (collapse contiguous non-blank lines) ─────────────────────
     const paraLines: string[] = [];
     let j = i;
-    while (
-      j < lines.length &&
-      lines[j]!.trim() !== '' &&
-      !(lines[j]!).startsWith('```') &&
-      !/^#{1,6}\s/.test(lines[j]!) &&
-      !/^>\s?/.test(lines[j]!) &&
-      !DATA_FLOW_LINE.test(lines[j]!) &&
-      !/^\s*[-*+]\s+/.test(lines[j]!) &&
-      !/^\s*\d+[.)]\s+/.test(lines[j]!) &&
-      !/^(---+|___+|\*\*\*+)\s*$/.test(lines[j]!.trim())
-    ) {
+    while (j < lines.length && isParagraphLine(lines[j]!)) {
       paraLines.push(lines[j]!);
       j++;
     }

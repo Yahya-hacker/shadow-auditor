@@ -57,6 +57,11 @@ import {
 } from './tools/report-finding.js';
 import { createSearchCodebaseTool } from './tools/search-codebase.js';
 
+function humanAnswerText(answer: boolean | string | undefined): string {
+  if (typeof answer !== 'boolean') return answer ?? '';
+  return answer ? 'Yes, approved.' : 'No, denied.';
+}
+
 export interface AgentSessionOptions {
   /** Diff scope hint from incremental mode (pre-built string) */
   diffScopeHint?: string;
@@ -550,6 +555,45 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     }
   }
 
+  private async initializeArtifacts(
+    resolvedTargetPath: string,
+    mcpTools: ToolSet,
+  ): Promise<RunArtifacts> {
+    this.artifacts = this.resumeRunId
+      ? await RunArtifacts.open(resolvedTargetPath, this.resumeRunId)
+      : await RunArtifacts.create(resolvedTargetPath, {
+          maxOutputTokens: this.runtime.maxOutputTokens,
+          maxToolSteps: this.runtime.maxToolSteps,
+          mcpEnabled: Object.keys(mcpTools).length > 0,
+          model: this.config.model,
+          provider: this.config.provider,
+          targetPath: resolvedTargetPath,
+          warnings: [...this.runtimeWarnings],
+        });
+    this.artifacts.assertCompatible({
+      model: this.config.model,
+      provider: this.config.provider,
+    });
+    return this.artifacts;
+  }
+
+  private initializeReportBuilder(resolvedTargetPath: string): void {
+    this.reportBuilder = new ReportBuilder({
+      modes: {
+        ci: this.config.ci?.enabled ?? false,
+        dast: this.config.dast?.enabled ?? false,
+        remediation: this.config.remediation?.enabled ?? false,
+        swarm: this.config.swarm?.enabled ?? false,
+      },
+      outputDir: this.artifacts!.getRunDirectory(),
+      runId: path.basename(this.artifacts!.getRunDirectory()),
+      scanMode: this.config.auditMode,
+      targetName: path.basename(resolvedTargetPath),
+      toolVersion: '1.0.0',
+    });
+    this.reportBuilder.setStartTime(Date.now());
+  }
+
   private async initialize(): Promise<void> {
     const {signal} = this.initializationController;
     signal.throwIfAborted();
@@ -581,38 +625,11 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     };
 
     // Initialize artifacts and mission runtime first (needed for semantic index graph integration)
-    this.artifacts = this.resumeRunId
-      ? await RunArtifacts.open(resolvedTargetPath, this.resumeRunId)
-      : await RunArtifacts.create(resolvedTargetPath, {
-        maxOutputTokens: this.runtime.maxOutputTokens,
-        maxToolSteps: this.runtime.maxToolSteps,
-        mcpEnabled: Object.keys(mcpTools).length > 0,
-        model: this.config.model,
-        provider: this.config.provider,
-        targetPath: resolvedTargetPath,
-        warnings: [...this.runtimeWarnings],
-      });
-    this.artifacts.assertCompatible({
-      model: this.config.model,
-      provider: this.config.provider,
-    });
+    const artifacts = await this.initializeArtifacts(resolvedTargetPath, mcpTools);
 
     // Initialize the report builder — findings collected during analysis
     // will be fed through deduplication and SARIF/JSON/Markdown generation.
-    this.reportBuilder = new ReportBuilder({
-      modes: {
-        ci: this.config.ci?.enabled ?? false,
-        dast: this.config.dast?.enabled ?? false,
-        remediation: this.config.remediation?.enabled ?? false,
-        swarm: this.config.swarm?.enabled ?? false,
-      },
-      outputDir: this.artifacts.getRunDirectory(),
-      runId: path.basename(this.artifacts.getRunDirectory()),
-      scanMode: this.config.auditMode,
-      targetName: path.basename(resolvedTargetPath),
-      toolVersion: '1.0.0',
-    });
-    this.reportBuilder.setStartTime(Date.now());
+    this.initializeReportBuilder(resolvedTargetPath);
 
     await this.initializeMissionRuntime(resolvedTargetPath);
     signal.throwIfAborted();
@@ -622,19 +639,18 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       config: this.config,
       missionEngine: this.missionEngine,
       onWarning: (warning) => this.runtimeWarnings.push(warning),
-      runDirectory: this.artifacts.getRunDirectory(),
+      runDirectory: artifacts.getRunDirectory(),
       signal,
       targetPath: resolvedTargetPath,
     });
     this.semanticIndex = semanticIndex.index;
     const contextRetrievalTools = semanticIndex.tools;
-    this.runtimeToolAssembly = await assembleRuntimeTools(
-      this.config,
-      resolvedTargetPath,
-      path.basename(this.artifacts.getRunDirectory()),
-      undefined,
-      (request) => this.humanInteraction.reviewValidatedPatch(request),
-    );
+    this.runtimeToolAssembly = await assembleRuntimeTools({
+      config: this.config,
+      confirmPatch: (request) => this.humanInteraction.reviewValidatedPatch(request),
+      runId: path.basename(artifacts.getRunDirectory()),
+      targetPath: resolvedTargetPath,
+    });
 
     this.tools = {
       edit_file: createEditFileTool(pathGuard, this.humanInteraction),
@@ -668,7 +684,7 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     const toolsArray = Object.entries(this.tools).map(([name, tool]) => ({ name, tool }));
 
     // Create a persistent checkpointer for state management and human interrupts
-    const runDirectory = this.artifacts.getRunDirectory();
+    const runDirectory = artifacts.getRunDirectory();
     const checkpointer = new PersistentCheckpointSaver({ storagePath: runDirectory });
     this.checkpointer = checkpointer;
     await checkpointer.initialize();
@@ -692,7 +708,7 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       await this.initializeSwarmCoordinator(resolvedTargetPath);
     }
 
-    await this.artifacts.recordMessage({
+    await artifacts.recordMessage({
       content: {
         indexing: this.semanticIndex ? this.semanticIndex.stats() : null,
         mission: this.missionEngine?.getState() ?? null,
@@ -956,6 +972,36 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     );
   }
 
+  private async finalizeResumedWorkflow(
+    result: Awaited<ReturnType<typeof processAgentStream>>,
+  ): Promise<string> {
+    this.ingestFindings(result.findings);
+    if (result.pipelineArtifacts) {
+      if (!this.artifacts) {
+        throw new Error('Run artifacts are unavailable after workflow execution.');
+      }
+
+      await this.artifacts.writePipelineArtifacts(result.pipelineArtifacts);
+    }
+
+    const previousAuditStatus = this.auditStatus;
+    this.auditStatus = {
+      completed: result.finishTaskCompleted && result.reportFindingsAccepted,
+      evidenceActions: Math.max(previousAuditStatus.evidenceActions, result.evidenceActions),
+      inspectedPaths: [
+        ...new Set([...previousAuditStatus.inspectedPaths, ...result.inspectedPaths]),
+      ],
+    };
+    if (result.humanInputRequest) return result.fullResponse;
+    if (!result.fullResponse.trim()) {
+      throw new Error('The workflow completed without producing a public response.');
+    }
+
+    await this.persistMessages([{ content: result.fullResponse, role: 'assistant' }]);
+    if (this.auditStatus.completed) await this.artifacts?.markCompleted();
+    return result.fullResponse;
+  }
+
   private async resumeWithHumanInputInternal(
     answer: boolean | string | undefined,
     onChunk: (text: string) => void,
@@ -976,9 +1022,7 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       version: 'v3' as const,
     };
 
-    const answerText = typeof answer === 'boolean'
-      ? (answer ? 'Yes, approved.' : 'No, denied.')
-      : answer ?? '';
+    const answerText = humanAnswerText(answer);
     if (typeof answer === 'boolean') {
       const snapshot = await this.compiledWorkflow.getState(config);
       const pendingRequest = (
@@ -1021,37 +1065,7 @@ Use your tools to inspect implementation details, verify assumptions, and produc
         workflow: this.compiledWorkflow,
       });
       await this.checkpointer?.prune('session_main');
-      this.ingestFindings(result.findings);
-      if (result.pipelineArtifacts) {
-        if (!this.artifacts) {
-          throw new Error('Run artifacts are unavailable after workflow execution.');
-        }
-
-        await this.artifacts.writePipelineArtifacts(result.pipelineArtifacts);
-      }
-
-      const previousAuditStatus = this.auditStatus;
-      this.auditStatus = {
-        completed: result.finishTaskCompleted && result.reportFindingsAccepted,
-        evidenceActions: Math.max(previousAuditStatus.evidenceActions, result.evidenceActions),
-        inspectedPaths: [
-          ...new Set([...previousAuditStatus.inspectedPaths, ...result.inspectedPaths]),
-        ],
-      };
-
-      // If there was a nested interrupt, return the marker
-      if (result.humanInputRequest) {
-        return result.fullResponse;
-      }
-
-      if (!result.fullResponse.trim()) {
-        throw new Error('The workflow completed without producing a public response.');
-      }
-
-      // Persist the assistant response
-      await this.persistMessages([{ content: result.fullResponse, role: 'assistant' }]);
-      if (this.auditStatus.completed) await this.artifacts?.markCompleted();
-      return result.fullResponse;
+      return this.finalizeResumedWorkflow(result);
     } catch (error) {
       const rawDetail = error instanceof Error ? error.message : String(error);
       const detail = this.config.provider === 'azure' && this.config.azure

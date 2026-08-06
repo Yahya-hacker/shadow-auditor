@@ -314,7 +314,7 @@ export async function executeLangChainToolLoop(
       );
     }
 
-    if (step === options.maxToolSteps) {
+    const finalizeAtToolBudget = async (): Promise<LangChainToolExecutionResult> => {
       for (const toolCall of toolCalls) {
         const deniedMessage = new ToolMessage({
           content: '[DENIED] The model/tool iteration budget is exhausted. Synthesize the result from collected evidence.',
@@ -336,9 +336,17 @@ export async function executeLangChainToolLoop(
         options.providerHint,
         {allowTextEncodedToolCalls: false},
       );
-      finalText = contentToText(finalResponse.content);
       messagesDelta.push(finalResponse);
-      return { messagesDelta, text: finalText, toolCallCounts, toolCalls: executedToolCalls };
+      return {
+        messagesDelta,
+        text: contentToText(finalResponse.content),
+        toolCallCounts,
+        toolCalls: executedToolCalls,
+      };
+    };
+
+    if (step === options.maxToolSteps) {
+      return finalizeAtToolBudget();
     }
 
     const executeToolCall = async (toolCall: typeof toolCalls[number]) => {
@@ -383,34 +391,38 @@ export async function executeLangChainToolLoop(
       ? await mapWithConcurrency(toolCalls, MAX_PARALLEL_TOOL_CALLS, executeToolCall)
       : await mapWithConcurrency(toolCalls, 1, executeToolCall);
 
-    let finishTaskSucceeded = false;
-    for (const {result, succeeded, toolCall} of executions) {
-      toolCallCounts[toolCall.name] = (toolCallCounts[toolCall.name] ?? 0) + 1;
-      executedToolCalls.push({ args: toolCall.args, name: toolCall.name, result });
-      options.onActivity?.({
-        args: toolCall.args,
-        kind: 'tool_result',
-        result,
-        succeeded,
-        summary: succeeded ? `Completed ${toolCall.name}.` : `Failed ${toolCall.name}.`,
-        toolCallId: toolCall.id,
-        toolName: toolCall.name,
-      });
-      const toolMessage = new ToolMessage({
-        content: serializeToolResult(result),
-        name: toolCall.name,
-        status: succeeded ? 'success' : 'error',
-        tool_call_id: toolCall.id ?? `${toolCall.name}-${step}`,
-      });
-      messages.push(toolMessage);
-      messagesDelta.push(toolMessage);
-      if (toolCall.name === 'finish_task' && succeeded) {
-        finishTaskSucceeded = true;
-        if (!finalText) finalText = serializeToolResult(result);
+    const recordExecutions = (): boolean => {
+      let finishTaskSucceeded = false;
+      for (const {result, succeeded, toolCall} of executions) {
+        toolCallCounts[toolCall.name] = (toolCallCounts[toolCall.name] ?? 0) + 1;
+        executedToolCalls.push({ args: toolCall.args, name: toolCall.name, result });
+        options.onActivity?.({
+          args: toolCall.args,
+          kind: 'tool_result',
+          result,
+          succeeded,
+          summary: succeeded ? `Completed ${toolCall.name}.` : `Failed ${toolCall.name}.`,
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+        });
+        const toolMessage = new ToolMessage({
+          content: serializeToolResult(result),
+          name: toolCall.name,
+          status: succeeded ? 'success' : 'error',
+          tool_call_id: toolCall.id ?? `${toolCall.name}-${step}`,
+        });
+        messages.push(toolMessage);
+        messagesDelta.push(toolMessage);
+        if (toolCall.name === 'finish_task' && succeeded) {
+          finishTaskSucceeded = true;
+          if (!finalText) finalText = serializeToolResult(result);
+        }
       }
-    }
 
-    if (finishTaskSucceeded) {
+      return finishTaskSucceeded;
+    };
+
+    if (recordExecutions()) {
       return { messagesDelta, text: finalText, toolCallCounts, toolCalls: executedToolCalls };
     }
   }

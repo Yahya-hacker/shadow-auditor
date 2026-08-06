@@ -4,12 +4,22 @@
  */
 
 import { logToStderr } from '../../../utils/stderr-logger.js';
-export async function withRetry<T>(
-  fn: () => Promise<T>,
+
+type RetryArguments = [
   maxRetries: number,
   baseDelayMs: number,
   signal?: AbortSignal,
-  logLabel = 'SemanticIndex',
+  logLabel?: string,
+];
+
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  ...[
+    maxRetries,
+    baseDelayMs,
+    signal,
+    logLabel = 'SemanticIndex',
+  ]: RetryArguments
 ): Promise<T> {
   let lastError: unknown;
 

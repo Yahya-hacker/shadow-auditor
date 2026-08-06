@@ -28,7 +28,7 @@ const DEFAULT_ALLOWED_PATTERNS = [
 ];
 
 const UNSAFE_FIND_ACTIONS =
-  /(?:^|\s)-(?:exec|execdir|ok|okdir|delete|files0-from|fls|fprint|fprint0|fprintf)(?:\s|=|$)/i;
+  /(?:^|\s)-(?:exec|execdir|ok|okdir|delete|files0-from|fls|follow|fprint|fprint0|fprintf)(?:\s|=|$)/i;
 const HOST_PATH_ARGUMENT =
   /(?:^|[\s=])["']?(?:\/|~(?:\/|$)|[a-z]:[\\/]|\\\\|\.\.(?:[\\/]|$))/i;
 const UNSAFE_ANALYSIS_OPTIONS = [
@@ -139,6 +139,46 @@ function inspectShellComposition(command: string): { pipeline: string[]; unsafe:
   return { pipeline, unsafe: quote !== null };
 }
 
+function safeModeDenial(
+  trimmed: string,
+  composition: ReturnType<typeof inspectShellComposition>,
+): CommandPolicyDecision | undefined {
+  if (composition.unsafe) {
+    return {
+      allowed: false,
+      reason: '[POLICY_DENIED] Multiline commands, redirection, and shell chaining are not allowed in safe mode.',
+    };
+  }
+
+  if (HOST_PATH_ARGUMENT.test(trimmed)) {
+    return {
+      allowed: false,
+      reason: '[POLICY_DENIED] Absolute, home-relative, and parent-traversal paths are not allowed in safe mode.',
+    };
+  }
+
+  if (UNSAFE_ANALYSIS_OPTIONS.some((pattern) => pattern.test(trimmed))) {
+    return {
+      allowed: false,
+      reason: '[POLICY_DENIED] Options that execute subprocesses or follow links are not allowed in safe mode.',
+    };
+  }
+
+  // Command-specific restrictions apply independently to every pipeline stage.
+  if (
+    composition.pipeline.some((segment) =>
+      /^find(?:\s|$)/i.test(segment) && UNSAFE_FIND_ACTIONS.test(segment)
+    )
+  ) {
+    return {
+      allowed: false,
+      reason: '[POLICY_DENIED] find executable, mutating, and file-writing actions are not allowed in safe mode.',
+    };
+  }
+
+  return undefined;
+}
+
 export function evaluateCommandPolicy(command: string, config: CommandPolicyConfig = {}): CommandPolicyDecision {
   const trimmed = command.trim();
 
@@ -154,38 +194,9 @@ export function evaluateCommandPolicy(command: string, config: CommandPolicyConf
   // matching so an allowlisted prefix cannot smuggle a second command.
   const composition = inspectShellComposition(trimmed);
   const unsafeComposition = composition.unsafe;
-  if (unsafeComposition && !config.expertUnsafe) {
-    return {
-      allowed: false,
-      reason: '[POLICY_DENIED] Multiline commands, redirection, and shell chaining are not allowed in safe mode.',
-    };
-  }
-
-  if (!config.expertUnsafe && HOST_PATH_ARGUMENT.test(trimmed)) {
-    return {
-      allowed: false,
-      reason: '[POLICY_DENIED] Absolute, home-relative, and parent-traversal paths are not allowed in safe mode.',
-    };
-  }
-
-  if (!config.expertUnsafe && UNSAFE_ANALYSIS_OPTIONS.some((pattern) => pattern.test(trimmed))) {
-    return {
-      allowed: false,
-      reason: '[POLICY_DENIED] Options that execute subprocesses or follow links are not allowed in safe mode.',
-    };
-  }
-
-  // Command-specific restrictions apply independently to every pipeline stage.
-  if (
-    !config.expertUnsafe &&
-    composition.pipeline.some((segment) =>
-      /^find(?:\s|$)/i.test(segment) && UNSAFE_FIND_ACTIONS.test(segment)
-    )
-  ) {
-    return {
-      allowed: false,
-      reason: '[POLICY_DENIED] find executable, mutating, and file-writing actions are not allowed in safe mode.',
-    };
+  if (!config.expertUnsafe) {
+    const denial = safeModeDenial(trimmed, composition);
+    if (denial) return denial;
   }
 
   // ── Shell substitution check (before pattern matching) ────────────

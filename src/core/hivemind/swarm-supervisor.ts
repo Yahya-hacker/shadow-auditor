@@ -26,6 +26,11 @@ import type { AgentRole, BlackboardState, Task } from './hivemind-schema.js';
 import { debugLog } from '../../utils/debug-logger.js';
 import { AgentState } from '../graph/state.js';
 import {
+  type PatchProposal,
+  patchProposalAgentRoleSchema,
+  patchProposalSchema,
+} from '../orchestrator/patch-competition-schema.js';
+import {
   resolveWorkerModel,
   resolveWorkerTier,
   type SwarmModelOverrides,
@@ -45,6 +50,9 @@ export interface SwarmSupervisorOptions {
 
 // Maximum time a task can remain in_progress before the supervisor resets it.
 const STALE_IN_PROGRESS_MS = 10 * 60 * 1000; // 10 minutes
+const MAX_FAILED_RETRIES = 3;
+
+type TaskGraph = ReturnType<Blackboard['getTaskGraph']>;
 
 /**
  * Compact, serializable snapshot of swarm progress, emitted through the
@@ -156,19 +164,35 @@ export function buildSwarmSupervisor(options: {
     const finalReporterDeps = [verifyTaskId];
 
     const patchEnabled = coordinator.isPatchEnabled();
-    let patchTaskId = '';
     if (patchEnabled) {
-      const patchRes = taskGraph.createTask({
-        dependencies: [verifyTaskId],
-        description: 'Generate code patches and verify them against tests',
-        parameters: {},
-        priority: 'medium',
-        requiredRole: 'patch-engineer',
-        taskType: 'patch',
-      });
-      if (patchRes.ok) {
-        patchTaskId = patchRes.value.taskId;
-        finalReporterDeps.push(patchTaskId);
+      const patchPerspectives = [
+        {
+          agentRole: 'security_boundaries',
+          description: 'Design the least-privilege security fix and verify it against tests',
+        },
+        {
+          agentRole: 'language_patterns',
+          description: 'Design an idiomatic, maintainable security fix and verify it against tests',
+        },
+        {
+          agentRole: 'tui_state_machine',
+          description: 'Design a regression-resistant integration fix and verify it against tests',
+        },
+      ] as const;
+      for (const perspective of patchPerspectives) {
+        const patchRes = taskGraph.createTask({
+          dependencies: [verifyTaskId],
+          description: perspective.description,
+          parameters: {
+            patchPerspective: perspective.agentRole,
+            proposalRequirement: 'Return one tested PatchProposal matching this exact agentRole.',
+          },
+          priority: 'medium',
+          requiredRole: 'patch-engineer',
+          taskType: `patch:${perspective.agentRole}`,
+        });
+        if (!patchRes.ok) throw new Error(patchRes.error);
+        finalReporterDeps.push(patchRes.value.taskId);
       }
     }
 
@@ -197,7 +221,7 @@ export function buildSwarmSupervisor(options: {
     if (registered.length === 0) {
       const rolesToSpawn: AgentRole[] = ['recon', 'taint-tracer', 'exploit-analyst', 'verifier', 'reporter'];
       if (coordinator.isPatchEnabled()) {
-        rolesToSpawn.push('patch-engineer');
+        rolesToSpawn.push('patch-engineer', 'patch-engineer', 'patch-engineer');
       }
 
       for (const role of rolesToSpawn) {
@@ -255,65 +279,11 @@ export function buildSwarmSupervisor(options: {
   async function dispatch(): Promise<Partial<GraphState>> {
     const taskGraph = blackboard.getTaskGraph();
     const activeAgents = blackboard.getActiveAgents();
-    const assignedWorkers = new Set<string>();
     const maxWorkers = Math.max(1, coordinator.getConfig().swarm?.maxWorkers ?? 6);
 
-    // Release in_progress tasks whose agents have gone offline or run too long.
-    // On resume from a crash, in-memory promises were lost but the blackboard
-    // still shows these as in_progress; releasing them makes them claimable
-    // again so the re-created workers can pick them up.
-    for (const task of taskGraph.getTasksByStatus('in_progress')) {
-      const agent = activeAgents.find((a) => a.agentId === task.assignedAgent);
-      const runningTooLong =
-        task.updatedAt && Date.now() - new Date(task.updatedAt).getTime() > STALE_IN_PROGRESS_MS;
-      if (!agent || agent.status === 'offline' || runningTooLong) {
-        taskGraph.releaseTask(task.taskId);
-      }
-    }
-
-    // ── QA Recovery ─────────────────────────────────────────────────────
-    // Auto-retry failed verifier tasks so the QA pipeline self-heals after
-    // agent crashes, model failures, or post-refactor verification errors.
-    // Each task tracks its retry count; after MAX_FAILED_RETRIES the task is
-    // left in the failed state for the operator to inspect.
-    const MAX_FAILED_RETRIES = 3;
-    for (const task of taskGraph.getTasksByStatus('failed')) {
-      if (task.requiredRole === 'verifier') {
-        const retryCount = (task.parameters?._retryCount as number) ?? 0;
-        if (retryCount < MAX_FAILED_RETRIES) {
-          const resetRes = taskGraph.resetTask(task.taskId);
-          if (resetRes.ok) {
-            // Stamp the retry count so we don't loop forever.
-            const reset = resetRes.value;
-            taskGraph.updateTaskParameters(reset.taskId, {
-              ...reset.parameters,
-              _retryCount: retryCount + 1,
-            });
-            debugLog(
-              `[SwarmCoordinator] Auto-retry verifier task ${task.taskId} ` +
-              `(attempt ${retryCount + 1}/${MAX_FAILED_RETRIES}): ${task.errorMessage ?? 'unknown error'}`,
-            );
-          }
-        }
-      }
-    }
-
-    let availableSlots = Math.max(
-      0,
-      maxWorkers - taskGraph.getTasksByStatus('in_progress').length,
-    );
-    for (const task of taskGraph.getClaimableTasks()) {
-      if (availableSlots === 0) break;
-      if (!task.requiredRole) continue;
-      const idleWorker = coordinator.findIdleWorker(task.requiredRole, blackboard, assignedWorkers);
-      if (!idleWorker) continue;
-      const claimRes = taskGraph.claimTask(task.taskId, idleWorker.agentId);
-      if (!claimRes.ok) continue;
-      const startRes = taskGraph.startTask(task.taskId);
-      if (!startRes.ok) continue;
-      assignedWorkers.add(idleWorker.agentId);
-      availableSlots--;
-    }
+    releaseStaleTasks(taskGraph, activeAgents);
+    retryFailedVerifierTasks(taskGraph);
+    claimAvailableTasks({ blackboard, coordinator, maxWorkers, taskGraph });
 
     return { blackboard: blackboardToState(blackboard) };
   }
@@ -380,7 +350,13 @@ export function buildSwarmSupervisor(options: {
     }
 
     try {
-      await executeTaskWithWorker(task, worker, blackboard, coordinator.getOnActivity(), config?.signal);
+      await executeTaskWithWorker({
+        blackboard,
+        onActivity: coordinator.getOnActivity(),
+        signal: config?.signal,
+        task,
+        worker,
+      });
     } catch (error) {
       debugLog(`[SwarmCoordinator] Task ${taskId} failed: ${error}`);
       taskGraph.failTask(taskId, error instanceof Error ? error.message : String(error));
@@ -430,12 +406,8 @@ export function buildSwarmSupervisor(options: {
   }
 
   async function cleanup(): Promise<Partial<GraphState>> {
-    const patchResults = blackboard.getTaskGraph().getAllTasks()
-      .filter((task) => task.status === 'completed' && (
-        task.requiredRole === 'patch-engineer' || task.taskType.includes('patch')
-      ))
-      .map((task) => task.result);
-    const synthesis = await coordinator.finalizePatchCompetition(patchResults);
+    const patchProposals = collectPatchCompetitionProposals(blackboard);
+    const synthesis = await coordinator.finalizePatchCompetition(patchProposals);
     if (synthesis) {
       coordinator.getOnActivity()?.('orchestrator', {
         kind: 'patch_competition',
@@ -464,6 +436,57 @@ export function buildSwarmSupervisor(options: {
     .addEdge('cleanup', END);
 
   return workflow.compile({ checkpointer });
+}
+
+export function collectPatchCompetitionProposals(blackboard: Blackboard): PatchProposal[] {
+  const patchTasks = blackboard.getTaskGraph().getAllTasks().filter(
+    (task) => task.requiredRole === 'patch-engineer' || task.taskType.includes('patch'),
+  );
+  if (patchTasks.length === 0) return [];
+
+  const expectedRoles = new Set(patchProposalAgentRoleSchema.options);
+  if (patchTasks.length !== expectedRoles.size) {
+    throw new Error(
+      `Patch competition requires ${expectedRoles.size} completed perspectives; found ${patchTasks.length}.`,
+    );
+  }
+
+  const claims = blackboard.getAllClaims().filter((claim) => claim.claimType === 'patch_proposal');
+  const proposals = patchTasks.map((task) => {
+    if (task.status !== 'completed' || !task.assignedAgent) {
+      throw new Error(`Patch task ${task.taskId} did not complete with an assigned worker.`);
+    }
+
+    const expectedRoleResult = patchProposalAgentRoleSchema.safeParse(
+      task.parameters.patchPerspective,
+    );
+    if (!expectedRoleResult.success) {
+      throw new Error(`Patch task ${task.taskId} has an invalid patchPerspective.`);
+    }
+
+    const candidates = claims
+      .filter((claim) => claim.agentId === task.assignedAgent)
+      .map((claim) => patchProposalSchema.safeParse(claim.data))
+      .filter((result) => result.success && result.data.agentRole === expectedRoleResult.data)
+      .map((result) => result.data);
+    const proposal = candidates[0];
+    if (!proposal || candidates.length !== 1) {
+      throw new Error(
+        `Patch task ${task.taskId} must submit exactly one valid ${expectedRoleResult.data} proposal; found ${candidates.length}.`,
+      );
+    }
+
+    return proposal;
+  });
+
+  const submittedRoles = new Set(proposals.map((proposal) => proposal.agentRole));
+  for (const role of expectedRoles) {
+    if (!submittedRoles.has(role)) {
+      throw new Error(`Patch competition is missing the ${role} proposal.`);
+    }
+  }
+
+  return proposals;
 }
 
 /**
@@ -518,16 +541,78 @@ function routeAfterEvaluate(state: GraphState): string {
 }
 
 async function executeTaskWithWorker(
-  task: Task,
-  worker: AgentWorker,
-  blackboard: Blackboard,
-  onActivity?: SwarmCoordinatorRuntime['onActivity'],
-  signal?: AbortSignal,
+  options: {
+    blackboard: Blackboard;
+    onActivity?: SwarmCoordinatorRuntime['onActivity'];
+    signal?: AbortSignal;
+    task: Task;
+    worker: AgentWorker;
+  },
 ): Promise<void> {
+  const { blackboard, onActivity, signal, task, worker } = options;
   const result = await worker.executeTask(task, (activity) => {
     onActivity?.(worker.role, activity);
   }, signal);
   blackboard.completeTask(task.taskId, result);
+}
+
+function releaseStaleTasks(
+  taskGraph: TaskGraph,
+  activeAgents: ReturnType<Blackboard['getActiveAgents']>,
+): void {
+  for (const task of taskGraph.getTasksByStatus('in_progress')) {
+    const agent = activeAgents.find((candidate) => candidate.agentId === task.assignedAgent);
+    const runningTooLong =
+      task.updatedAt && Date.now() - new Date(task.updatedAt).getTime() > STALE_IN_PROGRESS_MS;
+    if (!agent || agent.status === 'offline' || runningTooLong) {
+      taskGraph.releaseTask(task.taskId);
+    }
+  }
+}
+
+function retryFailedVerifierTasks(taskGraph: TaskGraph): void {
+  for (const task of taskGraph.getTasksByStatus('failed')) {
+    if (task.requiredRole !== 'verifier') continue;
+    const retryCount = (task.parameters?._retryCount as number) ?? 0;
+    if (retryCount >= MAX_FAILED_RETRIES) continue;
+    const resetResult = taskGraph.resetTask(task.taskId);
+    if (!resetResult.ok) continue;
+    const reset = resetResult.value;
+    taskGraph.updateTaskParameters(reset.taskId, {
+      ...reset.parameters,
+      _retryCount: retryCount + 1,
+    });
+    debugLog(
+      `[SwarmCoordinator] Auto-retry verifier task ${task.taskId} ` +
+      `(attempt ${retryCount + 1}/${MAX_FAILED_RETRIES}): ${task.errorMessage ?? 'unknown error'}`,
+    );
+  }
+}
+
+function claimAvailableTasks(options: {
+  blackboard: Blackboard;
+  coordinator: SwarmCoordinatorRuntime;
+  maxWorkers: number;
+  taskGraph: TaskGraph;
+}): void {
+  const { blackboard, coordinator, maxWorkers, taskGraph } = options;
+  const assignedWorkers = new Set<string>();
+  let availableSlots = Math.max(
+    0,
+    maxWorkers - taskGraph.getTasksByStatus('in_progress').length,
+  );
+  for (const task of taskGraph.getClaimableTasks()) {
+    if (availableSlots === 0) break;
+    if (!task.requiredRole) continue;
+    const idleWorker = coordinator.findIdleWorker(task.requiredRole, blackboard, assignedWorkers);
+    if (!idleWorker) continue;
+    const claimResult = taskGraph.claimTask(task.taskId, idleWorker.agentId);
+    if (!claimResult.ok) continue;
+    const startResult = taskGraph.startTask(task.taskId);
+    if (!startResult.ok) continue;
+    assignedWorkers.add(idleWorker.agentId);
+    availableSlots--;
+  }
 }
 
 function blackboardToState(blackboard: Blackboard): BlackboardState {
