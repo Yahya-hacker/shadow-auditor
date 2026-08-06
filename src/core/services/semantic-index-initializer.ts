@@ -250,8 +250,10 @@ async function resolveEmbeddingProvider(
   logToStderr(
     `[SemanticIndex] Embedding provider "${provider.name}" failed health check. Attempting fallback...`,
   );
-  const fallback = new OllamaEmbeddingProvider();
-  if (await fallback.testConnection(options.signal)) {
+  const fallback = provider.name === 'ollama'
+    ? null
+    : new OllamaEmbeddingProvider();
+  if (fallback && await fallback.testConnection(options.signal)) {
     logToStderr('[SemanticIndex] Falling back to local Ollama embeddings.');
     provider = fallback;
     return {provider, semanticSearchEnabled: true};
@@ -382,8 +384,24 @@ export async function initializeSemanticIndex(
     const warning = `Semantic indexing initialization failed: ${
       error instanceof Error ? error.message : String(error)
     }`;
-    logToStderr('[SemanticIndex] Embeddings unavailable or misconfigured. Disabling semantic search.');
+    logToStderr('[SemanticIndex] Semantic initialization failed. Attempting lexical-only recovery.');
     options.onWarning(warning);
-    return { index: null, tools: {} };
+    try {
+      options.signal?.throwIfAborted();
+      const index = await createAndInitializeIndex(
+        options,
+        new NullEmbeddingProvider(),
+        false,
+      );
+      const stats = await index.indexRepository(undefined, options.signal);
+      reportIndexingResult(options, index, stats);
+      return {index, tools: await createRetrievalTools(options, index)};
+    } catch (fallbackError) {
+      if (options.signal?.aborted) throw fallbackError;
+      options.onWarning(`Lexical indexing recovery failed: ${
+        fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+      }`);
+      return {index: null, tools: {}};
+    }
   }
 }

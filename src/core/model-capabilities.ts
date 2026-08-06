@@ -64,8 +64,8 @@ interface CapabilityRule {
   provider: string;
 }
 
-export const DEFAULT_MAX_TOOL_STEPS = 64;
-export const ABSOLUTE_MAX_TOOL_STEPS = 256;
+export const DEFAULT_MAX_TOOL_STEPS = 128;
+export const ABSOLUTE_MAX_TOOL_STEPS = 1024;
 
 const FALLBACK_CAPABILITIES: ModelCapabilities = {
   contextWindowTokens: 64_000,

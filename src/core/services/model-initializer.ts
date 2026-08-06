@@ -28,6 +28,35 @@ import {
 } from '../memory/semantic-index.js';
 import {createAzureTokenProvider} from '../providers/azure-auth.js';
 
+function createAzureEmbeddingProvider(
+  config: ShadowConfig,
+  indexingConfig: ShadowConfig['indexing'],
+): EmbeddingProvider {
+  if (!config.azure) {
+    throw new Error('[SemanticIndex] Azure provider requires azure configuration.');
+  }
+
+  const dimension = indexingConfig?.embeddingDimension ?? config.azure.embeddingDimension;
+  if (!dimension) {
+    throw new Error(
+      '[SemanticIndex] azure.embeddingDimension is required for Azure embeddings.',
+    );
+  }
+
+  const tokenProvider = config.azure.authMode === 'entra-id'
+    ? createAzureTokenProvider(config.azure)
+    : undefined;
+  return new OpenAIEmbeddingProvider({
+    apiKey: config.apiKey,
+    credentialHeader: config.azure.authMode === 'api-key' ? 'api-key' : 'authorization',
+    dimension,
+    endpointUrl: buildAzureEmbeddingUrl(config.azure),
+    model: config.azure.embeddingDeployment,
+    providerName: 'azure',
+    tokenProvider,
+  });
+}
+
 /**
  * Build an EmbeddingProvider that matches the current configuration.
  *
@@ -49,28 +78,7 @@ export function createEmbeddingProvider(config: ShadowConfig): EmbeddingProvider
 
   const normalizedProvider = normalizeProviderName(config.provider);
   if (normalizedProvider === 'azure') {
-    if (!config.azure) {
-      throw new Error('[SemanticIndex] Azure provider requires azure configuration.');
-    }
-
-    if (!config.azure.embeddingDimension) {
-      throw new Error(
-        '[SemanticIndex] azure.embeddingDimension is required for Azure embeddings.',
-      );
-    }
-
-    const tokenProvider = config.azure.authMode === 'entra-id'
-      ? createAzureTokenProvider(config.azure)
-      : undefined;
-    return new OpenAIEmbeddingProvider({
-      apiKey: config.apiKey,
-      credentialHeader: config.azure.authMode === 'api-key' ? 'api-key' : 'authorization',
-      dimension: config.azure.embeddingDimension,
-      endpointUrl: buildAzureEmbeddingUrl(config.azure),
-      model: config.azure.embeddingDeployment,
-      providerName: normalizedProvider,
-      tokenProvider,
-    });
+    return createAzureEmbeddingProvider(config, indexingConfig);
   }
 
   if (providerRequiresApiKey(config.provider) && !config.apiKey) {
@@ -84,14 +92,12 @@ export function createEmbeddingProvider(config: ShadowConfig): EmbeddingProvider
   return new OpenAIEmbeddingProvider({
     apiKey: config.apiKey,
     baseUrl,
-    dimension: getProviderEmbeddingDimension(normalizedProvider),
+    dimension: indexingConfig?.embeddingDimension ??
+      getProviderEmbeddingDimension(normalizedProvider),
     model: embeddingModel,
     providerName: normalizedProvider,
   });
 }
 
 // Re-export for callers that previously imported these from agent.ts internals
-
-
-
 export {type EmbeddingProvider, NullEmbeddingProvider, OllamaEmbeddingProvider, OpenAIEmbeddingProvider} from '../memory/semantic-index.js';

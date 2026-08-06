@@ -4,12 +4,19 @@
 
 import { type ToolSet } from 'ai';
 
+import type { ShadowConfig } from '../../utils/config.js';
+
+import { applyAgentToolPolicy } from '../services/tool-policy.js';
 import { type AgentRole } from './hivemind-schema.js';
 
 /**
  * Filter the global toolset to only include tools appropriate for the given worker role.
  */
-export function createRoleToolSet(role: AgentRole, allTools: ToolSet): ToolSet {
+export function createRoleToolSet(
+  role: AgentRole,
+  allTools: ToolSet,
+  toolPolicy?: ShadowConfig['toolPolicy'],
+): ToolSet {
   const filteredTools: ToolSet = {};
 
   const addTool = (name: string) => {
@@ -75,12 +82,20 @@ export function createRoleToolSet(role: AgentRole, allTools: ToolSet): ToolSet {
 
     case 'orchestrator':
     default: {
-      return { ...allTools };
+      for (const key of Object.keys(allTools)) addTool(key);
+      break;
     }
   }
 
   // Always allow finish_task for any worker to exit when done
   addTool('finish_task');
 
-  return filteredTools;
+  const enabled = new Set(applyAgentToolPolicy(
+    {toolPolicy},
+    role,
+    Object.keys(filteredTools),
+  ));
+  return Object.fromEntries(
+    Object.entries(filteredTools).filter(([name]) => enabled.has(name)),
+  );
 }

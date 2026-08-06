@@ -16,7 +16,7 @@ import { wrapTool } from '../graph/tools/langchain-wrapper.js';
 import { normalizeModelHistory } from '../providers/message-normalizer.js';
 import {bindToolsForProvider} from '../providers/tool-binding.js';
 import {normalizeProviderToolCalls} from '../providers/tool-call-normalizer.js';
-import { normalizeTokenUsage } from '../usage.js';
+import { type NormalizedTokenUsage, normalizeTokenUsage } from '../usage.js';
 import {
   canRunToolBatchConcurrently,
   mapWithConcurrency,
@@ -32,11 +32,7 @@ export interface ToolExecutorActivity {
   summary: string;
   toolCallId?: string;
   toolName?: string;
-  usage?: {
-    completion: number;
-    prompt: number;
-    total: number;
-  };
+  usage?: NormalizedTokenUsage;
 }
 
 export interface LangChainToolExecutionOptions {

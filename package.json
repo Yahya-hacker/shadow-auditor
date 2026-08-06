@@ -5,6 +5,8 @@
   "author": "Yahya-hacker",
   "allowScripts": {
     "@tree-sitter-grammars/tree-sitter-markdown": true,
+    "@tree-sitter-grammars/tree-sitter-toml": true,
+    "@tree-sitter-grammars/tree-sitter-yaml": true,
     "tree-sitter": true,
     "tree-sitter-c": true,
     "tree-sitter-c-sharp": true,
@@ -21,9 +23,7 @@
     "tree-sitter-ruby": true,
     "tree-sitter-rust": true,
     "tree-sitter-scala": true,
-    "tree-sitter-toml": true,
     "tree-sitter-typescript": true,
-    "tree-sitter-yaml": true,
     "unrs-resolver": true
   },
   "bin": {
@@ -44,6 +44,8 @@
     "@oclif/core": "^4",
     "@oclif/plugin-help": "^6",
     "@tree-sitter-grammars/tree-sitter-markdown": "^0.3.2",
+    "@tree-sitter-grammars/tree-sitter-toml": "0.6.0",
+    "@tree-sitter-grammars/tree-sitter-yaml": "0.6.1",
     "ai": "^7.0.11",
     "chalk": "^5.6.2",
     "chokidar": "^4.0.3",
@@ -66,9 +68,7 @@
     "tree-sitter-ruby": "^0.23.1",
     "tree-sitter-rust": "^0.21.0",
     "tree-sitter-scala": "^0.24.0",
-    "tree-sitter-toml": "^0.5.1",
     "tree-sitter-typescript": "^0.23.2",
-    "tree-sitter-yaml": "^0.5.0",
     "zod": "^3.25.76",
     "zustand": "^5.0.14"
   },

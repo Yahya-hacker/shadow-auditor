@@ -47,11 +47,20 @@ jobs:
           consumer="$RUNNER_TEMP/package-smoke"
           mkdir "$consumer"
           cd "$consumer"
-          node -e 'const fs = require("node:fs"); const source = JSON.parse(fs.readFileSync(process.env.GITHUB_WORKSPACE + "/package.json", "utf8")); fs.writeFileSync("package.json", JSON.stringify({name: "shadow-auditor-package-smoke", private: true, allowScripts: source.allowScripts}, null, 2));'
-          npm install "$RUNNER_TEMP/$package_name" --no-audit --no-fund
+          npm init --yes >/dev/null
+          if npm install "$RUNNER_TEMP/$package_name" --strict-allow-scripts --no-audit --no-fund; then
+            echo "strict consumer install unexpectedly ran undeclared native scripts" >&2
+            exit 1
+          fi
+          rm -rf node_modules package-lock.json
+          npm config set allow-scripts \
+           @tree-sitter-grammars/tree-sitter-markdown,@tree-sitter-grammars/tree-sitter-toml,@tree-sitter-grammars/tree-sitter-yaml,tree-sitter,tree-sitter-c,tree-sitter-c-sharp,tree-sitter-cpp,tree-sitter-elixir,tree-sitter-go,tree-sitter-haskell,tree-sitter-html,tree-sitter-java,tree-sitter-javascript,tree-sitter-json,tree-sitter-php,tree-sitter-python,tree-sitter-ruby,tree-sitter-rust,tree-sitter-scala,tree-sitter-typescript,unrs-resolver \
+           --location=project
+          npm install "$RUNNER_TEMP/$package_name" --strict-allow-scripts --no-audit --no-fund
           ./node_modules/.bin/shadow-auditor --help
           ./node_modules/.bin/shadow-auditor --version
           node -e 'const Parser = require("tree-sitter"); const TypeScript = require("tree-sitter-typescript").typescript; const parser = new Parser(); parser.setLanguage(TypeScript); const tree = parser.parse("const value: number = 1"); if (tree.rootNode.hasError) process.exit(1);'
+          node -e 'const Parser = require("tree-sitter"); for (const [name, source] of [["toml", "enabled = true"], ["yaml", "enabled: true"]]) { const grammar = require("@tree-sitter-grammars/tree-sitter-" + name); const parser = new Parser(); parser.setLanguage(grammar); if (parser.parse(source).rootNode.hasError) process.exit(1); }'
       - name: Smoke-test npm link
         run: |
           set -euo pipefail
@@ -59,3 +68,4 @@ jobs:
           npm_config_prefix="$RUNNER_TEMP/npm-link" npm link
           "$RUNNER_TEMP/npm-link/bin/shadow-auditor" --help
           "$RUNNER_TEMP/npm-link/bin/shadow-auditor" --version
+          NODE_PATH="$RUNNER_TEMP/npm-link/lib/node_modules/shadow-auditor/node_modules" node -e 'const Parser = require("tree-sitter"); const JavaScript = require("tree-sitter-javascript"); const parser = new Parser(); parser.setLanguage(JavaScript); if (parser.parse("const linked = true").rootNode.hasError) process.exit(1);'

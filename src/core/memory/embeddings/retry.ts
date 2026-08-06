@@ -12,6 +12,8 @@ type RetryArguments = [
   logLabel?: string,
 ];
 
+const MAX_RETRY_DELAY_MS = 30_000;
+
 export async function withRetry<T>(
   fn: () => Promise<T>,
   ...[
@@ -47,9 +49,10 @@ export async function withRetry<T>(
         error as {retryAfterMs?: unknown}
       )?.retryAfterMs;
       const exponentialDelay = baseDelayMs * 2**attempt;
-      const delay = typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs)
+      const requestedDelay = typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs)
         ? Math.max(0, retryAfterMs)
         : Math.round(exponentialDelay * (0.8 + Math.random() * 0.4));
+      const delay = Math.min(requestedDelay, MAX_RETRY_DELAY_MS);
       logToStderr(`[${logLabel}] API call failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms: ${message}`);
       await new Promise<void>((resolve, reject) => {
         const abortSignal = signal;

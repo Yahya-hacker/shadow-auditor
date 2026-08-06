@@ -34,6 +34,13 @@ export interface AgentSessionLike {
   }>;
   getLatestFindings(): EnhancedReport['findings'];
   getPendingHumanInput(): Promise<import('../../core/graph/state.js').HumanInputRequest | null>;
+  getToolPolicySnapshot(): Promise<{
+    agents: Array<{
+      id: string;
+      maxToolSteps: number;
+      tools: Array<{enabled: boolean; name: string}>;
+    }>;
+  }>;
   isPausedAwaitingHumanInput(): boolean | Promise<boolean>;
   listSuppressions(): Promise<SuppressionListEntry[]>;
   resumeFromCheckpoint(
@@ -54,6 +61,7 @@ export interface AgentSessionLike {
   setReasoningEffort(
     effort: 'high' | 'low' | 'medium' | 'minimal' | 'none' | 'xhigh',
   ): Promise<void>;
+  setToolPolicy(toolPolicy: ShadowConfig['toolPolicy']): Promise<void>;
   suppressFinding(
     findingId: string,
     rationale: string,

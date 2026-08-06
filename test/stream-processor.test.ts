@@ -461,7 +461,13 @@ describe('processAgentStream', () => {
       kind: 'token_usage',
       message: 'Model usage recorded.',
       stage: 'sast_audit',
-      usage: {completion: 3, prompt: 12, total: 15},
+      usage: {
+        completion: 3,
+        prompt: 12,
+        total: 15,
+        totalSource: 'provider',
+        unclassified: 0,
+      },
     }]);
   });
 
@@ -493,7 +499,13 @@ describe('processAgentStream', () => {
 
     const usageEvents = emitted.filter((event) => event.kind === 'token_usage');
     expect(usageEvents).to.have.length(1);
-    expect(usageEvents[0]?.usage).to.deep.equal({completion: 50, prompt: 120, total: 170});
+    expect(usageEvents[0]?.usage).to.deep.equal({
+      completion: 50,
+      prompt: 120,
+      total: 170,
+      totalSource: 'provider',
+      unclassified: 0,
+    });
   });
 
   it('requires successful inspection and finish-task results for audit evidence', async () => {

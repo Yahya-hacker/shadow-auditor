@@ -182,6 +182,25 @@ describe('AgentSession guards', () => {
     expect((failure as Error).message).to.include('swarm session');
   });
 
+  it('rejects tool policy changes while an agent operation is active', async () => {
+    const session = sessionWithoutInitialization({
+      activeOperation: Promise.resolve(),
+      initialized: Promise.resolve(),
+    });
+
+    let failure: unknown;
+    try {
+      await session.setToolPolicy({disabledTools: ['read_file']});
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).to.be.instanceOf(Error);
+    expect((failure as Error).message).to.equal(
+      'Tool configuration cannot change while an agent operation is running.',
+    );
+  });
+
   it('waits for an active operation before completing disposal', async () => {
     let finishOperation!: () => void;
     let cleanedUp = false;

@@ -104,6 +104,15 @@ export interface ShadowConfig {
     roles?: string[];
     workerBudgetRatio?: number;
   };
+  /** User tool controls. Agent overrides can only narrow host-owned allowlists. */
+  toolPolicy?: {
+    agents?: Record<string, {
+      disabledTools?: string[];
+      enabledTools?: string[];
+      maxToolSteps?: number;
+    }>;
+    disabledTools?: string[];
+  };
 }
 
 const CONFIG_FILENAME = '.shadow-auditor.json';
@@ -194,7 +203,7 @@ const shadowConfigSchema = z.object({
     testTimeoutMs: z.number().int().optional(),
   }).optional(),
   reportValidation: z.object({
-    maxRepairRetries: z.number().int().optional(),
+    maxRepairRetries: z.number().int().min(0).max(4).optional(),
   }).optional(),
   swarm: z.object({
     enabled: z.boolean().optional(),
@@ -230,6 +239,14 @@ const shadowConfigSchema = z.object({
     })).optional(),
     roles: z.array(z.string()).optional(),
     workerBudgetRatio: z.number().optional(),
+  }).optional(),
+  toolPolicy: z.object({
+    agents: z.record(z.object({
+      disabledTools: z.array(z.string().min(1)).optional(),
+      enabledTools: z.array(z.string().min(1)).optional(),
+      maxToolSteps: z.number().int().min(8).max(1024).optional(),
+    })).optional(),
+    disabledTools: z.array(z.string().min(1)).optional(),
   }).optional(),
 });
 

@@ -83,7 +83,7 @@ describe('model budget subsystem', () => {
         });
 
         expect(settings.maxOutputTokens).to.equal(64_000);
-        expect(settings.maxToolSteps).to.equal(64);
+        expect(settings.maxToolSteps).to.equal(128);
       });
 
       it('clamps user-requested tokens to model max', () => {
@@ -141,7 +141,7 @@ describe('model budget subsystem', () => {
         );
 
         expect(settings.maxOutputTokens).to.equal(128_000);
-        expect(settings.maxToolSteps).to.equal(64);
+        expect(settings.maxToolSteps).to.equal(128);
       });
     });
   });

@@ -257,6 +257,14 @@ const historyCommand: SlashCommand = {
   name: '/history',
 };
 
+const toolsCommand: SlashCommand = {
+  description: 'Configure agent tools and safety budgets',
+  execute() {
+    useAppStore.getState().setScreen('tools');
+  },
+  name: '/tools',
+};
+
 const quitCommand: SlashCommand = {
   aliases: ['/exit', '/q'],
   description: 'Gracefully exit Shadow Auditor',
@@ -286,6 +294,7 @@ export const slashCommands: SlashCommand[] = [
   settingsCommand,
   findingsCommand,
   historyCommand,
+  toolsCommand,
   quitCommand,
 ];
 

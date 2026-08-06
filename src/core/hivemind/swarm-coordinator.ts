@@ -104,6 +104,7 @@ export class SwarmCoordinator implements SwarmCoordinatorRuntime {
       onReportBatch: this.onReportBatch,
       providerHint: this.config.provider,
       role: options.role,
+      toolPolicy: this.config.toolPolicy,
       trustScore: options.trustScore,
     });
   }

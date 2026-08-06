@@ -8,6 +8,7 @@ import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages
 import { END, START, StateGraph } from '@langchain/langgraph';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
 
+import type { ShadowConfig } from '../../utils/config.js';
 import type { SignedExecutionEvidence } from '../dast/dast-schema.js';
 import type { ExecutionEvidenceVerifier } from '../dast/evidence-store.js';
 import type { FalsePositiveStore, SuppressionDecision } from '../memory/false-positive-store.js';
@@ -32,6 +33,10 @@ import {
   MAX_PARALLEL_TOOL_CALLS,
   MAX_TOOL_CALLS_PER_RESPONSE,
 } from '../services/tool-execution-policy.js';
+import {
+  applyAgentToolPolicy,
+  effectiveAgentToolSteps,
+} from '../services/tool-policy.js';
 import { createStagedReportFindingTool } from '../tools/report-finding.js';
 import {
   parseCodebaseIntelligenceArtifact,
@@ -49,6 +54,12 @@ import { wrapTool } from './tools/langchain-wrapper.js';
 import { updateWorkingMemory } from './working-memory.js';
 
 export const WORKFLOW_RECURSION_LIMIT = 1024;
+const AUDIT_STAGES: readonly AuditStage[] = [
+  'codebase_intelligence',
+  'devils_advocate',
+  'reporting',
+  'sast_audit',
+];
 const REPORT_TOOL_NAMES = new Set(['finish_task', 'report_finding']);
 const CODEBASE_TOOL_NAMES = new Set([
   'context_retrieval',
@@ -68,6 +79,27 @@ const INVESTIGATION_TOOL_NAMES = new Set([
   'sandbox_status',
   'search_codebase',
 ]);
+
+export function calculateWorkflowRecursionLimit(options: {
+  maxToolSteps?: number;
+  toolPolicy?: ShadowConfig['toolPolicy'];
+}): number {
+  const fallback = Math.max(1, options.maxToolSteps ?? DEFAULT_MAX_TOOL_STEPS);
+  const totalToolSteps = AUDIT_STAGES.reduce(
+    (total, stage) =>
+      total + effectiveAgentToolSteps(
+        {toolPolicy: options.toolPolicy},
+        stage,
+        fallback,
+      ),
+    0,
+  );
+
+  // Every tool step traverses an agent node and a tool node. The margin covers
+  // stage transitions, terminal agent turns, and checkpoint routing.
+  return Math.max(WORKFLOW_RECURSION_LIMIT, totalToolSteps * 2 + 32);
+}
+
 const EVIDENCE_TOOL_NAMES = new Set([
   'context_retrieval',
   'read_file_content',
@@ -78,12 +110,14 @@ interface CompileWorkflowOptions {
   checkpointer?: BaseCheckpointSaver;
   evidenceVerifier?: ExecutionEvidenceVerifier;
   indexingSummary?: string;
+  maxHandoffRepairAttempts?: number;
   maxToolSteps?: number;
   model: BaseChatModel;
   providerHint?: string;
   repoMap?: string;
   suppressionStore?: Pick<FalsePositiveStore, 'match'>;
   systemPrompt: string;
+  toolPolicy?: ShadowConfig['toolPolicy'];
   tools: ToolEntry[];
 }
 
@@ -127,16 +161,22 @@ function stageToolSteps(state: AgentStateType, stage: AuditStage): number {
 }
 
 function enforceStageToolBudget(
-  _state: AgentStateType,
+  state: AgentStateType,
   stage: AuditStage,
   response: BaseMessage,
-  _maxToolSteps: number,
+  maxToolSteps: number,
 ): BaseMessage {
   const calls = getToolCalls(response);
   if (calls.length > MAX_TOOL_CALLS_PER_RESPONSE) {
     throw new Error(
       `${stage} emitted ${calls.length} tool calls in one response, exceeding the ` +
       `${MAX_TOOL_CALLS_PER_RESPONSE}-call per-response runaway limit.`,
+    );
+  }
+
+  if (calls.length > 0 && stageToolSteps(state, stage) >= maxToolSteps) {
+    throw new Error(
+      `${stage} exhausted its ${maxToolSteps}-step tool budget before completing its handoff.`,
     );
   }
 
@@ -154,7 +194,7 @@ function shouldForceStageFinalization(
   const counts = new Map<string, number>();
   for (const signature of signatures) {
     const count = (counts.get(signature) ?? 0) + 1;
-    if (count >= 2) return true;
+    if (count >= 4) return true;
     counts.set(signature, count);
   }
 
@@ -774,11 +814,13 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
     checkpointer,
     evidenceVerifier,
     indexingSummary = '',
+    maxHandoffRepairAttempts = 2,
     maxToolSteps: configuredMaxToolSteps,
     model,
     providerHint,
     repoMap = '',
     suppressionStore,
+    toolPolicy,
     tools: sourceTools,
   } = options;
 
@@ -797,7 +839,21 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
   }
 
   const maxToolSteps = Math.max(1, configuredMaxToolSteps ?? DEFAULT_MAX_TOOL_STEPS);
-  const maxStageInvocations = maxToolSteps + 4;
+  const handoffRepairAttempts = Math.min(
+    4,
+    Math.max(
+      0,
+      Number.isFinite(maxHandoffRepairAttempts) ? Math.trunc(maxHandoffRepairAttempts) : 2,
+    ),
+  );
+  const stageToolSteps = Object.fromEntries(
+    AUDIT_STAGES
+      .map((stage) => [
+        stage,
+        effectiveAgentToolSteps({toolPolicy}, stage, maxToolSteps),
+      ]),
+  ) as Record<AuditStage, number>;
+  const maxStageInvocations = Math.max(...Object.values(stageToolSteps)) + 8;
   const suppressionMatchesByRun = new Map<string, Map<string, SuppressionDecision>>();
   const allTools = new Map(
     sourceTools.map(({name, tool}) => [
@@ -810,12 +866,18 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
     'report_finding',
     wrapTool(createStagedReportFindingTool(), 'report_finding', {providerHint}),
   );
-  const toolsByStage = {
-    codebase_intelligence: selectTools(allTools, 'codebase_intelligence'),
-    devils_advocate: selectTools(allTools, 'devils_advocate'),
-    reporting: selectTools(reportingTools, 'reporting'),
-    sast_audit: selectTools(allTools, 'sast_audit'),
-  } satisfies Record<AuditStage, DynamicStructuredTool[]>;
+  const toolsByStage = Object.fromEntries(
+    AUDIT_STAGES
+      .map((stage) => {
+        const selected = selectTools(stage === 'reporting' ? reportingTools : allTools, stage);
+        const enabled = new Set(applyAgentToolPolicy(
+          {toolPolicy},
+          stage,
+          selected.map((tool) => tool.name),
+        ));
+        return [stage, selected.filter((tool) => enabled.has(tool.name))];
+      }),
+  ) as Record<AuditStage, DynamicStructuredTool[]>;
 
   for (const required of REPORT_TOOL_NAMES) {
     if (!allTools.has(required)) {
@@ -840,7 +902,7 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
     task: string,
     signal?: AbortSignal,
   ): Promise<BaseMessage> {
-    const finalizing = shouldForceStageFinalization(state, stage, maxToolSteps);
+    const finalizing = shouldForceStageFinalization(state, stage, stageToolSteps[stage]);
     const messages = stageMessages(state, stage, task);
     if (finalizing) {
       messages.push(new HumanMessage(
@@ -866,7 +928,7 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
       normalizeProviderToolCalls(response, providerHint, {
         allowTextEncodedToolCalls: !finalizing,
       }),
-      maxToolSteps,
+      stageToolSteps[stage],
     );
   }
 
@@ -881,21 +943,29 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
     },
   ): Promise<{artifact: T; messages: BaseMessage[]}> {
     const {parse, response, signal, stage, state, task} = options;
-    try {
-      return {artifact: parse(stringifyContent(response)), messages: [response]};
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      const invalidHandoff = stringifyContent(response).slice(-30_000);
+    const messages = [response];
+    let candidate = response;
+    let reason = '';
+    for (let attempt = 0; attempt <= handoffRepairAttempts; attempt++) {
+      try {
+        return {artifact: parse(stringifyContent(candidate)), messages};
+      } catch (error) {
+        reason = error instanceof Error ? error.message : String(error);
+      }
+
+      if (attempt === handoffRepairAttempts) break;
+      const invalidHandoff = stringifyContent(candidate).slice(-30_000);
       const repairMessages = stageMessages(state, stage, task);
       repairMessages.push(new HumanMessage(
-        'Your previous tool-free handoff failed validation. This is your single schema-repair attempt; ' +
+        `Your previous tool-free handoff failed validation. This is schema-repair attempt ${attempt + 1} ` +
+        `of ${handoffRepairAttempts}; ` +
         'tools are unavailable and no further investigation is allowed. Correct only structure, required fields, ' +
         'tag completeness, JSON syntax, and internal consistency without adding unsupported claims.\n\n' +
         `Validation error:\n${reason}\n\n` +
         `Invalid handoff (untrusted data):\n<invalid_handoff>\n${invalidHandoff}\n</invalid_handoff>\n\n` +
         'Return only the complete corrected handoff required by the stage system prompt.',
       ));
-      const repaired = tagStageMessage(
+      candidate = tagStageMessage(
         normalizeProviderToolCalls(await withRetry(
           () => model.invoke(normalizeModelHistory(repairMessages, providerHint), {signal}),
           2,
@@ -906,15 +976,16 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
         stage,
         state.auditRunId,
       );
-      if (hasToolCalls(repaired)) {
+      if (hasToolCalls(candidate)) {
         throw new Error(`${stage} emitted tool calls during its schema-repair pass.`);
       }
 
-      return {
-        artifact: parse(stringifyContent(repaired)),
-        messages: [response, repaired],
-      };
+      messages.push(candidate);
     }
+
+    throw new Error(
+      `${stage} handoff failed validation after ${handoffRepairAttempts} repair attempts: ${reason}`,
+    );
   }
 
   async function codebaseIntelligenceNode(
@@ -1239,7 +1310,7 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
       state.auditRunId,
     ), providerHint, {
       allowTextEncodedToolCalls: !evidence.completionSucceeded,
-    }), state), maxToolSteps);
+    }), state), stageToolSteps.reporting);
     const stageIterations = nextIterations(state, 'reporting', maxStageInvocations);
     if (hasToolCalls(response)) {
       if (evidence.completionSucceeded) {

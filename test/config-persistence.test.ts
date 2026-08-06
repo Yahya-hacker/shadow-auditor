@@ -7,6 +7,7 @@ import {
   loadConfig,
   registerSecretStoreAdapter,
   saveConfig,
+  validateConfig,
 } from '../src/utils/config.js';
 
 describe('configuration persistence', () => {
@@ -55,5 +56,44 @@ describe('configuration persistence', () => {
       model: 'custom-model',
       provider: 'custom',
     });
+  });
+
+  it('persists validated per-agent tool policy and autonomy budgets', async () => {
+    await saveConfig({
+      apiKey: '',
+      model: 'qwen3',
+      provider: 'ollama',
+      toolPolicy: {
+        agents: {
+          sast_audit: {
+            disabledTools: ['execute_command'],
+            enabledTools: ['context_retrieval', 'read_file_content'],
+            maxToolSteps: 512,
+          },
+        },
+        disabledTools: ['sandbox_exec'],
+      },
+    });
+
+    expect(await loadConfig()).to.deep.include({
+      toolPolicy: {
+        agents: {
+          sast_audit: {
+            disabledTools: ['execute_command'],
+            enabledTools: ['context_retrieval', 'read_file_content'],
+            maxToolSteps: 512,
+          },
+        },
+        disabledTools: ['sandbox_exec'],
+      },
+    });
+  });
+
+  it('bounds report handoff repair attempts', () => {
+    const base = {apiKey: '', model: 'qwen3', provider: 'ollama'};
+    expect(validateConfig({...base, reportValidation: {maxRepairRetries: -1}})).to.equal(null);
+    expect(validateConfig({...base, reportValidation: {maxRepairRetries: 5}})).to.equal(null);
+    expect(validateConfig({...base, reportValidation: {maxRepairRetries: 4}}))
+      .to.deep.include({reportValidation: {maxRepairRetries: 4}});
   });
 });

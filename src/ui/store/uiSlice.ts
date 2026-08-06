@@ -26,7 +26,19 @@ export interface InitProgress {
 export interface TokenUsage {
   completion: number;
   prompt: number;
+  provenance: TokenUsageProvenance;
   total: number;
+  unclassified: number;
+}
+
+export type TokenUsageProvenance = 'derived' | 'mixed' | 'provider' | 'unavailable';
+
+export function mergeTokenUsageProvenance(
+  current: TokenUsageProvenance,
+  incoming: 'derived' | 'provider',
+): TokenUsageProvenance {
+  if (current === 'unavailable') return incoming;
+  return current === incoming ? current : 'mixed';
 }
 
 export interface Toast {
@@ -64,7 +76,13 @@ export interface UiSlice {
   toggleHelp: () => void;
   togglePanel: () => void;
   tokenUsage: TokenUsage;
-  updateTokenUsage: (usage: { completion?: number; prompt?: number }) => void;
+  updateTokenUsage: (usage: {
+    completion?: number;
+    prompt?: number;
+    total?: number;
+    totalSource?: 'derived' | 'provider';
+    unclassified?: number;
+  }) => void;
 }
 
 export const createUiSlice: StateCreator<AppState, [], [], UiSlice> = (set) => ({
@@ -104,12 +122,23 @@ export const createUiSlice: StateCreator<AppState, [], [], UiSlice> = (set) => (
     set((state) => ({ compactHeader: !state.compactHeader })),
   toggleHelp: () => set((state) => ({ helpOpen: !state.helpOpen })),
   togglePanel: () => set((state) => ({ panelOpen: !state.panelOpen })),
-  tokenUsage: { completion: 0, prompt: 0, total: 0 },
+  tokenUsage: { completion: 0, prompt: 0, provenance: 'unavailable', total: 0, unclassified: 0 },
   updateTokenUsage: (usage) =>
     set((state) => {
       const prompt = state.tokenUsage.prompt + (usage.prompt ?? 0);
       const completion = state.tokenUsage.completion + (usage.completion ?? 0);
-      const total = prompt + completion;
-      return { tokenUsage: { completion, prompt, total } };
+      const eventTotal = usage.total ?? (usage.prompt ?? 0) + (usage.completion ?? 0);
+      return {
+        tokenUsage: {
+          completion,
+          prompt,
+          provenance: mergeTokenUsageProvenance(
+            state.tokenUsage.provenance,
+            usage.totalSource ?? 'derived',
+          ),
+          total: state.tokenUsage.total + eventTotal,
+          unclassified: state.tokenUsage.unclassified + (usage.unclassified ?? 0),
+        },
+      };
     }),
 });

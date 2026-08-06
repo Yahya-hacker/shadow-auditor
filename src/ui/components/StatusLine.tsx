@@ -58,7 +58,7 @@ export const StatusLine: React.FC = memo(() => {
 
   const hasTokens = tokenUsage.total > 0;
   const tokenLabel = hasTokens
-    ? `Tokens: ${formatTokenCount(tokenUsage.total)}`
+    ? `Tokens: ${formatTokenCount(tokenUsage.total)} ${tokenUsage.provenance}`
     : null;
 
   return (

@@ -6,10 +6,14 @@ import { type BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { type BaseMessage } from '@langchain/core/messages';
 import { type ToolSet } from 'ai';
 
+import type { ShadowConfig } from '../../utils/config.js';
+import type { NormalizedTokenUsage } from '../usage.js';
+
 import { logToStderr } from '../../utils/stderr-logger.js';
 import { DEFAULT_MAX_TOOL_STEPS } from '../model-capabilities.js';
 import { type EnhancedFinding } from '../output/finding-schema.js';
 import { executeLangChainToolLoop } from '../services/langchain-tool-executor.js';
+import { effectiveAgentToolSteps } from '../services/tool-policy.js';
 import { createBlackboardTools } from './blackboard-tools.js';
 import { type Blackboard } from './blackboard.js';
 import { EvidenceTracker } from './evidence-tracker.js';
@@ -31,6 +35,7 @@ export interface AgentWorkerOptions {
   ) => { added: boolean; reason?: string };
   providerHint?: string;
   role: AgentRole;
+  toolPolicy?: ShadowConfig['toolPolicy'];
   trustScore?: number;
 }
 
@@ -68,7 +73,7 @@ export class AgentWorker {
     this.modelTier = options.modelTier ?? 'standard';
     this.trustScore = options.trustScore ?? 0.7;
     this.evidenceTracker = new EvidenceTracker();
-    const roleTools = createRoleToolSet(options.role, options.allTools);
+    const roleTools = createRoleToolSet(options.role, options.allTools, options.toolPolicy);
     const blackboardTools = createBlackboardTools({
       agentId: this.agentId,
       blackboard: this.blackboard,
@@ -76,8 +81,12 @@ export class AgentWorker {
       modelTier: this.modelTier,
       trustScore: this.trustScore,
     });
-    this.tools = { ...roleTools, ...blackboardTools };
-    this.maxToolSteps = options.maxToolSteps ?? DEFAULT_MAX_TOOL_STEPS;
+    this.tools = {...roleTools, ...blackboardTools};
+    this.maxToolSteps = effectiveAgentToolSteps(
+      {toolPolicy: options.toolPolicy},
+      options.role,
+      options.maxToolSteps ?? DEFAULT_MAX_TOOL_STEPS,
+    );
     this.maxContextMessages = 40; // cap to prevent unbounded growth across tasks
     this.auditMode = options.auditMode ?? 'sast';
     this.diffScopeHint = options.diffScopeHint ?? '';
@@ -123,11 +132,7 @@ export class AgentWorker {
       succeeded?: boolean;
       toolCallId?: string;
       toolName?: string;
-      usage?: {
-        completion: number;
-        prompt: number;
-        total: number;
-      };
+      usage?: NormalizedTokenUsage;
     }) => void,
     signal?: AbortSignal,
   ): Promise<string> {

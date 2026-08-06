@@ -88,8 +88,13 @@ export function toUserFacingError(message: string): string {
     return 'Authentication failed. Run again with --reconfigure.';
   }
 
-  if (/exceeded its \d+-invocation safety limit|failed validation|required artifact tags/i.test(message)) {
-    return 'The audit stage could not produce a valid evidence handoff within its safety budget. ' +
+  if (/exceeded its \d+-invocation safety limit/i.test(message)) {
+    return 'The audit stage exhausted its invocation ceiling before finalizing its evidence handoff. ' +
+      'No partial findings were reported. Increase the affected agent budget with /tools or narrow the audit scope.';
+  }
+
+  if (/failed validation|required artifact tags/i.test(message)) {
+    return 'The audit stage returned an invalid evidence handoff after schema repair. ' +
       'No partial or unvalidated findings were reported.';
   }
 

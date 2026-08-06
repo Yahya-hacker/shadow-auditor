@@ -169,7 +169,9 @@ export class SecurityService extends EventEmitter {
         ['sample.rb', 'def scan(value)\n  value\nend'],
         ['sample.rs', 'fn scan(value: i32) -> i32 { value }'],
         ['Sample.scala', 'object Sample { def scan(value: Int): Int = value }'],
+        ['sample.toml', '[audit]\nenabled = true'],
         ['sample.ts', 'export function scan(value: number): number { return value; }'],
+        ['sample.yaml', 'audit:\n  enabled: true'],
       ] as const;
       const index = await createIndex();
 
@@ -178,6 +180,10 @@ export class SecurityService extends EventEmitter {
         const filePath = path.join(repoDir, fileName);
         expect(await index.indexFile(filePath), fileName).to.be.greaterThan(0);
         expect(index.getChunksForFile(filePath), fileName).not.to.be.empty;
+        expect(
+          index.getIndexingDiagnostics().some((entry) => entry.filePath === filePath),
+          fileName,
+        ).to.equal(false);
       }
     });
 
@@ -335,8 +341,8 @@ export function handleRequest(req: express.Request): string {
     });
 
     it('keeps recognized languages lexically indexable when an optional grammar is unavailable', async () => {
-      const filePath = path.join(repoDir, 'config.yaml');
-      await writeFile('config.yaml', 'database:\n  password: insecure\n');
+      const filePath = path.join(repoDir, 'query.sql');
+      await writeFile('query.sql', 'SELECT password FROM users;');
       const index = await createIndex();
 
       expect(await index.indexFile(filePath)).to.be.greaterThan(0);
@@ -344,7 +350,7 @@ export function handleRequest(req: express.Request): string {
       expect(index.getChunksForFile(filePath)).not.to.be.empty;
       const diagnostic = index.getIndexingDiagnostics().find((entry) => entry.filePath === filePath);
       expect(diagnostic?.reason).to.match(
-        /^Tree-sitter grammar "yaml" (?:unavailable|failed \(.+\)); indexed with whole-file lexical chunks$/,
+        /^Tree-sitter grammar "sql" (?:unavailable|failed \(.+\)); indexed with whole-file lexical chunks$/,
       );
     });
   });

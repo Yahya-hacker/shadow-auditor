@@ -16,7 +16,8 @@ export type AppScreen =
   | 'license-blocked'
   | 'setup'
   | 'shell'
-  | 'target';
+  | 'target'
+  | 'tools';
 
 export type SessionPhase = 'error' | 'idle' | 'initializing' | 'ready';
 

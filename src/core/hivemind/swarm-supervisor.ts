@@ -19,6 +19,7 @@ import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 
 import { END, Send, START, StateGraph } from '@langchain/langgraph';
 
+import type { NormalizedTokenUsage } from '../usage.js';
 import type { AgentWorker } from './agent-worker.js';
 import type { Blackboard } from './blackboard.js';
 import type { AgentRole, BlackboardState, Task } from './hivemind-schema.js';
@@ -82,11 +83,7 @@ export interface SwarmActivity {
   swarmState?: SwarmStateSnapshot;
   toolCallId?: string;
   toolName?: string;
-  usage?: {
-    completion: number;
-    prompt: number;
-    total: number;
-  };
+  usage?: NormalizedTokenUsage;
 }
 
 /**

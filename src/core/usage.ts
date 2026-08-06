@@ -2,6 +2,8 @@ export interface NormalizedTokenUsage {
   completion: number;
   prompt: number;
   total: number;
+  totalSource: 'derived' | 'provider';
+  unclassified: number;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -37,7 +39,13 @@ function parseUsage(value: unknown): NormalizedTokenUsage | undefined {
     usage.total_tokens ?? usage.totalTokens ?? usage.totalTokenCount,
   );
   const total = reportedTotal || prompt + completion;
-  return total > 0 ? {completion, prompt, total} : undefined;
+  return total > 0 ? {
+    completion,
+    prompt,
+    total,
+    totalSource: reportedTotal > 0 ? 'provider' : 'derived',
+    unclassified: Math.max(0, total - prompt - completion),
+  } : undefined;
 }
 
 export function normalizeTokenUsage(message: unknown): NormalizedTokenUsage | undefined {

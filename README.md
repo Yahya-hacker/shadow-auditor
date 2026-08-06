@@ -39,7 +39,7 @@ candidates, and produce evidence-backed findings for CI and human review.
 ### Install from npm
 
 ```bash
-npm install --global shadow-auditor --allow-scripts=@tree-sitter-grammars/tree-sitter-markdown,tree-sitter,tree-sitter-c,tree-sitter-c-sharp,tree-sitter-cpp,tree-sitter-elixir,tree-sitter-go,tree-sitter-haskell,tree-sitter-html,tree-sitter-java,tree-sitter-javascript,tree-sitter-json,tree-sitter-php,tree-sitter-python,tree-sitter-ruby,tree-sitter-rust,tree-sitter-scala,tree-sitter-toml,tree-sitter-typescript,tree-sitter-yaml,unrs-resolver
+npm install --global shadow-auditor --allow-scripts=@tree-sitter-grammars/tree-sitter-markdown,@tree-sitter-grammars/tree-sitter-toml,@tree-sitter-grammars/tree-sitter-yaml,tree-sitter,tree-sitter-c,tree-sitter-c-sharp,tree-sitter-cpp,tree-sitter-elixir,tree-sitter-go,tree-sitter-haskell,tree-sitter-html,tree-sitter-java,tree-sitter-javascript,tree-sitter-json,tree-sitter-php,tree-sitter-python,tree-sitter-ruby,tree-sitter-rust,tree-sitter-scala,tree-sitter-typescript,unrs-resolver
 ```
 
 The package is release-ready but is **not currently published** on the public

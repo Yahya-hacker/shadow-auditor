@@ -47,7 +47,13 @@ describe('executeLangChainToolLoop', () => {
       {
         kind: 'token_usage',
         summary: 'Model usage recorded.',
-        usage: {completion: 4, prompt: 21, total: 25},
+        usage: {
+          completion: 4,
+          prompt: 21,
+          total: 25,
+          totalSource: 'provider',
+          unclassified: 0,
+        },
       },
     ]);
   });

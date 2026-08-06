@@ -10,6 +10,8 @@ import type { StateCreator } from 'zustand';
 import type { AgentStreamEvent } from '../../core/agent.js';
 import type { AppState } from './appStore.js';
 
+import {mergeTokenUsageProvenance} from './uiSlice.js';
+
 export type MessageRole = 'agent' | 'error' | 'system' | 'user';
 
 export interface ChatMessageData {
@@ -59,7 +61,18 @@ function routedEventUpdate(state: AppState, event: AgentStreamEvent): AppStateUp
   if (event.kind === 'token_usage' && event.usage) {
     const prompt = state.tokenUsage.prompt + event.usage.prompt;
     const completion = state.tokenUsage.completion + event.usage.completion;
-    return {tokenUsage: {completion, prompt, total: prompt + completion}};
+    return {
+      tokenUsage: {
+        completion,
+        prompt,
+        provenance: mergeTokenUsageProvenance(
+          state.tokenUsage.provenance,
+          event.usage.totalSource,
+        ),
+        total: state.tokenUsage.total + event.usage.total,
+        unclassified: state.tokenUsage.unclassified + event.usage.unclassified,
+      },
+    };
   }
 
   return undefined;
@@ -184,7 +197,18 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   appendStreamChunk: (chunk) =>
     set((state) => ({ streamingText: state.streamingText + chunk })),
   clearActivity: () => set({ activity: [] }),
-  clearChat: () => set({ messages: [], streaming: false, streamingText: '' }),
+  clearChat: () => set({
+    messages: [],
+    streaming: false,
+    streamingText: '',
+    tokenUsage: {
+      completion: 0,
+      prompt: 0,
+      provenance: 'unavailable',
+      total: 0,
+      unclassified: 0,
+    },
+  }),
   finishStreaming: (fallbackText) =>
     set((state) => {
       const finalText = state.streamingText || fallbackText?.trim() || '';

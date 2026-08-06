@@ -31,6 +31,7 @@ import { LicensePaywallScreen } from './screens/LicensePaywallScreen.js';
 import { SetupScreen } from './screens/SetupScreen.js';
 import { ShellScreen } from './screens/ShellScreen.js';
 import { TargetSelectionScreen } from './screens/TargetSelectionScreen.js';
+import { ToolsScreen } from './screens/ToolsScreen.js';
 import { requestShutdown } from './shutdown.js';
 import { useAppStore } from './store/appStore.js';
 
@@ -266,6 +267,14 @@ export const App: React.FC<AppProps> = ({
 
       case 'target': {
         return <TargetSelectionScreen initialTarget={sessionTarget ?? undefined} />;
+      }
+
+      case 'tools': {
+        return (
+          <AgentSessionProvider agentSessionRef={agentSessionRef}>
+            <ToolsScreen />
+          </AgentSessionProvider>
+        );
       }
 
       default: {

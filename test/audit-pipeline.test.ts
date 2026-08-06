@@ -8,10 +8,28 @@ import { z } from 'zod';
 
 import type { ToolEntry } from '../src/core/graph/tool-retriever.js';
 
-import { compileWorkflow, WORKFLOW_RECURSION_LIMIT } from '../src/core/graph/workflow.js';
+import {
+  calculateWorkflowRecursionLimit,
+  compileWorkflow,
+  WORKFLOW_RECURSION_LIMIT,
+} from '../src/core/graph/workflow.js';
 import { normalizeAssistantHistoryMessage } from '../src/core/providers/message-normalizer.js';
 
 describe('deterministic audit pipeline', () => {
+  it('scales the graph recursion ceiling with configured stage tool budgets', () => {
+    expect(calculateWorkflowRecursionLimit({
+      maxToolSteps: 1024,
+      toolPolicy: {
+        agents: {
+          codebase_intelligence: {maxToolSteps: 256},
+          devils_advocate: {maxToolSteps: 512},
+          reporting: {maxToolSteps: 64},
+          sast_audit: {maxToolSteps: 1024},
+        },
+      },
+    })).to.equal((256 + 512 + 64 + 1024) * 2 + 32);
+  });
+
   it('never exposes repository-mutation tools to investigation stages', () => {
     const bindings: string[][] = [];
 
@@ -693,6 +711,134 @@ describe('deterministic audit pipeline', () => {
     expect((error as Error).message).to.include('<repo_map>');
   });
 
+  it('enforces the reporting agent budget independently of larger stage budgets', async () => {
+    let reporterInvocations = 0;
+    const stageInvocations = new Map<string, number>();
+    const candidates = Array.from({length: 9}, (_, index) => {
+      const findingId = `CAND-${String(index + 1).padStart(3, '0')}`;
+      return {
+        affectedLocations: [{filePath: 'src/index.ts', lineNumber: 1}],
+        confidence: 0.95,
+        cwe: 'CWE-22',
+        evidence: ['src/index.ts:1'],
+        findingId,
+        impact: 'Unauthorized file read',
+        prerequisites: ['Remote request access'],
+        proofOfConcept: {
+          content: '../safe-fixture',
+          executionStatus: 'not_run',
+          kind: 'payload',
+          safetyNotes: 'Static proof only',
+        },
+        reachability: 'likely',
+        remediation: 'Constrain paths',
+        reproductionSteps: ['Send a traversal path'],
+        severity: 'high',
+        sourceToSink: [
+          {
+            description: 'request path',
+            kind: 'source',
+            location: {filePath: 'src/index.ts', lineNumber: 1},
+          },
+          {
+            description: 'file read',
+            kind: 'sink',
+            location: {filePath: 'src/index.ts', lineNumber: 2},
+          },
+        ],
+        summary: 'Input reaches a file sink',
+        title: 'Path traversal',
+      };
+    });
+    const verdicts = candidates.map(({findingId}) => ({
+      evidence: ['src/index.ts:1'],
+      findingId,
+      rationale: 'Reachable sink',
+      verdict: 'CONFIRMED',
+      verification: {
+        method: 'static trace',
+        observations: ['Input reaches the sink'],
+        status: 'verified',
+      },
+    }));
+    const model = createModel((messages) => {
+      const stage = stageFromSystem(String(messages[0]?.content ?? ''));
+      const stageInvocation = (stageInvocations.get(stage) ?? 0) + 1;
+      stageInvocations.set(stage, stageInvocation);
+      if (stage === 'codebase') {
+        if (stageInvocation === 1) {
+          return toolCall('inspect-codebase', 'read_file_content', {filePath: 'src/index.ts'});
+        }
+
+        return new AIMessage(
+          '<repo_map>\n- src/index.ts: entry point\n</repo_map>\n' +
+          '<codebase_report>\n# Architecture\nEntry point inspected.\n</codebase_report>',
+        );
+      }
+
+      if (stage === 'sast') {
+        if (stageInvocation === 1) {
+          return toolCall('inspect-sast', 'read_file_content', {filePath: 'src/index.ts'});
+        }
+
+        return new AIMessage(
+          '<sast_report>\n# SAST\nNo candidates.\n</sast_report>\n' +
+          `<sast_candidates_json>\n${JSON.stringify(candidates)}\n</sast_candidates_json>`,
+        );
+      }
+
+      if (stage === 'devil') {
+        return new AIMessage(
+          '<adversarial_report>\n# Validation\nAll candidates confirmed.\n</adversarial_report>\n' +
+          `<verdicts_json>\n${JSON.stringify(verdicts)}\n</verdicts_json>`,
+        );
+      }
+
+      reporterInvocations++;
+      const args = confirmedFindingArgs(
+        `CAND-${String(reporterInvocations).padStart(3, '0')}`,
+      );
+      args.vulnId = `vuln-path-traversal-${reporterInvocations}`;
+      return toolCall(
+        `unexpected-finding-${reporterInvocations}`,
+        'report_finding',
+        args,
+      );
+    });
+    const workflow = compileWorkflow({
+      maxToolSteps: 1024,
+      model,
+      systemPrompt: 'You are Shadow.',
+      toolPolicy: {
+        agents: {
+          reporting: {maxToolSteps: 8},
+          sast_audit: {maxToolSteps: 1024},
+        },
+      },
+      tools: tools(),
+    });
+
+    let error: unknown;
+    try {
+      await workflow.invoke(
+        {
+          auditRunId: 'audit-run-reporting-budget',
+          messages: [new HumanMessage('Audit this repository.')],
+          mission: 'Audit this repository.',
+        },
+        {recursionLimit: WORKFLOW_RECURSION_LIMIT},
+      );
+    } catch (error_) {
+      error = error_;
+    }
+
+    expect(error).to.be.instanceOf(Error);
+    expect((error as Error).message).to.include(
+      'reporting exhausted its 8-step tool budget',
+    );
+    expect(reporterInvocations).to.equal(9);
+  });
+
   it('repairs one malformed tool-free handoff without reopening tools', async () => {
     const counts = new Map<string, number>();
     let sawRepairInstruction = false;
@@ -711,7 +857,7 @@ describe('deterministic audit pipeline', () => {
 
       if (stage === 'codebase') {
         sawRepairInstruction = messages.some((message) =>
-          String(message.content).includes('single schema-repair attempt'),
+          String(message.content).includes('schema-repair attempt 1'),
         );
         return new AIMessage(
           '<repo_map>\n- src/index.ts\n</repo_map>\n' +
@@ -824,7 +970,7 @@ describe('deterministic audit pipeline', () => {
     );
 
     expect(sawFinalizationInstruction).to.equal(true);
-    expect(counts.get('sast')).to.equal(3);
+    expect(counts.get('sast')).to.equal(5);
     expect(state.pipelineReport).to.include('# Security Audit Report');
   });
 

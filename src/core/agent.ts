@@ -15,7 +15,7 @@ import { saveConfig, type ShadowConfig } from '../utils/config.js';
 import { diagnoseAzureError } from '../utils/error-classification.js';
 import { HumanInteractionService } from '../utils/human-in-loop.js';
 import { logToStderr } from '../utils/stderr-logger.js';
-import { compileWorkflow, WORKFLOW_RECURSION_LIMIT } from './graph/workflow.js';
+import { calculateWorkflowRecursionLimit, compileWorkflow } from './graph/workflow.js';
 import { SwarmCoordinator } from './hivemind/swarm-coordinator.js';
 import { type SwarmStateSnapshot } from './hivemind/swarm-supervisor.js';
 import { createChromeDevtoolsAdapter } from './mcp/adapters/chrome-devtools.js';
@@ -44,6 +44,12 @@ import { persistMessages } from './services/message-persistence.js';
 import { assembleRuntimeTools, type RuntimeToolAssembly } from './services/runtime-tool-assembler.js';
 import { initializeSemanticIndex } from './services/semantic-index-initializer.js';
 import { MAX_TOOL_CALLS_PER_RESPONSE } from './services/tool-execution-policy.js';
+import {
+  applyAgentToolPolicy,
+  CONFIGURABLE_AGENT_IDS,
+  effectiveAgentToolSteps,
+  hostEligibleToolsForAgent,
+} from './services/tool-policy.js';
 import { type StreamActivity } from './session.js';
 import { processAgentStream } from './stream-processor.js';
 import { buildSystemPrompt } from './system-prompt.js';
@@ -56,6 +62,7 @@ import {
   createStagedReportFindingTool,
 } from './tools/report-finding.js';
 import { createSearchCodebaseTool } from './tools/search-codebase.js';
+import { type NormalizedTokenUsage } from './usage.js';
 
 function humanAnswerText(answer: boolean | string | undefined): string {
   if (typeof answer !== 'boolean') return answer ?? '';
@@ -92,11 +99,7 @@ export interface AgentStreamEvent {
   timestamp: string;
   toolCallId?: string;
   toolName?: string;
-  usage?: {
-    completion: number;
-    prompt: number;
-    total: number;
-  };
+  usage?: NormalizedTokenUsage;
 }
 
 export interface AuditStatus {
@@ -203,6 +206,47 @@ Use your tools to inspect implementation details, verify assumptions, and produc
 
     this.activeOperationController.abort(new Error('Operation cancelled by the user.'));
     return true;
+  }
+
+  async getToolPolicySnapshot(): Promise<{
+    agents: Array<{id: string; maxToolSteps: number; tools: Array<{enabled: boolean; name: string}>}>;
+  }> {
+    await this.initialized;
+    const availableTools = Object.keys(this.tools).sort();
+    return {
+      agents: CONFIGURABLE_AGENT_IDS.map((id) => {
+        const hostEligibleTools = hostEligibleToolsForAgent(id, availableTools);
+        const enabled = new Set(applyAgentToolPolicy(
+          this.config,
+          id,
+          hostEligibleTools,
+        ));
+        return {
+          id,
+          maxToolSteps: effectiveAgentToolSteps(
+            this.config,
+            id,
+            this.runtime.maxToolSteps,
+          ),
+          tools: hostEligibleTools.map((name) => ({enabled: enabled.has(name), name})),
+        };
+      }),
+    };
+  }
+
+  async setToolPolicy(toolPolicy: ShadowConfig['toolPolicy']): Promise<void> {
+    await this.initialized;
+    if (this.activeOperation) {
+      throw new Error('Tool configuration cannot change while an agent operation is running.');
+    }
+
+    this.config = {...this.config, toolPolicy};
+    await saveConfig(this.config);
+    this.recompileWorkflow();
+    this.swarmCoordinator?.terminateAllWorkers();
+    if (this.config.swarm?.enabled) {
+      await this.initializeSwarmCoordinator('');
+    }
   }
 
   async compactContext(): Promise<{ afterTokens: number; beforeTokens: number }> {
@@ -694,12 +738,14 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       checkpointer,
       evidenceVerifier: this.runtimeToolAssembly.evidenceStore,
       indexingSummary: this.buildIndexingSummary(resolvedTargetPath),
+      maxHandoffRepairAttempts: this.config.reportValidation?.maxRepairRetries ?? 2,
       maxToolSteps: this.runtime.maxToolSteps,
       model: this.langchainModel,
       providerHint: this.config.provider,
       repoMap: this.repoMap,
       suppressionStore: this.suppressionStore,
       systemPrompt: this.systemPrompt,
+      toolPolicy: this.config.toolPolicy,
       tools: toolsArray,
     });
 
@@ -908,12 +954,14 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       checkpointer: this.checkpointer,
       evidenceVerifier: this.runtimeToolAssembly.evidenceStore,
       indexingSummary: this.buildIndexingSummary(),
+      maxHandoffRepairAttempts: this.config.reportValidation?.maxRepairRetries ?? 2,
       maxToolSteps: this.runtime.maxToolSteps,
       model: this.langchainModel,
       providerHint: this.config.provider,
       repoMap: this.repoMap,
       suppressionStore: this.suppressionStore ?? undefined,
       systemPrompt: this.systemPrompt,
+      toolPolicy: this.config.toolPolicy,
       tools: Object.entries(this.tools).map(([name, tool]) => ({name, tool})),
     });
   }
@@ -1017,7 +1065,10 @@ Use your tools to inspect implementation details, verify assumptions, and produc
 
     const config = {
       configurable: { thread_id: 'session_main' },
-      recursionLimit: WORKFLOW_RECURSION_LIMIT,
+      recursionLimit: calculateWorkflowRecursionLimit({
+        maxToolSteps: this.runtime.maxToolSteps,
+        toolPolicy: this.config.toolPolicy,
+      }),
       signal: this.activeOperationController?.signal,
       version: 'v3' as const,
     };
@@ -1162,7 +1213,10 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     this.threadCounter++;
     const lcConfig = {
       configurable: { thread_id: 'session_main' },
-      recursionLimit: WORKFLOW_RECURSION_LIMIT,
+      recursionLimit: calculateWorkflowRecursionLimit({
+        maxToolSteps: this.runtime.maxToolSteps,
+        toolPolicy: this.config.toolPolicy,
+      }),
       signal: this.activeOperationController?.signal,
       version: 'v3' as const,
     };

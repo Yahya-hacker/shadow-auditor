@@ -56,13 +56,13 @@ const languageLoaders: Record<string, () => Promise<unknown>> = {
   solidity: makeLoader('tree-sitter-solidity'),
   sql: makeLoader('tree-sitter-sql'),
   swift: makeLoader('tree-sitter-swift'),
-  toml: makeLoader('tree-sitter-toml'),
+  toml: makeLoader('@tree-sitter-grammars/tree-sitter-toml'),
   async typescript() {
     const ts = await _import('tree-sitter-typescript');
     return (ts as { default: { tsx: unknown; typescript: unknown; } }).default;
   },
   vue: makeLoader('tree-sitter-vue'),
-  yaml: makeLoader('tree-sitter-yaml'),
+  yaml: makeLoader('@tree-sitter-grammars/tree-sitter-yaml'),
   zig: makeLoader('tree-sitter-zig'),
 };
 
@@ -84,7 +84,9 @@ export const GUARANTEED_LANGUAGE_KEYS = Object.freeze([
   'ruby',
   'rust',
   'scala',
+  'toml',
   'typescript',
+  'yaml',
 ] as const);
 
 // ============================================================================

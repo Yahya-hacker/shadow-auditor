@@ -1,6 +1,7 @@
 import {expect} from 'chai';
 
 import {OpenAIEmbeddingProvider} from '../src/core/memory/embeddings/openai-provider.js';
+import {createEmbeddingProvider} from '../src/core/services/model-initializer.js';
 
 async function captureError(operation: Promise<unknown>): Promise<Error> {
   try {
@@ -71,6 +72,72 @@ describe('OpenAI-compatible embedding provider', () => {
     );
     expect(requestHeaders.get('api-key')).to.equal('azure-secret');
     expect(requestHeaders.has('authorization')).to.equal(false);
+  });
+
+  it('sends an explicitly configured output dimension and validates health response shape', async () => {
+    let requestBody: unknown;
+    globalThis.fetch = async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({
+        data: [{embedding: [1, 2, 3], index: 0}],
+      }), {headers: {'content-type': 'application/json'}, status: 200});
+    };
+
+    const provider = new OpenAIEmbeddingProvider({
+      apiKey: 'key',
+      dimension: 3,
+      requestDimension: true,
+    });
+
+    expect(await provider.testConnection()).to.equal(true);
+    expect(requestBody).to.deep.equal({
+      dimensions: 3,
+      input: ['test'],
+      model: 'text-embedding-3-small',
+    });
+  });
+
+  it('uses one bounded request for health checks instead of retrying throttling responses', async () => {
+    let attempts = 0;
+    globalThis.fetch = async () => {
+      attempts++;
+      return new Response(JSON.stringify({error: {message: 'rate limited'}}), {
+        headers: {'content-type': 'application/json', 'retry-after': '3600'},
+        status: 429,
+      });
+    };
+
+    const provider = new OpenAIEmbeddingProvider({
+      apiKey: 'key',
+      dimension: 3,
+    });
+
+    expect(await provider.testConnection()).to.equal(false);
+    expect(attempts).to.equal(1);
+  });
+
+  it('treats configured dimensions as response validation for compatible providers', async () => {
+    let requestBody: Record<string, unknown> = {};
+    globalThis.fetch = async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        data: [{embedding: [1, 2, 3], index: 0}],
+      }), {headers: {'content-type': 'application/json'}, status: 200});
+    };
+
+    const provider = createEmbeddingProvider({
+      apiKey: 'key',
+      indexing: {
+        embeddingDimension: 3,
+        embeddingModel: 'fixed-dimension-model',
+        embeddingProvider: 'openai',
+      },
+      model: 'chat-model',
+      provider: 'openai',
+    });
+
+    expect(await provider.embed(['input'])).to.deep.equal([[1, 2, 3]]);
+    expect(requestBody).not.to.have.property('dimensions');
   });
 
   it('rejects response count and dimension contract violations', async () => {

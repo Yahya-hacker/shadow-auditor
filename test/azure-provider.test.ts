@@ -139,7 +139,7 @@ describe('Azure and Microsoft Foundry provider', () => {
       provider: 'azure',
     });
     expect(capabilities.maxOutputTokens).to.equal(128_000);
-    expect(capabilities.maxToolSteps).to.equal(64);
+    expect(capabilities.maxToolSteps).to.equal(128);
     expect(capabilities.supportsReasoningMode).to.equal(true);
   });
 
