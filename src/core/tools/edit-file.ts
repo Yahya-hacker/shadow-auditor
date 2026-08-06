@@ -1,12 +1,13 @@
-import * as crypto from 'node:crypto';
+import { Command } from '@langchain/langgraph';
 import * as fs from 'node:fs/promises';
 import { z } from 'zod';
 
-import { confirmFileEdit } from '../../utils/human-in-loop.js';
-import { writeFileAtomic } from '../../utils/fs-atomic.js';
+import type { HumanInteractionService } from '../../utils/human-in-loop.js';
+
+import { recoverAtomicWrite, writeFileAtomic } from '../../utils/fs-atomic.js';
 import { type PathGuard, PathGuardError } from '../policy/path-guard.js';
 
-export function createEditFileTool(pathGuard: PathGuard) {
+export function createEditFileTool(pathGuard: PathGuard, humanInteraction: HumanInteractionService) {
   return {
     description:
       'Proposes and applies a patch to a file. Requires user confirmation before writing changes. ' +
@@ -24,7 +25,17 @@ export function createEditFileTool(pathGuard: PathGuard) {
       targetCode: string;
     }) {
       try {
+        if (targetCode.length === 0) {
+          return '[ERROR] Target code must not be empty.';
+        }
+
         const absolutePath = await pathGuard.resolvePathForWrite(filePath);
+        await recoverAtomicWrite(absolutePath);
+        const initialStats = await fs.lstat(absolutePath);
+        if (initialStats.isSymbolicLink() || !initialStats.isFile()) {
+          return `[ERROR] Refusing to edit non-regular file "${filePath}".`;
+        }
+
         const content = await fs.readFile(absolutePath, 'utf8');
         if (!content.includes(targetCode)) {
           return [
@@ -39,7 +50,7 @@ export function createEditFileTool(pathGuard: PathGuard) {
         // (interrupting the graph at HumanIntervention). On resume, the tool is
         // called again and this returns true. In non-LangGraph context (Vercel AI
         // SDK swarm mode), returns the blocking confirmation result.
-        const confirmed = await confirmFileEdit(filePath, targetCode, replacementCode);
+        const confirmed = await humanInteraction.confirmFileEdit(filePath, targetCode, replacementCode);
         if (!confirmed) {
           return `── edit_file ── DENIED ──\n[DENIED] User denied file edit: "${filePath}".`;
         }
@@ -50,8 +61,17 @@ export function createEditFileTool(pathGuard: PathGuard) {
         // hash of the original and re-check. This prevents silent corruption
         // when another process (or agent worker) modified the file while the
         // confirmation dialog was open.
+        await recoverAtomicWrite(absolutePath);
+        const freshStats = await fs.lstat(absolutePath);
+        if (freshStats.isSymbolicLink() || !freshStats.isFile()) {
+          return `[ERROR] Refusing to edit non-regular file "${filePath}".`;
+        }
+
         const freshContent = await fs.readFile(absolutePath, 'utf8');
-        if (freshContent !== content) {
+        if (freshContent === content) {
+          const nextContent = content.replace(targetCode, replacementCode);
+          await writeFileAtomic(absolutePath, nextContent);
+        } else {
           // Content changed since our initial read — verify target still exists
           if (!freshContent.includes(targetCode)) {
             return [
@@ -61,11 +81,9 @@ export function createEditFileTool(pathGuard: PathGuard) {
               `💡 Re-read the file and try again with the updated content.`,
             ].join('\n');
           }
+
           // Target still exists — use the fresh content as the base
           const nextContent = freshContent.replace(targetCode, replacementCode);
-          await writeFileAtomic(absolutePath, nextContent);
-        } else {
-          const nextContent = content.replace(targetCode, replacementCode);
           await writeFileAtomic(absolutePath, nextContent);
         }
 
@@ -75,6 +93,10 @@ export function createEditFileTool(pathGuard: PathGuard) {
           `Lines changed: ${targetCode.split('\n').length} removed, ${replacementCode.split('\n').length} added.`,
         ].join('\n');
       } catch (error) {
+        if (error instanceof Command) {
+          throw error;
+        }
+
         if (error instanceof PathGuardError) {
           return `[ERROR] ${error.message}`;
         }
@@ -85,7 +107,7 @@ export function createEditFileTool(pathGuard: PathGuard) {
     inputSchema: z.object({
       filePath: z.string().describe('Relative file path from repository root.'),
       replacementCode: z.string().describe('Replacement code to write into the file.'),
-      targetCode: z.string().describe('Exact code snippet to replace.'),
+      targetCode: z.string().min(1).describe('Exact non-empty code snippet to replace.'),
     }),
   };
 }

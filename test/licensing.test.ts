@@ -13,12 +13,10 @@ import {
   extractTier,
   getCachePath,
   hashKey,
-  type LicenseTier,
   POLAR_ORG_ID,
   type PolarValidateResponse,
   readCache,
   validateLicense,
-  writeCache,
 } from '../src/core/licensing/polar-validator.js';
 import { enforceLicenseGate, PRO_AUDIT_MODES, UPGRADE_URL } from '../src/core/policy/license-guard.js';
 import { ENV_VAR_MAP, getApiKeyFromEnv, KeychainAdapter, SERVICE_NAME } from '../src/utils/keychain.js';
@@ -94,10 +92,11 @@ describe('licensing and credential vault', () => {
         expect(key).to.be.null;
       });
 
-      it('should not throw when setApiKey fails', async () => {
+      it('should verify durable secure credential storage', async () => {
         const adapter = new KeychainAdapter();
-        // Should silently no-op since cross-keychain isn't installed in test env
         await adapter.setApiKey('test-dummy', 'test-key');
+
+        expect(await adapter.getApiKey('test-dummy')).to.equal('test-key');
       });
     });
   });
@@ -220,9 +219,11 @@ describe('licensing and credential vault', () => {
         expect(CACHE_GRACE_MS).to.equal(72 * 60 * 60 * 1000);
       });
 
-      it('should have a placeholder org ID', () => {
+      it('should not ship a fabricated Polar organization ID', () => {
         expect(POLAR_ORG_ID).to.be.a('string');
-        expect(POLAR_ORG_ID.length).to.be.greaterThan(0);
+        if (!process.env.SHADOW_POLAR_ORG_ID) {
+          expect(POLAR_ORG_ID).to.equal('');
+        }
       });
     });
   });

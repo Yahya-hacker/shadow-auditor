@@ -8,8 +8,10 @@ import * as path from 'node:path';
 import { z } from 'zod';
 
 import type { CommandPolicyDecision } from './command-policy.js';
-import type { MCPActionDecision, MCPActionTier } from './mcp-policy.js';
+import type { MCPActionDecision } from './mcp-policy.js';
 
+import { recoverAtomicWrite, writeFileAtomic } from '../../utils/fs-atomic.js';
+import { logToStderr } from '../../utils/stderr-logger.js';
 import { SCHEMA_VERSION } from '../schema/base.js';
 
 // =============================================================================
@@ -274,6 +276,7 @@ export class PolicyAuditManager extends EventEmitter {
     const auditPath = path.join(this.auditDir, 'policy-audit.jsonl');
     
     try {
+      await recoverAtomicWrite(auditPath);
       const content = await fs.readFile(auditPath, 'utf-8');
       const lines = content.trim().split('\n').filter(Boolean);
       
@@ -283,7 +286,7 @@ export class PolicyAuditManager extends EventEmitter {
           const entry = policyAuditEntrySchema.parse(parsed);
           this.entries.set(entry.id, entry);
         } catch (error) {
-          console.warn(
+          logToStderr(
             `[PolicyAuditManager] Skipping invalid audit entry: ${
               error instanceof Error ? error.message : String(error)
             }`,
@@ -409,7 +412,7 @@ export class PolicyAuditManager extends EventEmitter {
       .map((entry) => JSON.stringify(entry))
       .join('\n');
     
-    await fs.writeFile(auditPath, lines + '\n', 'utf-8');
+    await writeFileAtomic(auditPath, lines + '\n');
     this.dirty = false;
     this.emit('saved', auditPath);
   }
@@ -429,6 +432,7 @@ export class PolicyAuditManager extends EventEmitter {
         this.entries.delete(id);
       }
     }
+
     this.entries.set(entry.id, entry);
     this.dirty = true;
     this.emit('decision', entry);
@@ -489,4 +493,16 @@ export function initializeAuditManager(runId: string, auditDir: string): PolicyA
  */
 export function getAuditManager(): null | PolicyAuditManager {
   return globalAuditManager;
+}
+
+/**
+ * Reset (destroy) the global audit manager, releasing resources and clearing
+ * the singleton reference. Called during graceful shutdown or test teardown
+ * to prevent stale state leaking across runs.
+ */
+export function resetGlobalAuditManager(): void {
+  if (globalAuditManager) {
+    globalAuditManager.removeAllListeners();
+    globalAuditManager = null;
+  }
 }

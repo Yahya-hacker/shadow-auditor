@@ -15,25 +15,24 @@
  * 6. Generate the final unified diff string
  */
 
-import * as crypto from 'node:crypto';
-
 import {
   type DiffHunk,
-  type ParsedFileDiff,
   type PatchConflict,
   type PatchProposal,
 } from './patch-competition-schema.js';
 import { parseUnifiedDiff } from './patch-conflict-detector.js';
 
 interface HunkWithSource {
+  agentRole: PatchProposal['agentRole'];
   hunk: DiffHunk;
   proposalId: string;
-  agentRole: PatchProposal['agentRole'];
 }
 
 interface SynthesizedFile {
   filePath: string;
   hunks: DiffHunk[];
+  newFile?: string;
+  oldFile?: string;
   unresolvedConflicts: PatchConflict[];
 }
 
@@ -48,32 +47,32 @@ export function synthesizePatches(
   proposals: PatchProposal[],
   conflicts: PatchConflict[],
 ): {
-  unifiedDiff: string;
-  resolvedConflicts: PatchConflict[];
-  unresolvedConflicts: PatchConflict[];
   acceptedProposals: string[];
+  filesModified: string[];
   mergedProposals: string[];
   rejectedProposals: string[];
-  filesModified: string[];
+  resolvedConflicts: PatchConflict[];
   summary: string;
+  unifiedDiff: string;
+  unresolvedConflicts: PatchConflict[];
 } {
   if (proposals.length === 0) {
     return {
-      unifiedDiff: '',
-      resolvedConflicts: [],
-      unresolvedConflicts: [],
       acceptedProposals: [],
+      filesModified: [],
       mergedProposals: [],
       rejectedProposals: [],
-      filesModified: [],
+      resolvedConflicts: [],
       summary: 'No proposals to synthesize.',
+      unifiedDiff: '',
+      unresolvedConflicts: [],
     };
   }
 
   // Sort proposals: security first, then performance, then TUI
   const priorityOrder: Record<PatchProposal['agentRole'], number> = {
-    'security_boundaries': 0,
     'language_patterns': 1,
+    'security_boundaries': 0,
     'tui_state_machine': 2,
   };
   const sorted = [...proposals].sort(
@@ -91,18 +90,32 @@ export function synthesizePatches(
 
   // Collect all hunks per file, tagged with source proposal
   const fileHunks = new Map<string, HunkWithSource[]>();
+  const fileHeaders = new Map<string, { newFile?: string; oldFile?: string; }>();
   for (const proposal of sorted) {
     const parsed = parseUnifiedDiff(proposal.patchDiff);
     for (const file of parsed) {
       const existing = fileHunks.get(file.filePath) ?? [];
       for (const hunk of file.hunks) {
         existing.push({
+          agentRole: proposal.agentRole,
           hunk,
           proposalId: proposal.proposalId,
-          agentRole: proposal.agentRole,
         });
       }
+
       fileHunks.set(file.filePath, existing);
+      const headers = fileHeaders.get(file.filePath);
+      if (
+        headers &&
+        (headers.oldFile !== file.oldFile || headers.newFile !== file.newFile)
+      ) {
+        throw new Error(`Competing patches disagree on file operation for ${file.filePath}.`);
+      }
+
+      fileHeaders.set(file.filePath, {
+        newFile: file.newFile,
+        oldFile: file.oldFile,
+      });
     }
   }
 
@@ -126,15 +139,20 @@ export function synthesizePatches(
         (a, b) => a.hunk.oldStart - b.hunk.oldStart,
       );
 
+      // Recompute line numbers so merged hunks apply cleanly
+      const recomputedHunks = recomputeLineNumbers(sortedHunks.map((h) => h.hunk));
+
       synthesizedFiles.push({
         filePath,
-        hunks: sortedHunks.map((h) => h.hunk),
+        hunks: recomputedHunks,
+        ...fileHeaders.get(filePath),
         unresolvedConflicts: [],
       });
 
       for (const h of hunks) {
         acceptedSet.add(h.proposalId);
       }
+
       continue;
     }
 
@@ -144,6 +162,18 @@ export function synthesizePatches(
 
     for (const conflict of fileConflicts) {
       switch (conflict.resolutionStrategy) {
+        case 'combine_alternating': {
+          // For adjacent edits: interleave both changes
+          const hunkA = hunks.find((h) => h.proposalId === conflict.proposalAId);
+          const hunkB = hunks.find((h) => h.proposalId === conflict.proposalBId);
+          if (hunkA) synthesizedHunks.push(hunkA.hunk);
+          if (hunkB) synthesizedHunks.push(hunkB.hunk);
+          resolvedConflicts.push(conflict);
+          mergedSet.add(conflict.proposalAId);
+          mergedSet.add(conflict.proposalBId);
+          break;
+        }
+
         case 'merge_both': {
           // Keep both hunks (e.g., both add imports)
           const hunkA = hunks.find((h) => h.proposalId === conflict.proposalAId);
@@ -153,6 +183,23 @@ export function synthesizePatches(
           resolvedConflicts.push(conflict);
           mergedSet.add(conflict.proposalAId);
           mergedSet.add(conflict.proposalBId);
+          break;
+        }
+
+        case 'prefer_performance': {
+          const perfHunk = hunks.find(
+            (h) => h.agentRole === 'language_patterns' &&
+            (h.proposalId === conflict.proposalAId || h.proposalId === conflict.proposalBId),
+          );
+          if (perfHunk) {
+            synthesizedHunks.push(perfHunk.hunk);
+            acceptedSet.add(perfHunk.proposalId);
+          }
+
+          const otherId = conflict.proposalAId === perfHunk?.proposalId
+            ? conflict.proposalBId : conflict.proposalAId;
+          rejectedSet.add(otherId);
+          resolvedConflicts.push(conflict);
           break;
         }
 
@@ -166,38 +213,11 @@ export function synthesizePatches(
             synthesizedHunks.push(securityHunk.hunk);
             acceptedSet.add(securityHunk.proposalId);
           }
+
           const otherId = conflict.proposalAId === securityHunk?.proposalId
             ? conflict.proposalBId : conflict.proposalAId;
           rejectedSet.add(otherId);
           resolvedConflicts.push(conflict);
-          break;
-        }
-
-        case 'prefer_performance': {
-          const perfHunk = hunks.find(
-            (h) => h.agentRole === 'language_patterns' &&
-            (h.proposalId === conflict.proposalAId || h.proposalId === conflict.proposalBId),
-          );
-          if (perfHunk) {
-            synthesizedHunks.push(perfHunk.hunk);
-            acceptedSet.add(perfHunk.proposalId);
-          }
-          const otherId = conflict.proposalAId === perfHunk?.proposalId
-            ? conflict.proposalBId : conflict.proposalAId;
-          rejectedSet.add(otherId);
-          resolvedConflicts.push(conflict);
-          break;
-        }
-
-        case 'combine_alternating': {
-          // For adjacent edits: interleave both changes
-          const hunkA = hunks.find((h) => h.proposalId === conflict.proposalAId);
-          const hunkB = hunks.find((h) => h.proposalId === conflict.proposalBId);
-          if (hunkA) synthesizedHunks.push(hunkA.hunk);
-          if (hunkB) synthesizedHunks.push(hunkB.hunk);
-          resolvedConflicts.push(conflict);
-          mergedSet.add(conflict.proposalAId);
-          mergedSet.add(conflict.proposalBId);
           break;
         }
 
@@ -209,33 +229,33 @@ export function synthesizePatches(
 
           // Create a conflict marker hunk
           const conflictHunk: DiffHunk = {
-            oldStart: conflict.overlappingRangeA.start,
-            oldCount: conflict.overlappingRangeA.end - conflict.overlappingRangeA.start + 1,
-            newStart: conflict.overlappingRangeA.start,
-            newCount: conflict.overlappingRangeA.end - conflict.overlappingRangeA.start + 1,
             header: `CONFLICT: ${conflict.conflictType} — MANUAL RESOLUTION REQUIRED`,
             lines: [
               {
-                kind: 'context',
                 content: `<<<<<<< ${conflict.proposalAId} (${hunkA?.agentRole ?? 'unknown'})`,
+                kind: 'context',
               },
               ...(hunkA?.hunk.lines ?? []).map((l) => ({
                 ...l,
                 kind: 'context' as const,
               })),
               {
-                kind: 'context',
                 content: `=======`,
+                kind: 'context',
               },
               ...(hunkB?.hunk.lines ?? []).map((l) => ({
                 ...l,
                 kind: 'context' as const,
               })),
               {
-                kind: 'context',
                 content: `>>>>>>> ${conflict.proposalBId} (${hunkB?.agentRole ?? 'unknown'})`,
+                kind: 'context',
               },
             ],
+            newCount: conflict.overlappingRangeA.end - conflict.overlappingRangeA.start + 1,
+            newStart: conflict.overlappingRangeA.start,
+            oldCount: conflict.overlappingRangeA.end - conflict.overlappingRangeA.start + 1,
+            oldStart: conflict.overlappingRangeA.start,
           };
 
           synthesizedHunks.push(conflictHunk);
@@ -257,9 +277,14 @@ export function synthesizePatches(
     // Sort hunks by line number for a clean diff
     synthesizedHunks.sort((a, b) => a.oldStart - b.oldStart);
 
+    // Recompute line numbers so merged hunks from different proposals
+    // apply cleanly with correct offsets.
+    const recomputedHunks = recomputeLineNumbers(synthesizedHunks);
+
     synthesizedFiles.push({
       filePath,
-      hunks: synthesizedHunks,
+      hunks: recomputedHunks,
+      ...fileHeaders.get(filePath),
       unresolvedConflicts: fileUnresolved,
     });
   }
@@ -277,29 +302,34 @@ export function synthesizePatches(
   if (acceptedProposals.length > 0) {
     summaryParts.push(`${acceptedProposals.length} proposal(s) fully accepted`);
   }
+
   if (mergedProposals.length > 0) {
     summaryParts.push(`${mergedProposals.length} proposal(s) merged`);
   }
+
   if (resolvedConflicts.length > 0) {
     summaryParts.push(`${resolvedConflicts.length} conflict(s) auto-resolved`);
   }
+
   if (unresolvedConflicts.length > 0) {
     summaryParts.push(`${unresolvedConflicts.length} conflict(s) require manual review`);
   }
+
   if (rejectedProposals.length > 0) {
     summaryParts.push(`${rejectedProposals.length} proposal(s) rejected`);
   }
+
   summaryParts.push(`${filesModified.length} file(s) modified`);
 
   return {
-    unifiedDiff,
-    resolvedConflicts,
-    unresolvedConflicts,
     acceptedProposals,
+    filesModified,
     mergedProposals,
     rejectedProposals,
-    filesModified,
+    resolvedConflicts,
     summary: summaryParts.join(', '),
+    unifiedDiff,
+    unresolvedConflicts,
   };
 }
 
@@ -310,8 +340,13 @@ function generateUnifiedDiff(files: SynthesizedFile[]): string {
   const parts: string[] = [];
 
   for (const file of files) {
-    parts.push(`--- a/${file.filePath}`);
-    parts.push(`+++ b/${file.filePath}`);
+    const oldHeader = file.oldFile === '/dev/null'
+      ? '/dev/null'
+      : `a/${file.oldFile ?? file.filePath}`;
+    const newHeader = file.newFile === '/dev/null'
+      ? '/dev/null'
+      : `b/${file.newFile ?? file.filePath}`;
+    parts.push(`--- ${oldHeader}`, `+++ ${newHeader}`);
 
     for (const hunk of file.hunks) {
       // Hunk header
@@ -321,15 +356,20 @@ function generateUnifiedDiff(files: SynthesizedFile[]): string {
       // Hunk body
       for (const line of hunk.lines) {
         switch (line.kind) {
-          case 'removed':
-            parts.push(`-${line.content}`);
-            break;
-          case 'added':
+          case 'added': {
             parts.push(`+${line.content}`);
             break;
-          case 'context':
+          }
+
+          case 'context': {
             parts.push(` ${line.content}`);
             break;
+          }
+
+          case 'removed': {
+            parts.push(`-${line.content}`);
+            break;
+          }
         }
       }
     }
@@ -346,25 +386,22 @@ function generateUnifiedDiff(files: SynthesizedFile[]): string {
  * the line numbers must be adjusted to account for earlier insertions/deletions.
  */
 export function recomputeLineNumbers(hunks: DiffHunk[]): DiffHunk[] {
-  let oldOffset = 0;
   let newOffset = 0;
   const result: DiffHunk[] = [];
 
   for (const hunk of hunks) {
     const adjusted: DiffHunk = {
       ...hunk,
-      oldStart: hunk.oldStart + oldOffset,
-      newStart: hunk.newStart + newOffset,
       lines: hunk.lines.map((line) => {
         const adjLine = { ...line };
-        if (adjLine.oldLineNumber !== undefined) {
-          adjLine.oldLineNumber += oldOffset;
-        }
         if (adjLine.newLineNumber !== undefined) {
           adjLine.newLineNumber += newOffset;
         }
+
         return adjLine;
       }),
+      newStart: hunk.newStart + newOffset,
+      oldStart: hunk.oldStart,
     };
 
     result.push(adjusted);
@@ -372,7 +409,6 @@ export function recomputeLineNumbers(hunks: DiffHunk[]): DiffHunk[] {
     // Update offsets for next hunk
     const addedCount = hunk.lines.filter((l) => l.kind === 'added').length;
     const removedCount = hunk.lines.filter((l) => l.kind === 'removed').length;
-    oldOffset += addedCount - removedCount;
     newOffset += addedCount - removedCount;
   }
 

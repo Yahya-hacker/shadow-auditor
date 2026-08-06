@@ -12,9 +12,15 @@
  * for test execution — everything runs inside disposable Docker containers.
  */
 
-import { exec } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
+import { writeFileAtomic } from '../../utils/fs-atomic.js';
 import { type TestResult, type TestRunner } from './test-runner.js';
+
+const GIT_OPERATION_TIMEOUT_MS = 30_000;
 
 // =============================================================================
 // Types
@@ -33,9 +39,18 @@ export interface RemediationResult {
 }
 
 export interface RemediationLoopOptions {
+  artifactDirectory?: string;
   autoRevert?: boolean;
   projectRoot: string;
   testRunner: TestRunner;
+}
+
+export interface PatchValidation {
+  findingId: string;
+  patchHash: string;
+  sourceFingerprint: string;
+  testResult: TestResult;
+  token: string;
 }
 
 // =============================================================================
@@ -43,21 +58,62 @@ export interface RemediationLoopOptions {
 // =============================================================================
 
 function gitExec(
-  command: string,
+  args: string[],
   cwd: string,
+  stdinData?: string,
+  signal?: AbortSignal,
 ): Promise<{ exitCode: number; stderr: string; stdout: string }> {
-  return new Promise((resolve) => {
-    exec(
-      command,
-      { cwd, maxBuffer: 5 * 1024 * 1024, timeout: 30_000 },
-      (error, stdout, stderr) => {
-        resolve({
-          exitCode: error?.code ?? (error ? 1 : 0),
-          stderr: typeof stderr === 'string' ? stderr : '',
-          stdout: typeof stdout === 'string' ? stdout : '',
-        });
-      },
-    );
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const child = spawn('git', args, {
+      cwd,
+      signal,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    const finish = (result: { exitCode: number; stderr: string; stdout: string }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(result);
+    };
+
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM');
+      finish({
+        exitCode: 1,
+        stderr: `${stderr}\nGit operation timed out after ${GIT_OPERATION_TIMEOUT_MS}ms.`.trim(),
+        stdout,
+      });
+    }, GIT_OPERATION_TIMEOUT_MS);
+    timeout.unref?.();
+
+    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    if (stdinData !== undefined) {
+      child.stdin.write(stdinData);
+      child.stdin.end();
+    }
+
+    child.on('error', () => {
+      if (signal?.aborted) {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeout);
+          reject(signal.reason ?? new Error('Git operation aborted.'));
+        }
+      } else {
+        finish({ exitCode: 1, stderr, stdout });
+      }
+    });
+
+    child.on('close', (code) => {
+      finish({ exitCode: code ?? 1, stderr, stdout });
+    });
   });
 }
 
@@ -66,25 +122,31 @@ function gitExec(
 // =============================================================================
 
 export class RemediationLoop {
+  private readonly artifactDirectory?: string;
   private readonly autoRevert: boolean;
   private readonly projectRoot: string;
   private readonly testRunner: TestRunner;
+  private readonly validations = new Map<string, PatchValidation>();
 
   constructor(options: RemediationLoopOptions) {
     this.projectRoot = options.projectRoot;
     this.testRunner = options.testRunner;
     this.autoRevert = options.autoRevert ?? true;
+    this.artifactDirectory = options.artifactDirectory;
   }
 
   /**
    * Apply a patch using `git apply`.
    * Performs a dry-run first to validate the patch.
    */
-  async applyPatch(diff: string): Promise<void> {
+  async applyPatch(diff: string, signal?: AbortSignal): Promise<void> {
+    await this.fingerprintPaths(this.parseTouchedPaths(diff));
     // Dry run
     const dryRun = await gitExec(
-      `echo ${this.shellEscape(diff)} | git apply --check -`,
+      ['apply', '--check', '-'],
       this.projectRoot,
+      diff,
+      signal,
     );
 
     if (dryRun.exitCode !== 0) {
@@ -93,8 +155,10 @@ export class RemediationLoop {
 
     // Apply for real
     const apply = await gitExec(
-      `echo ${this.shellEscape(diff)} | git apply -`,
+      ['apply', '--whitespace=nowarn', '-'],
       this.projectRoot,
+      diff,
+      signal,
     );
 
     if (apply.exitCode !== 0) {
@@ -103,40 +167,48 @@ export class RemediationLoop {
   }
 
   /**
-   * Create a git stash restore point.
-   * Returns the stash reference (e.g., "stash@{0}").
+   * Apply a previously validated patch exactly once. Any affected-file change
+   * after validation invalidates the token, even when git could still merge it.
    */
-  async createRestorePoint(findingId: string): Promise<string> {
-    const stashMessage = `shadow-auditor-pre-patch-${findingId}`;
-
-    // Check for changes first
-    const status = await gitExec('git status --porcelain', this.projectRoot);
-    if (status.stdout.trim() === '') {
-      // Nothing to stash — working tree is clean
-      return '';
+  async applyValidatedPatch(
+    validationToken: string,
+    patchDiff: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const validation = this.validations.get(validationToken);
+    this.validations.delete(validationToken);
+    if (!validation) throw new Error('Patch validation token is missing, expired, or already used.');
+    if (validation.testResult.degraded || !validation.testResult.passed) {
+      throw new Error('A patch that degraded project validation cannot be applied.');
     }
 
-    const result = await gitExec(
-      `git stash push -m "${stashMessage}"`,
-      this.projectRoot,
-    );
-
-    if (result.exitCode !== 0) {
-      throw new Error(`git stash failed: ${result.stderr}`);
+    if (hashText(patchDiff) !== validation.patchHash) {
+      throw new Error('Patch content changed after validation.');
     }
 
-    return 'stash@{0}';
+    const currentFingerprint = await this.fingerprintPaths(this.parseTouchedPaths(patchDiff));
+    if (currentFingerprint !== validation.sourceFingerprint) {
+      throw new Error('An affected source file changed after validation; generate and validate a new patch.');
+    }
+
+    await this.applyPatch(patchDiff, signal);
+  }
+
+  discardValidation(validationToken: string): void {
+    this.validations.delete(validationToken);
   }
 
   /**
    * Execute the full remediation cycle for a finding.
    */
-  async execute(findingId: string, patchDiff: string): Promise<RemediationResult> {
-    // 1. Create restore point
-    let stashRef: string;
+  async execute(findingId: string, patchDiff: string, signal?: AbortSignal): Promise<RemediationResult> {
+    // Apply directly to the current tree. Stashing would temporarily remove
+    // user-owned changes and can lose them on a successful remediation.
     try {
-      stashRef = await this.createRestorePoint(findingId);
+      await this.applyPatch(patchDiff, signal);
     } catch {
+      signal?.throwIfAborted();
+
       return {
         appliedPatch: patchDiff,
         findingId,
@@ -145,32 +217,25 @@ export class RemediationLoop {
       };
     }
 
-    // 2. Apply patch
+    let testResult: TestResult;
     try {
-      await this.applyPatch(patchDiff);
-    } catch {
-      // Revert if stash was created
-      if (stashRef) {
-        await this.revertToRestorePoint(stashRef).catch(() => {});
+      testResult = await this.runTests(signal);
+    } catch (error) {
+      try {
+        await this.revertPatch(patchDiff);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          'Test execution failed and the remediation patch could not be reverted.',
+        );
       }
 
-      return {
-        appliedPatch: patchDiff,
-        findingId,
-        reverted: Boolean(stashRef),
-        status: 'skipped',
-      };
+      signal?.throwIfAborted();
+      throw error;
     }
 
-    // 3. Run tests
-    const testResult = await this.runTests();
-
-    // 4. Evaluate
     if (testResult.degraded && this.autoRevert) {
-      // Revert: tests degraded
-      if (stashRef) {
-        await this.revertToRestorePoint(stashRef).catch(() => {});
-      }
+      await this.revertPatch(patchDiff);
 
       return {
         appliedPatch: patchDiff,
@@ -199,33 +264,138 @@ export class RemediationLoop {
     };
   }
 
-  /**
-   * Revert to a restore point by popping the stash.
-   */
-  async revertToRestorePoint(stashRef: string): Promise<void> {
-    if (!stashRef) return;
+  async recordDecision(record: Record<string, unknown>): Promise<void> {
+    if (!this.artifactDirectory) return;
+    await fs.mkdir(this.artifactDirectory, { recursive: true });
+    const findingId = String(record.findingId ?? 'unknown').replaceAll(/[^a-zA-Z0-9_.-]/g, '_');
+    const filePath = path.join(
+      this.artifactDirectory,
+      `${new Date().toISOString().replaceAll(/[:.]/g, '-')}-${findingId}.json`,
+    );
+    await writeFileAtomic(filePath, `${JSON.stringify(record, null, 2)}\n`);
+  }
 
-    // Reset working tree first to avoid conflicts
-    await gitExec('git checkout -- .', this.projectRoot);
+  async revertPatch(diff: string): Promise<void> {
+    const check = await gitExec(['apply', '--reverse', '--check', '-'], this.projectRoot, diff);
+    if (check.exitCode !== 0) {
+      throw new Error(`Patch rollback check failed: ${check.stderr}`);
+    }
 
-    const result = await gitExec(`git stash pop ${stashRef}`, this.projectRoot);
+    const result = await gitExec(['apply', '--reverse', '-'], this.projectRoot, diff);
     if (result.exitCode !== 0) {
-      throw new Error(`git stash pop failed: ${result.stderr}`);
+      throw new Error(`Patch rollback failed: ${result.stderr}`);
     }
   }
 
   /**
    * Run tests via the TestRunner (twin-container execution).
    */
-  async runTests(): Promise<TestResult> {
-    return this.testRunner.run();
+  async runTests(signal?: AbortSignal): Promise<TestResult> {
+    return this.testRunner.run(signal);
   }
 
-  // ===========================================================================
-  // Private
-  // ===========================================================================
+  /**
+   * Validate without mutating the host tree. The patch exists only inside the
+   * disposable test workspace and the returned token is bound to this exact
+   * diff and the current preimages of every affected file.
+   */
+  async validatePatch(
+    findingId: string,
+    patchDiff: string,
+    signal?: AbortSignal,
+  ): Promise<PatchValidation> {
+    const touchedPaths = this.parseTouchedPaths(patchDiff);
+    const validation: PatchValidation = {
+      findingId,
+      patchHash: hashText(patchDiff),
+      sourceFingerprint: await this.fingerprintPaths(touchedPaths),
+      testResult: await this.testRunner.runWithPatch(patchDiff, signal),
+      token: crypto.randomUUID(),
+    };
+    if (validation.testResult.passed && !validation.testResult.degraded) {
+      this.validations.set(validation.token, validation);
+    }
 
-  private shellEscape(str: string): string {
-    return `'${str.replaceAll("'", String.raw`'\''`)}'`;
+    return validation;
+  }
+
+  private async fingerprintPaths(relativePaths: string[]): Promise<string> {
+    const hash = crypto.createHash('sha256');
+    const rootRealPath = await fs.realpath(this.projectRoot);
+
+    for (const relativePath of [...relativePaths].sort()) {
+      hash.update(relativePath);
+      const absolutePath = path.join(this.projectRoot, relativePath);
+      const existingParent = await findExistingAncestor(path.dirname(absolutePath));
+      const parentRealPath = await fs.realpath(existingParent);
+      const parentRelative = path.relative(rootRealPath, parentRealPath);
+      if (parentRelative.startsWith('..') || path.isAbsolute(parentRelative)) {
+        throw new Error(`Patch path resolves outside the project root: ${relativePath}`);
+      }
+
+      try {
+        const stat = await fs.lstat(absolutePath);
+        if (stat.isSymbolicLink()) {
+          throw new Error(`Patch cannot modify a symbolic link: ${relativePath}`);
+        }
+
+        hash.update(await fs.readFile(absolutePath));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        hash.update('<missing>');
+      }
+    }
+
+    return hash.digest('hex');
+  }
+
+  private parseTouchedPaths(diff: string): string[] {
+    const paths = [...diff.matchAll(/^diff --git a\/(.+?) b\/(.+)$/gm)]
+      .flatMap((match) => [match[1], match[2]])
+      .filter((value): value is string => Boolean(value) && value !== '/dev/null');
+    if (paths.length === 0) throw new Error('Patch must contain at least one git unified-diff file header.');
+
+    const normalized = new Set<string>();
+    for (const candidate of paths) {
+      if (
+        path.isAbsolute(candidate) ||
+        candidate.includes('\\') ||
+        candidate.split('/').includes('..') ||
+        candidate.includes('\0') ||
+        ['.git', '.shadow-auditor', 'node_modules'].includes(candidate.split('/')[0] ?? '')
+      ) {
+        throw new Error(`Patch contains an unsafe path: ${candidate}`);
+      }
+
+      const resolved = path.resolve(this.projectRoot, candidate);
+      const relative = path.relative(this.projectRoot, resolved);
+      if (relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new Error(`Patch path escapes the project root: ${candidate}`);
+      }
+
+      normalized.add(relative);
+    }
+
+    return [...normalized];
+  }
+}
+
+function hashText(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+async function findExistingAncestor(candidate: string): Promise<string> {
+  let current = candidate;
+
+  while (true) {
+    try {
+      await fs.lstat(current);
+      return current;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const parent = path.dirname(current);
+      if (parent === current) throw error;
+      current = parent;
+    }
   }
 }

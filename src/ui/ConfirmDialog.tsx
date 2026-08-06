@@ -1,4 +1,4 @@
-import { Box, Text, Input } from "../opentui/components.js";
+import React, { useEffect, useState } from 'react';
 /**
  * Confirmation dialog — OpenTUI interactive elements.
  *
@@ -10,11 +10,11 @@ import { Box, Text, Input } from "../opentui/components.js";
  * when active), fixing the Yoga sibling-stacking layout issue.
  */
 
-import React, { useEffect, useState } from 'react';
-
 import { debugLog } from '../utils/debug-logger.js';
 import { useAgentSessionRef } from './AgentSessionContext.js';
 import { OptionList } from './components/OptionList.js';
+import { createThrottledStream } from './hooks/useAgentSubmit.js';
+import { Box, Input, Text } from "./primitives.js";
 import { useAppStore } from './store/appStore.js';
 import { colors } from './theme/chalkTheme.js';
 
@@ -25,9 +25,7 @@ export const ConfirmDialog: React.FC = () => {
   const setHumanInputRequest = useAppStore((state) => state.setHumanInputRequest);
   const addUserMessage = useAppStore((state) => state.addUserMessage);
   const startStreaming = useAppStore((state) => state.startStreaming);
-  const appendStreamChunk = useAppStore((state) => state.appendStreamChunk);
   const finishStreaming = useAppStore((state) => state.finishStreaming);
-  const addActivityEvent = useAppStore((state) => state.addActivityEvent);
   const addErrorMessage = useAppStore((state) => state.addErrorMessage);
   const agentSessionRef = useAgentSessionRef();
 
@@ -36,10 +34,10 @@ export const ConfirmDialog: React.FC = () => {
 
   // Reset question input whenever a new human-input request arrives.
   useEffect(() => {
-    if (humanInputRequest?.type === 'question') {
+    if (humanInputRequest?.type === 'question' || confirmation.kind === 'text') {
       setQuestionInput('');
     }
-  }, [humanInputRequest]);
+  }, [confirmation.kind, humanInputRequest]);
 
   // ── LangGraph interrupt-driven confirmation ────────────────────────
   if (humanInputRequest && humanInputRequest.type === 'confirmation') {
@@ -49,22 +47,27 @@ export const ConfirmDialog: React.FC = () => {
     ];
 
     const handleSelect = async (value: string) => {
+      const request = humanInputRequest;
       const approved = value === 'yes';
       const answerText = approved ? 'Yes, approve' : 'No, deny';
 
       addUserMessage(answerText);
       setHumanInputRequest(null);
       startStreaming();
+      const stream = createThrottledStream();
 
       try {
-        await agentSessionRef.current?.resumeWithHumanInput(
+        const finalAnswer = await agentSessionRef.current?.resumeWithHumanInput(
           approved,
-          (chunk: string) => { appendStreamChunk(chunk); },
-          (event) => { addActivityEvent(event); },
+          stream.onChunk,
+          stream.onEvent,
         );
-        finishStreaming();
+        stream.finish();
+        finishStreaming(finalAnswer);
       } catch (error) {
+        stream.finish();
         debugLog(`[ConfirmDialog] Resume failed: ${error}`);
+        setHumanInputRequest(request);
         addErrorMessage(`Error: ${(error as Error).message}`);
         finishStreaming();
       }
@@ -74,9 +77,9 @@ export const ConfirmDialog: React.FC = () => {
       <Box
         alignItems="center"
         flexDirection="column"
-        width="100%"
         height="100%"
         justifyContent="center"
+        width="100%"
       >
         <Box
           borderColor={colors.warning} borderStyle={'rounded'}
@@ -84,7 +87,7 @@ export const ConfirmDialog: React.FC = () => {
           padding={1}
         >
           <Box marginBottom={1}>
-            <Text color={colors.warning} bold>
+            <Text bold color={colors.warning}>
               {humanInputRequest.question}
             </Text>
           </Box>
@@ -100,10 +103,10 @@ export const ConfirmDialog: React.FC = () => {
             </Box>
           )}
           <OptionList
-            options={options}
-            onSelect={handleSelect}
-            onCancel={() => handleSelect('no')}
             focused={true}
+            onCancel={() => handleSelect('no')}
+            onSelect={handleSelect}
+            options={options}
           />
         </Box>
       </Box>
@@ -113,6 +116,7 @@ export const ConfirmDialog: React.FC = () => {
   // ── LangGraph interrupt-driven question (type your answer) ─────────
   if (humanInputRequest && humanInputRequest.type === 'question') {
     const handleQuestionSubmit = async (answer: string) => {
+      const request = humanInputRequest;
       const trimmed = answer.trim();
       if (!trimmed) return;
 
@@ -120,16 +124,20 @@ export const ConfirmDialog: React.FC = () => {
       addUserMessage(trimmed);
       setHumanInputRequest(null);
       startStreaming();
+      const stream = createThrottledStream();
 
       try {
-        await agentSessionRef.current?.resumeWithHumanInput(
+        const finalAnswer = await agentSessionRef.current?.resumeWithHumanInput(
           trimmed,
-          (chunk: string) => { appendStreamChunk(chunk); },
-          (event) => { addActivityEvent(event); },
+          stream.onChunk,
+          stream.onEvent,
         );
-        finishStreaming();
+        stream.finish();
+        finishStreaming(finalAnswer);
       } catch (error) {
+        stream.finish();
         debugLog(`[ConfirmDialog] Question resume failed: ${error}`);
+        setHumanInputRequest(request);
         addErrorMessage(`Error: ${(error as Error).message}`);
         finishStreaming();
       }
@@ -139,9 +147,9 @@ export const ConfirmDialog: React.FC = () => {
       <Box
         alignItems="center"
         flexDirection="column"
-        width="100%"
         height="100%"
         justifyContent="center"
+        width="100%"
       >
         <Box
           borderColor={colors.info} borderStyle={'rounded'}
@@ -149,7 +157,7 @@ export const ConfirmDialog: React.FC = () => {
           padding={1}
         >
           <Box marginBottom={1}>
-            <Text color={colors.info} bold>
+            <Text bold color={colors.info}>
               {humanInputRequest.question}
             </Text>
           </Box>
@@ -164,12 +172,12 @@ export const ConfirmDialog: React.FC = () => {
             Type your answer below and press Enter.
           </Text>
           <Box marginTop={1}>
-            <Text color={colors.brand} bold>❯ </Text>
+            <Text bold color={colors.brand}>❯ </Text>
             <Input
-              value={questionInput}
               onChange={(v: string) => setQuestionInput(v)}
               onSubmit={handleQuestionSubmit}
               placeholder="Type your answer..."
+              value={questionInput}
             />
           </Box>
         </Box>
@@ -186,9 +194,9 @@ export const ConfirmDialog: React.FC = () => {
         <Box
           alignItems="center"
           flexDirection="column"
-          width="100%"
           height="100%"
           justifyContent="center"
+          width="100%"
         >
           <Box
             borderColor={colors.warning} borderStyle={'rounded'}
@@ -196,7 +204,7 @@ export const ConfirmDialog: React.FC = () => {
             padding={1}
           >
             <Box marginBottom={1}>
-              <Text color={colors.warning} bold>
+              <Text bold color={colors.warning}>
                 {humanInputRequest.question || 'Input required'}
               </Text>
             </Box>
@@ -207,26 +215,58 @@ export const ConfirmDialog: React.FC = () => {
         </Box>
       );
     }
+
     return null;
   }
 
-  const options = [
+  if (confirmation.kind === 'text') {
+    const handleSubmit = (value: string) => {
+      const trimmed = value.trim();
+      if (!trimmed) return;
+      const onSubmit = confirmation.onSelect;
+      closeConfirmation();
+      onSubmit?.(trimmed);
+    };
+
+    return (
+      <Box alignItems="center" flexDirection="column" height="100%" justifyContent="center" width="100%">
+        <Box borderColor={colors.info} borderStyle={'rounded'} flexDirection="column" padding={1}>
+          <Text bold color={colors.info}>{confirmation.title}</Text>
+          <Box marginTop={1}><Text>{confirmation.message}</Text></Box>
+          <Box marginTop={1}>
+            <Text bold color={colors.brand}>❯ </Text>
+            <Input
+              onChange={(value: string) => setQuestionInput(value)}
+              onSubmit={handleSubmit}
+              placeholder={confirmation.placeholder ?? 'Type your answer...'}
+              value={questionInput}
+            />
+          </Box>
+        </Box>
+      </Box>
+    );
+  }
+
+  const options = confirmation.options ?? [
     { label: 'Yes, approve', value: 'yes' },
     { label: 'No, deny', value: 'no' },
   ];
 
   const handleSelect = (value: string) => {
-    confirmation.onConfirm(value === 'yes');
+    const onSelect = confirmation.onSelect;
+    const onConfirm = confirmation.onConfirm;
     closeConfirmation();
+    if (onSelect) onSelect(value);
+    else onConfirm(value === 'yes');
   };
 
   return (
     <Box
       alignItems="center"
       flexDirection="column"
-      width="100%"
       height="100%"
       justifyContent="center"
+      width="100%"
     >
       <Box
         borderColor={colors.warning} borderStyle={'rounded'}
@@ -234,14 +274,14 @@ export const ConfirmDialog: React.FC = () => {
         padding={1}
       >
         <Box marginBottom={1}>
-          <Text color={colors.warning} bold>
+          <Text bold color={colors.warning}>
             {confirmation.title}
           </Text>
         </Box>
         <Box marginBottom={1}>
           <Text>{confirmation.message}</Text>
         </Box>
-        {confirmation.details && (
+        {confirmation.details && confirmation.kind !== 'patch' && (
           <Box
             borderColor={colors.dim} borderStyle={'single'}
             marginBottom={1}
@@ -252,11 +292,32 @@ export const ConfirmDialog: React.FC = () => {
             </Text>
           </Box>
         )}
+        {confirmation.details && confirmation.kind === 'patch' && (
+          <Box borderColor={colors.dim} borderStyle={'single'} flexDirection="column" marginBottom={1} padding={1}>
+            {confirmation.details.split('\n').slice(0, 80).map((line, index) => (
+              <Text
+                color={line.startsWith('+') && !line.startsWith('+++')
+                  ? colors.success
+                  : line.startsWith('-') && !line.startsWith('---')
+                    ? colors.error
+                    : line.startsWith('@@')
+                      ? colors.info
+                      : colors.muted}
+                key={`${index}-${line}`}
+              >
+                {line || ' '}
+              </Text>
+            ))}
+            {confirmation.details.split('\n').length > 80 && (
+              <Text color={colors.muted}>… diff truncated in terminal preview</Text>
+            )}
+          </Box>
+        )}
         <OptionList
-          options={options}
-          onSelect={handleSelect}
-          onCancel={() => handleSelect('no')}
           focused={true}
+          onCancel={() => handleSelect('no')}
+          onSelect={handleSelect}
+          options={options}
         />
       </Box>
     </Box>

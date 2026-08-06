@@ -1,4 +1,4 @@
-import { Box, Text, Input } from "../../opentui/components.js";
+import React, { useCallback, useRef, useState } from 'react';
 /**
  * OptionList — reusable interactive selection list.
  *
@@ -7,28 +7,34 @@ import { Box, Text, Input } from "../../opentui/components.js";
  * Enter to confirm selection, Esc to cancel (selects first option).
  */
 
-import React, { useCallback, useRef, useState } from 'react';
-
+import { Box, type KeyEvent, Text, useKeyHandler } from "../primitives.js";
 import { colors } from '../theme/chalkTheme.js';
 
 interface OptionListProps {
-  /** The selectable options */
-  options: Array<{ label: string; value: string }>;
-  /** Called with the selected value on Enter */
-  onSelect: (value: string) => void;
-  /** Called when the user presses Escape to cancel. If omitted, Escape is a no-op. */
-  onCancel?: () => void;
   /** Whether the list should respond to keyboard events */
   focused?: boolean;
+  /** Controlled highlight index (external keyboard handling). Falls back to internal state if omitted. */
+  highlightedIndex?: number;
+  /** Called when the user presses Escape to cancel. If omitted, Escape is a no-op. */
+  onCancel?: () => void;
+  /** Called with the selected value on Enter */
+  onSelect: (value: string) => void;
+  /** The selectable options */
+  options: Array<{ label: string; value: string }>;
+  /** Optional single-key shortcuts mapped to option values. */
+  shortcuts?: Readonly<Record<string, string>>;
 }
 
 export const OptionList: React.FC<OptionListProps> = ({
-  options,
-  onSelect,
-  onCancel,
   focused = true,
+  highlightedIndex,
+  onCancel,
+  onSelect,
+  options,
+  shortcuts,
 }) => {
-  const [highlighted, setHighlighted] = useState(0);
+  const [internalHighlighted, setInternalHighlighted] = useState(0);
+  const highlighted = highlightedIndex ?? internalHighlighted;
 
   // Stable refs so the key handler callback never changes due to prop identity.
   const optionsRef = useRef(options);
@@ -37,40 +43,60 @@ export const OptionList: React.FC<OptionListProps> = ({
   onSelectRef.current = onSelect;
   const onCancelRef = useRef(onCancel);
   onCancelRef.current = onCancel;
+  const shortcutsRef = useRef(shortcuts);
+  shortcutsRef.current = shortcuts;
 
   const handleKey = useCallback(
-    (evt: React.KeyboardEvent) => {
+    (evt: KeyEvent) => {
       if (!focused) return;
       const opts = optionsRef.current;
+      const shortcutValue = shortcutsRef.current?.[evt.key.toLowerCase()];
+      if (shortcutValue !== undefined) {
+        onSelectRef.current(shortcutValue);
+        return;
+      }
+
       switch (evt.key) {
         case 'ArrowDown':
-        case 'j':
-          setHighlighted((p) => Math.min(p + 1, opts.length - 1));
+        case 'j': {
+          setInternalHighlighted((p) => Math.min(p + 1, opts.length - 1));
           break;
+        }
+
         case 'ArrowUp':
-        case 'k':
-          setHighlighted((p) => Math.max(p - 1, 0));
+        case 'k': {
+          setInternalHighlighted((p) => Math.max(p - 1, 0));
           break;
-        case 'Enter':
+        }
+
+        case 'Enter': {
           onSelectRef.current(opts[highlighted]!.value);
           break;
-        case 'Escape':
+        }
+
+        case 'Escape': {
           onCancelRef.current?.();
           break;
+        }
       }
     },
     [focused, highlighted],
   );
 
+  // Only handle keys when uncontrolled; when a parent supplies
+  // `highlightedIndex` (e.g. SetupScreen) it drives navigation itself.
+  const controlled = highlightedIndex !== undefined;
+  useKeyHandler(handleKey, focused && !controlled);
+
   return (
-    <Box flexDirection="column" onKeyDown={handleKey}>
+    <Box flexDirection="column">
       {options.map((opt, i) => {
         const isHL = focused && i === highlighted;
         return (
           <Text
-            key={opt.value}
-            color={isHL ? colors.focusBorder : colors.muted}
             bold={isHL}
+            color={isHL ? colors.focusBorder : colors.muted}
+            key={opt.value}
           >
             {isHL ? '❯ ' : '  '}
             {opt.label}

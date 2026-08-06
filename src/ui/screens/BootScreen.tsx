@@ -1,15 +1,15 @@
-import { Box, Text, Input } from "../../opentui/components.js";
+import React, { useEffect, useRef, useState } from 'react';
 /**
  * BootScreen — onboarding banner with name entry.
  *
  * Interactive `<Input>` replaces ink-text-input.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-
+import { Box, Input, Text } from "../primitives.js";
 import { useAppStore } from '../store/appStore.js';
 import { colors } from '../theme/chalkTheme.js';
 
+/* eslint-disable no-useless-escape */
 const BANNER = `
    _____ __               __              ___                   __  __           __
   / ___// /_  ____ _____ / /      ____   /   |  __  __ ____/ // /_/ /_  _____/ /
@@ -17,6 +17,7 @@ const BANNER = `
  ___/ / / / / /_/ / /_/ /| |/ |/ /_/ // ___ |/ /_/ // /_/ // /_/ /_/ / /  /  __/
 /____/_/ /_/\\__,_/\\____/ |__/|__/\\____//_/  |_|\__,_/ \\__,_/ \\__/\\__,_/_/   \\___/
 `;
+/* eslint-enable no-useless-escape */
 
 interface BootScreenProps {
   onBootComplete?: () => void;
@@ -28,7 +29,7 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onBootComplete }) => {
   const [phase, setPhase] = useState<'banner' | 'greeting' | 'name'>('banner');
   const [name, setName] = useState('');
   const mountedRef = useRef(true);
-  const greetingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const greetingTimerRef = useRef<null | ReturnType<typeof setTimeout>>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -71,16 +72,16 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onBootComplete }) => {
             Can Shadow know what's your name or how to call you?
           </Text>
           <Input
-            value={name}
             onChange={(v: string) => setName(v)}
             onSubmit={handleNameSubmit}
             placeholder="Enter your name..."
+            value={name}
           />
         </Box>
       )}
 
       {phase === 'greeting' && (
-        <Text color={colors.success} bold>
+        <Text bold color={colors.success}>
           Greetings, {name}. I am Shadow, your autonomous security companion.
         </Text>
       )}

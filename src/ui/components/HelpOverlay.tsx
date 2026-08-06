@@ -1,4 +1,4 @@
-import { Box, Text, Input } from "../../opentui/components.js";
+import React from 'react';
 /**
  * HelpOverlay — full keybinding reference.
  *
@@ -6,13 +6,11 @@ import { Box, Text, Input } from "../../opentui/components.js";
  * `?` toggles it open, `Esc` closes.
  */
 
-import React from 'react';
-
 import { helpKeybinds } from '../keybinds.js';
+import { Box, Text } from "../primitives.js";
 import { colors, labels, spacing } from '../theme/chalkTheme.js';
 
-export const HelpOverlay: React.FC = () => {
-  return (
+export const HelpOverlay: React.FC = () => (
     <Box
       borderColor={colors.focusBorder} borderStyle={'double'}
       flexDirection="column"
@@ -20,12 +18,12 @@ export const HelpOverlay: React.FC = () => {
       paddingX={spacing.panelPadX}
       paddingY={spacing.panelPadY}
     >
-      <Text color={colors.brand} bold>
+      <Text bold color={colors.brand}>
         {labels.appName} — Keybindings
       </Text>
       {helpKeybinds.map((kb) => (
         <Box gap={2} key={`${kb.keys}-${kb.desc}`}>
-          <Text color={colors.bright} bold>
+          <Text bold color={colors.bright}>
             {kb.keys.padEnd(32)}
           </Text>
           <Text color={colors.muted}>{kb.desc}</Text>
@@ -34,4 +32,3 @@ export const HelpOverlay: React.FC = () => {
       <Text color={colors.dim}>Press ? or Esc to close.</Text>
     </Box>
   );
-};

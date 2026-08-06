@@ -1,13 +1,22 @@
-import { Command, Flags } from '@oclif/core';
-import { createCliRenderer } from '@opentui/core';
-import { createRoot } from '@opentui/react';
+import { Args, Command, Flags } from '@oclif/core';
+import { render } from 'ink';
 import React from 'react';
 
+import { runCiAudit } from '../core/ci-runner.js';
 import App from '../ui/App.js';
+import { buildEffectiveConfig } from '../ui/effective-config.js';
+import { disposeActiveAgentSessions } from '../ui/hooks/useAgentSession.js';
+import { configureShutdown, requestShutdown } from '../ui/shutdown.js';
 import { loadConfig, registerSecretStoreAdapter } from '../utils/config.js';
 import { KeychainAdapter } from '../utils/keychain.js';
 
 export default class Shell extends Command {
+  static override args = {
+    target: Args.string({
+      description: 'Repository directory to audit (equivalent to --target)',
+      required: false,
+    }),
+  };
   static override description = 'Shadow Auditor — Autonomous AI-Powered SAST Interactive Shell';
   static override examples = [
     '<%= config.bin %>',
@@ -16,22 +25,20 @@ export default class Shell extends Command {
     '<%= config.bin %> --ci --fail-on high',
     '<%= config.bin %> --since HEAD~5',
     '<%= config.bin %> --swarm',
+    '<%= config.bin %> --watch',
   ];
   static override flags = {
     ci: Flags.boolean({
-      default: false,
       description: 'Enable CI mode: produce deterministic machine outputs and exit non-zero on severity threshold',
     }),
     diff: Flags.boolean({
-      default: false,
       description: 'Incremental scan: scope analysis to files changed since --since ref (default: HEAD~1)',
     }),
-    expertUnsafe: Flags.boolean({
+    'expert-unsafe': Flags.boolean({
       default: false,
       description: 'Permit broader command and MCP tool execution surface with explicit warnings',
     }),
     'fail-on': Flags.option({
-      default: 'high' as const,
       description: 'Minimum severity that causes a non-zero exit in CI mode',
       options: ['critical', 'high', 'medium', 'low', 'none'] as const,
     })(),
@@ -39,32 +46,47 @@ export default class Shell extends Command {
       description: 'Audit mode controlling depth, tool budget, and report style',
       options: ['triage', 'deep-sast', 'full-report', 'patch-only', 'balanced', 'deep', 'quick'] as const,
     })(),
+    prompt: Flags.string({
+      description: 'CI audit mission, or the answer to pending human input when used with --resume-run',
+    }),
     reconfigure: Flags.boolean({
       char: 'r',
       default: false,
       description: 'Force the configuration wizard to run again',
     }),
+    'resume-run': Flags.string({
+      description: 'Reopen an existing run ID and resume its persisted LangGraph checkpoints',
+    }),
     since: Flags.string({
       description: 'Git ref for incremental scan base (used with --diff). Defaults to HEAD~1.',
     }),
     swarm: Flags.boolean({
-      default: false,
       description: 'Enable multi-agent swarm mode for parallel security analysis',
+    }),
+    target: Flags.string({
+      description: 'Target repository path (defaults to the current directory in CI mode)',
+    }),
+    watch: Flags.boolean({
+      description: 'Monitor source changes and run debounced incremental security audits',
     }),
   };
 
   async run(): Promise<void> {
-    const { flags } = await this.parse(Shell);
+    const { args, flags } = await this.parse(Shell);
 
     // ── Production error handlers ───────────────────────────────────
     process.on('unhandledRejection', (reason) => {
       process.stderr.write(`[ShadowAuditor] FATAL: Unhandled rejection: ${reason}\n`);
-      process.exit(1);
+      requestShutdown(1).catch((error: unknown) => {
+        process.stderr.write(`[ShadowAuditor] Shutdown failed: ${String(error)}\n`);
+      });
     });
     process.on('uncaughtException', (error) => {
       process.stderr.write(`[ShadowAuditor] FATAL: Uncaught exception: ${error.message}\n`);
       if (error.stack) process.stderr.write(`${error.stack}\n`);
-      process.exit(1);
+      requestShutdown(1).catch((shutdownError: unknown) => {
+        process.stderr.write(`[ShadowAuditor] Shutdown failed: ${String(shutdownError)}\n`);
+      });
     });
 
     registerSecretStoreAdapter(new KeychainAdapter());
@@ -74,49 +96,108 @@ export default class Shell extends Command {
       config = await loadConfig();
     }
 
-    // ── Graceful shutdown handlers ──────────────────────────────────
-    let shuttingDown = false;
-    const gracefulShutdown = async (signal: string) => {
-      if (shuttingDown) return;
-      shuttingDown = true;
-      process.stderr.write(`\n[ShadowAuditor] Received ${signal}, shutting down...\n`);
-      // Allow OpenTUI renderer to restore terminal state before exiting.
-      try {
-        renderer.destroy();
-      } catch {
-        // Best-effort cleanup.
+    const ciEnabled = Boolean(flags.ci || config?.ci?.enabled);
+    const diffEnabled = Boolean(flags.diff || config?.diff?.enabled);
+    const diffBase = flags.since ?? config?.diff?.baseRef;
+    const expertUnsafe = Boolean(flags['expert-unsafe'] || config?.expertUnsafe);
+    const failOn = flags['fail-on'] ?? config?.ci?.failOn ?? 'high';
+    const targetPath = args.target ?? flags.target ?? '.';
+
+    if (ciEnabled) {
+      if (!config) {
+        this.log(JSON.stringify({
+          error: 'CI mode requires an existing configuration. Run the interactive setup first.',
+          exit: { code: 2 },
+        }));
+        process.exitCode = 2;
+        return;
       }
-      process.exit(signal === 'SIGTERM' ? 143 : 0);
+
+      const effectiveConfig = buildEffectiveConfig(config, {
+        ciEnabled: true,
+        diffBase,
+        diffEnabled,
+        failOn,
+        mode: flags.mode,
+        swarmEnabled: flags.swarm,
+      });
+      try {
+        const result = await runCiAudit({
+          config: effectiveConfig,
+          diffBase,
+          diffEnabled,
+          expertUnsafe,
+          failOn,
+          prompt: flags.prompt,
+          resumeRunId: flags['resume-run'],
+          targetPath,
+        });
+        this.log(JSON.stringify(result));
+        process.exitCode = result.exit.code;
+      } catch (error) {
+        this.log(JSON.stringify({
+          error: error instanceof Error ? error.message : String(error),
+          exit: { code: 2 },
+        }));
+        process.exitCode = 2;
+      }
+
+      return;
+    }
+
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      this.error(
+        'Interactive mode requires a TTY. Re-run with --ci for non-interactive execution.',
+        { exit: 2 },
+      );
+    }
+
+    // ── Graceful shutdown handlers ──────────────────────────────────
+    // ── Ink render ──────────────────────────────────────────────────
+    // Clear the screen so Ink's first frame anchors at the top row; combined
+    // with the terminal-height root clamp this prevents ghost/duplicate frames.
+    if (process.stdout.isTTY) process.stdout.write('\u001B[2J\u001B[H');
+    const instance = render(
+      <App
+        ciEnabled={flags.ci}
+        config={config}
+        diffEnabled={diffEnabled}
+        expertUnsafe={expertUnsafe}
+        failOn={failOn}
+        initialTarget={args.target ?? flags.target}
+        mode={flags.mode}
+        needsSetup={!config || flags.reconfigure}
+        resumeRunId={flags['resume-run']}
+        since={flags.since}
+        swarmEnabled={flags.swarm}
+        watchEnabled={flags.watch}
+      />,
+      {
+        // ShellScreen owns Ctrl+C so the first press can cancel an active
+        // operation without Ink unmounting App and disposing the session.
+        exitOnCtrlC: false,
+      },
+    );
+
+    const gracefulShutdown = async (signal: string) => {
+      process.stderr.write(`\n[ShadowAuditor] Received ${signal}, shutting down...\n`);
+      await requestShutdown(signal === 'SIGTERM' ? 143 : 0);
     };
+
+    configureShutdown(async (exitCode) => {
+      try {
+        await disposeActiveAgentSessions();
+      } finally {
+        instance.unmount();
+        process.exitCode = exitCode;
+      }
+    });
 
     process.on('SIGINT', () => gracefulShutdown('SIGINT'));
     process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
-    // ── OpenTUI renderer replaces Ink's render() ────────────────────
-    const renderer = await createCliRenderer();
-    const root = createRoot(renderer);
-    root.render(
-      <App
-        ciEnabled={flags.ci}
-        config={config}
-        diffEnabled={flags.diff}
-        expertUnsafe={flags.expertUnsafe}
-        failOn={flags['fail-on']}
-        mode={flags.mode}
-        needsSetup={!config || flags.reconfigure}
-        since={flags.since}
-      />,
-    );
-
-    // Keep the process alive — OpenTUI manages its own event loop.
-    // The renderer's destroy event signals when the renderer has shut down.
-    // Also handle uncaught errors from the renderer's event emitter.
-    await new Promise<void>((resolve) => {
-      renderer.on('destroy', () => resolve());
-      renderer.on('error', (err: Error) => {
-        process.stderr.write(`[ShadowAuditor] Renderer error: ${err.message}\n`);
-        resolve();
-      });
-    });
+    // Keep the process alive until Ink unmounts (quit, Ctrl-C, or the app
+    // calling exit). waitUntilExit resolves once the tree is unmounted.
+    await instance.waitUntilExit();
   }
 }

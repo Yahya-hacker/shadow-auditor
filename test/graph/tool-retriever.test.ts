@@ -50,4 +50,20 @@ describe('ToolRetriever', () => {
     expect(selected).to.have.lengthOf(2);
     expect(selected.map((t) => t.name)).to.include('read_file');
   });
+
+  it('keeps lifecycle tools without exceeding topK', async () => {
+    const lifecycleTools = [
+      ...tools,
+      {...tools[0]!, name: 'context_retrieval'},
+      {...tools[0]!, name: 'finish_task'},
+    ];
+    const retriever = new ToolRetriever(lifecycleTools, {topK: 2});
+
+    const selected = await retriever.retrieve([]);
+
+    expect(selected.map((tool) => tool.name)).to.deep.equal([
+      'finish_task',
+      'context_retrieval',
+    ]);
+  });
 });

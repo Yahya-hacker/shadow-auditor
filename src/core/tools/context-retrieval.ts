@@ -25,9 +25,9 @@ export interface ContextRetrievalToolOptions {
 function formatResult(
   result: {
     filePath: string;
-    lineRange?: { start: number; end: number };
-    text: string;
+    lineRange?: { end: number; start: number; };
     matchDescription: string;
+    text: string;
   },
   rootPath: string,
   index: number,
@@ -66,25 +66,31 @@ export function createContextRetrievalTool(options: ContextRetrievalToolOptions)
       '- { query: "crypto.randomBytes or Math.random for token generation", strategy: "semantic" }\n' +
       'CHAIN: After context_retrieval finds relevant chunks, use read_file_content with startLine/endLine to see full surrounding context.\n' +
       'TIP: Be specific. "JWT verification without signature validation" is better than "auth bug".',
-    async execute({
-      fileFilter,
-      maxResults,
-      query,
-      strategy,
-    }: {
-      fileFilter?: string;
-      maxResults?: number;
-      query: string;
-      strategy?: string;
-    }) {
+    async execute(
+      {
+        fileFilter,
+        maxResults,
+        query,
+        strategy,
+      }: {
+        fileFilter?: string;
+        maxResults?: number;
+        query: string;
+        strategy?: string;
+      },
+      executionOptions?: { abortSignal?: AbortSignal },
+    ) {
       try {
-        const strategies = strategy
-          ? [strategy as RetrievalStrategy]
-          : undefined;
+        const strategies: RetrievalStrategy[] | undefined = strategy === 'hybrid'
+          ? ['semantic', 'lexical', 'graph', 'community']
+          : strategy
+            ? [strategy as RetrievalStrategy]
+            : undefined;
 
         const results = await retriever.search(query, {
           fileFilter,
           maxResults: maxResults ?? 10,
+          signal: executionOptions?.abortSignal,
           strategies,
         });
 
@@ -114,6 +120,7 @@ export function createContextRetrievalTool(options: ContextRetrievalToolOptions)
 
         return [...header, ...formatted, ...chainingHint].join('\n');
       } catch (error) {
+        if (executionOptions?.abortSignal?.aborted) throw error;
         return `[ERROR] Context retrieval failed: ${(error as Error).message}`;
       }
     },

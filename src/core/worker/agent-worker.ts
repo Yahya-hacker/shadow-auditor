@@ -1,153 +1,107 @@
-/**
- * Agent Worker — runs AgentSession in a Node.js Worker thread.
- *
- * The main thread (Ink TUI) communicates with this worker via postMessage.
- * This keeps LangGraph's CPU-intensive work (parsing, graph computation,
- * streaming) off the main thread, so the TUI remains responsive to
- * keystrokes even during heavy analysis.
- *
- * Protocol:
- *   Main → Worker:
- *     { type: 'init', config, targetPath, options }
- *     { type: 'send', message }
- *     { type: 'resume', answer }
- *     { type: 'shutdown' }
- *
- *   Worker → Main:
- *     { type: 'ready' }
- *     { type: 'chunk', text }
- *     { type: 'event', event }
- *     { type: 'done', result }
- *     { type: 'human_input_required', request }
- *     { type: 'error', message }
- *     { type: 'warning', message }
- */
+/** Request-correlated worker host for AgentSession. */
 
-import { isMainThread, parentPort, workerData } from 'node:worker_threads';
+import { isMainThread, parentPort } from 'node:worker_threads';
 
 import type { ShadowConfig } from '../../utils/config.js';
-import type { AgentStreamEvent } from '../agent.js';
+import type { AgentSessionOptions, AgentStreamEvent } from '../agent.js';
 
 import { AgentSession } from '../agent.js';
 
-// Only run in worker context
+const PROTOCOL_VERSION = 1;
+
+interface BaseMessage {
+  protocolVersion: number;
+  requestId: string;
+}
+
+type WorkerInMessage =
+  | (BaseMessage & { answer: boolean | string; type: 'resume' })
+  | (BaseMessage & {
+    config: ShadowConfig;
+    options: AgentSessionOptions;
+    repoMap: string;
+    targetPath: string;
+    type: 'init';
+  })
+  | (BaseMessage & { message: string; type: 'send' })
+  | (BaseMessage & { type: 'shutdown' });
+
 if (isMainThread) {
   throw new Error('agent-worker.ts must be run as a Worker, not on the main thread');
 }
 
 const port = parentPort!;
-
-interface InitMessage {
-  config: ShadowConfig;
-  options: { diffScopeHint?: string; expertUnsafe?: boolean };
-  repoMap: string;
-  targetPath: string;
-}
-
-interface CommandMessage {
-  message: string;
-  type: 'send';
-}
-
-interface ResumeMessage {
-  answer: boolean | string;
-  type: 'resume';
-}
-
-interface ShutdownMessage {
-  type: 'shutdown';
-}
-
-type WorkerInMessage =
-  | CommandMessage
-  | (InitMessage & { type: 'init' })
-  | ResumeMessage
-  | ShutdownMessage;
-
 let agent: AgentSession | null = null;
 
-port.on('message', async (msg: WorkerInMessage) => {
-  try {
-    switch (msg.type) {
-      case 'init': {
-        const { config, options, repoMap, targetPath } = msg;
-        agent = new AgentSession(config, repoMap, targetPath, options);
-        // Wait for initialization to complete via public API.
-        await agent.waitForReady();
-        port.postMessage({ type: 'ready' });
-        // Forward any runtime warnings via public getter.
-        for (const w of agent.warnings) {
-          port.postMessage({ message: w, type: 'warning' });
-        }
+function post(requestId: string, message: Record<string, unknown>): void {
+  port.postMessage({ ...message, protocolVersion: PROTOCOL_VERSION, requestId });
+}
 
+function streamCallbacks(requestId: string) {
+  return {
+    onChunk(chunk: string) {
+      post(requestId, { text: chunk, type: 'chunk' });
+    },
+    onEvent(event: AgentStreamEvent) {
+      post(requestId, { event, type: 'event' });
+      if (event.kind === 'human_input_required' && event.humanInputRequest) {
+        post(requestId, {
+          request: event.humanInputRequest,
+          type: 'human_input_required',
+        });
+      }
+    },
+  };
+}
+
+port.on('message', async (message: WorkerInMessage) => {
+  const { requestId } = message;
+  if (message.protocolVersion !== PROTOCOL_VERSION) {
+    post(requestId, {
+      message: `Unsupported worker protocol version: ${message.protocolVersion}.`,
+      type: 'error',
+    });
+    return;
+  }
+
+  try {
+    switch (message.type) {
+      case 'init': {
+        if (agent) throw new Error('Agent worker is already initialized.');
+        agent = new AgentSession(message.config, message.repoMap, message.targetPath, message.options);
+        await agent.waitForReady();
+        post(requestId, { type: 'ready' });
+        for (const warning of agent.warnings) post(requestId, { message: warning, type: 'warning' });
         break;
       }
 
       case 'resume': {
-        if (!agent) {
-          port.postMessage({ message: 'Agent not initialized', type: 'error' });
-          return;
-        }
-
-        const result = await agent.resumeWithHumanInput(
-          msg.answer,
-          (chunk: string) => {
-            port.postMessage({ text: chunk, type: 'chunk' });
-          },
-          (event: AgentStreamEvent) => {
-            port.postMessage({ event, type: 'event' });
-            if (event.kind === 'human_input_required' && event.humanInputRequest) {
-              port.postMessage({
-                request: event.humanInputRequest,
-                type: 'human_input_required',
-              });
-            }
-          },
-        );
-
-        port.postMessage({ result, type: 'done' });
+        if (!agent) throw new Error('Agent not initialized.');
+        const callbacks = streamCallbacks(requestId);
+        const result = await agent.resumeWithHumanInput(message.answer, callbacks.onChunk, callbacks.onEvent);
+        post(requestId, { result, type: 'done' });
         break;
       }
 
       case 'send': {
-        if (!agent) {
-          port.postMessage({ message: 'Agent not initialized', type: 'error' });
-          return;
-        }
-
-        const result = await agent.sendMessage(
-          msg.message,
-          // onChunk — stream text chunks back to main thread
-          (chunk: string) => {
-            port.postMessage({ text: chunk, type: 'chunk' });
-          },
-          // onEvent — stream activity events back to main thread
-          (event: AgentStreamEvent) => {
-            port.postMessage({ event, type: 'event' });
-
-            // Human input requests need special handling — the TUI must
-            // pause and show the question. The worker holds the graph
-            // state, so resume must come back as a 'resume' message.
-            if (event.kind === 'human_input_required' && event.humanInputRequest) {
-              port.postMessage({
-                request: event.humanInputRequest,
-                type: 'human_input_required',
-              });
-            }
-          },
-        );
-
-        port.postMessage({ result, type: 'done' });
+        if (!agent) throw new Error('Agent not initialized.');
+        const callbacks = streamCallbacks(requestId);
+        const result = await agent.sendMessage(message.message, callbacks.onChunk, callbacks.onEvent);
+        post(requestId, { result, type: 'done' });
         break;
       }
 
       case 'shutdown': {
+        const currentAgent = agent;
         agent = null;
-        process.exit(0);
+        await currentAgent?.dispose();
+        post(requestId, { type: 'shutting_down' });
+        port.close();
+        break;
       }
     }
   } catch (error) {
-    port.postMessage({
+    post(requestId, {
       message: error instanceof Error ? error.message : String(error),
       type: 'error',
     });

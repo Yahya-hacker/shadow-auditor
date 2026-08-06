@@ -3,7 +3,8 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
 import type { SecurityReport } from './output/report-schema.js';
-import { writeFileAtomic } from '../utils/fs-atomic.js';
+
+import { recoverAtomicWrite, writeFileAtomic } from '../utils/fs-atomic.js';
 
 /** Maximum size of a JSONL file before rotation (50 MB) */
 const MAX_JSONL_SIZE = 50 * 1024 * 1024;
@@ -33,6 +34,15 @@ export interface ToolArtifactEvent {
   timestamp: string;
   toolCallId: string;
   toolName: string;
+}
+
+export interface PipelineArtifactBundle {
+  adversarialReport: string;
+  codebaseReport: string;
+  finalReport: string;
+  repoMap: string;
+  sastReport: string;
+  verdicts: unknown[];
 }
 
 function createRunId(): string {
@@ -74,11 +84,13 @@ async function rotateJsonlFile(filePath: string): Promise<void> {
       if (i === 2) {
         await fs.rm(newPath, { force: true });
       }
+
       await fs.rename(oldPath, newPath);
     } catch {
       // Rotation file may not exist — that's fine
     }
   }
+
   await fs.rename(filePath, `${filePath}.1`);
 }
 
@@ -120,8 +132,43 @@ export class RunArtifacts {
     return instance;
   }
 
+  static async open(basePath: string, runId: string): Promise<RunArtifacts> {
+    if (path.basename(runId) !== runId || runId === '.' || runId === '..') {
+      throw new Error('Invalid run ID.');
+    }
+
+    const runDirectory = path.join(basePath, '.shadow-auditor', 'runs', runId);
+    const metaPath = path.join(runDirectory, 'session-meta.json');
+    await recoverAtomicWrite(metaPath);
+    const meta = JSON.parse(await fs.readFile(metaPath, 'utf8')) as SessionMetadata;
+    if (meta.runId !== runId) {
+      throw new Error(`Run metadata does not match requested run ID "${runId}".`);
+    }
+
+    if (path.resolve(meta.targetPath) !== path.resolve(basePath)) {
+      throw new Error(`Run "${runId}" belongs to a different target.`);
+    }
+
+    return new RunArtifacts(runDirectory, meta);
+  }
+
+  assertCompatible(expected: Pick<SessionMetadata, 'model' | 'provider'>): void {
+    if (this.meta.provider !== expected.provider || this.meta.model !== expected.model) {
+      throw new Error(
+        `Run was created for ${this.meta.provider}/${this.meta.model}; ` +
+        `resume requires the same provider and model, not ${expected.provider}/${expected.model}.`,
+      );
+    }
+  }
+
   getRunDirectory(): string {
     return this.runDirectory;
+  }
+
+  async markActive(): Promise<void> {
+    const {completedAt: _completedAt, ...activeMeta} = this.meta;
+    this.meta = activeMeta;
+    await this.writeMeta();
   }
 
   async markCompleted(): Promise<void> {
@@ -146,6 +193,19 @@ export class RunArtifacts {
       ...partial,
     };
     await this.writeMeta();
+  }
+
+  async writePipelineArtifacts(artifacts: PipelineArtifactBundle): Promise<void> {
+    const pipelineDirectory = path.join(this.runDirectory, 'pipeline');
+    await fs.mkdir(pipelineDirectory, {recursive: true});
+    await Promise.all([
+      writeFileAtomic(path.join(pipelineDirectory, 'repo-map.md'), `${artifacts.repoMap}\n`),
+      writeFileAtomic(path.join(pipelineDirectory, 'codebase-report.md'), `${artifacts.codebaseReport}\n`),
+      writeFileAtomic(path.join(pipelineDirectory, 'sast-report.md'), `${artifacts.sastReport}\n`),
+      writeFileAtomic(path.join(pipelineDirectory, 'adversarial-report.md'), `${artifacts.adversarialReport}\n`),
+      writeFileAtomic(path.join(pipelineDirectory, 'verdicts.json'), `${JSON.stringify(artifacts.verdicts, null, 2)}\n`),
+      writeFileAtomic(path.join(pipelineDirectory, 'final-report.md'), `${artifacts.finalReport}\n`),
+    ]);
   }
 
   async writeReportJson(report: SecurityReport): Promise<void> {

@@ -1,10 +1,9 @@
-import { Box, Text, Input } from "../../opentui/components.js";
+import React, { memo, useEffect, useState } from 'react';
 /**
  * MetadataPanel — scan stats and session info.
  */
 
-import React, { memo, useEffect, useState } from 'react';
-
+import { Box, Text } from "../primitives.js";
 import { useAppStore } from '../store/appStore.js';
 import { colors, layout } from '../theme/chalkTheme.js';
 
@@ -19,7 +18,10 @@ export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = fal
   const targetPath = useAppStore((s) => s.session.targetPath);
   const swarmState = useAppStore((s) => s.swarmState);
   const focusScope = useAppStore((s) => s.focusScope);
-  const hitCount = useAppStore((s) => s.hitCount);
+  const candidateCount = useAppStore((s) => s.currentVulnerabilityIds.length);
+  const verifiedCount = useAppStore((s) => s.verifiedFindingIds.length);
+  const activeStage = useAppStore((s) => s.activeAuditStage);
+  const tokenUsage = useAppStore((s) => s.tokenUsage);
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -46,8 +48,13 @@ export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = fal
   const model = config?.model ?? '—';
   const auditMode = config?.auditMode ?? '—';
   const targetLabel = targetPath
-    ? targetPath.split('/').slice(-1)[0] || targetPath
+    ? targetPath.split('/').at(-1) || targetPath
     : focusScope;
+
+  const hasTokens = tokenUsage.total > 0;
+  const tokenLabel = hasTokens
+    ? `Tokens: ${formatTokenCount(tokenUsage.total)}`
+    : null;
 
   if (compact) {
     return (
@@ -59,12 +66,22 @@ export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = fal
         <Text backgroundColor={lightBg} color={lightFg}>
           {'Status:'.padEnd(panelInnerWidth)}
         </Text>
-        <Text backgroundColor={lightBg} color={statusColor} bold>
+        <Text backgroundColor={lightBg} bold color={statusColor}>
           {statusLabel.padEnd(panelInnerWidth)}
         </Text>
         <Text backgroundColor={lightBg} color={lightFg}>
-          {`Hits: ${hitCount}`.padEnd(panelInnerWidth)}
+          {`Current: ${candidateCount}`.padEnd(panelInnerWidth)}
         </Text>
+        <Text backgroundColor={lightBg} color={colors.success}>
+          {`Verified: ${verifiedCount}`.padEnd(panelInnerWidth)}
+        </Text>
+        {hasTokens && (
+          <>
+            <Text backgroundColor={lightBg} color={colors.info}>
+              {`In: ${formatTokenCount(tokenUsage.prompt)}`.padEnd(panelInnerWidth)}
+            </Text>
+          </>
+        )}
       </Box>
     );
   }
@@ -75,7 +92,7 @@ export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = fal
       flexDirection="column"
       paddingX={1}
     >
-      <Text backgroundColor={lightBg} color={lightFg} bold>Scan</Text>
+      <Text backgroundColor={lightBg} bold color={lightFg}>Scan</Text>
       <Text backgroundColor={lightBg} color={lightFg}>
         {`${provider}/${model}`.padEnd(panelInnerWidth)}
       </Text>
@@ -88,12 +105,18 @@ export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = fal
       <Text backgroundColor={lightBg} color={lightFg}>
         {' '.repeat(panelInnerWidth)}
       </Text>
-      <Text backgroundColor={lightBg} color={lightFg} bold>Session</Text>
+      <Text backgroundColor={lightBg} bold color={lightFg}>Session</Text>
       <Text backgroundColor={lightBg} color={lightFg}>
         {`Status: ${statusLabel}`.padEnd(panelInnerWidth)}
       </Text>
       <Text backgroundColor={lightBg} color={lightFg}>
-        {`Findings: ${hitCount}`.padEnd(panelInnerWidth)}
+        {`Current: ${candidateCount}`.padEnd(panelInnerWidth)}
+      </Text>
+      <Text backgroundColor={lightBg} color={colors.success}>
+        {`Findings: ${verifiedCount}`.padEnd(panelInnerWidth)}
+      </Text>
+      <Text backgroundColor={lightBg} color={lightFg}>
+        {`Stage: ${formatStage(activeStage)}`.slice(0, panelInnerWidth).padEnd(panelInnerWidth)}
       </Text>
       <Text backgroundColor={lightBg} color={lightFg}>
         {`Time: ${elapsed.toFixed(0)}s`.padEnd(panelInnerWidth)}
@@ -101,6 +124,23 @@ export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = fal
       <Text backgroundColor={lightBg} color={lightFg}>
         {' '.repeat(panelInnerWidth)}
       </Text>
+      {hasTokens && (
+        <>
+          <Text backgroundColor={lightBg} bold color={lightFg}>Tokens</Text>
+          <Text backgroundColor={lightBg} color={lightFg}>
+            {`Prompt: ${formatTokenCount(tokenUsage.prompt)}`.padEnd(panelInnerWidth)}
+          </Text>
+          <Text backgroundColor={lightBg} color={lightFg}>
+            {`Completion: ${formatTokenCount(tokenUsage.completion)}`.padEnd(panelInnerWidth)}
+          </Text>
+          <Text backgroundColor={lightBg} color={colors.info}>
+            {`Total: ${tokenLabel!.replace('Tokens: ', '')}`.padEnd(panelInnerWidth)}
+          </Text>
+          <Text backgroundColor={lightBg} color={lightFg}>
+            {' '.repeat(panelInnerWidth)}
+          </Text>
+        </>
+      )}
       {swarmState && (
         <Text backgroundColor={lightBg} color={colors.focusBorder}>
           {`Swarm: ${swarmState.agents?.length ?? 0} agents, ${swarmState.claims ?? 0} claims`
@@ -112,3 +152,15 @@ export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = fal
 });
 
 MetadataPanel.displayName = 'MetadataPanel';
+
+/** Format token count in compact notation: 1234 → "1.2K", 1234567 → "1.2M". */
+function formatTokenCount(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}K`;
+  return String(count);
+}
+
+function formatStage(stage: null | string): string {
+  if (!stage) return '—';
+  return stage.replaceAll('_', ' ');
+}

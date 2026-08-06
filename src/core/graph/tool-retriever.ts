@@ -23,8 +23,7 @@ export interface ToolRetrieverOptions {
     embed(texts: string[]): Promise<number[][]>;
   };
   /**
-   * Maximum number of tools to return. If the conversation is empty or the
-   * retriever cannot score tools, it falls back to all tools.
+   * Maximum number of tools to return.
    */
   topK?: number;
 }
@@ -42,12 +41,16 @@ export class ToolRetriever {
   constructor(tools: ToolEntry[], options: ToolRetrieverOptions = {}) {
     this.allTools = tools;
     this.topK = options.topK ?? 5;
+    if (!Number.isSafeInteger(this.topK) || this.topK < 1) {
+      throw new RangeError('Tool retriever topK must be a positive integer.');
+    }
+
     this.embedProvider = options.embedProvider;
   }
 
   /**
    * Return the top-K most relevant tools for the given conversation context.
-   * Falls back to all tools when no context is available.
+   * Uses a deterministic, lifecycle-safe capped selection when no context is available.
    */
   async retrieve(messages: BaseMessage[]): Promise<ToolEntry[]> {
     if (this.allTools.length === 0) {
@@ -60,7 +63,7 @@ export class ToolRetriever {
 
     const context = this.extractContext(messages);
     if (!context) {
-      return this.allTools;
+      return this.selectTop(this.allTools.map((entry) => ({entry, score: 0})));
     }
 
     if (this.embedProvider) {
@@ -130,19 +133,20 @@ export class ToolRetriever {
 
   private selectTop(scored: ScoredTool[]): ToolEntry[] {
     scored.sort((a, b) => b.score - a.score);
-    const top = scored.slice(0, this.topK).map((s) => s.entry);
+    const selected: ToolEntry[] = [];
 
-    // Always include critical lifecycle tools regardless of keyword score.
-    // Without finish_task, the agent cannot self-terminate. Without
-    // context_retrieval, it cannot efficiently search the codebase.
-    const essentialNames = new Set(['finish_task', 'context_retrieval']);
-    for (const entry of this.allTools) {
-      if (essentialNames.has(entry.name) && !top.some((t) => t.name === entry.name)) {
-        top.push(entry);
-      }
+    // Reserve capacity for lifecycle tools before filling the remaining slots.
+    for (const name of ['finish_task', 'context_retrieval']) {
+      const entry = this.allTools.find((tool) => tool.name === name);
+      if (entry && selected.length < this.topK) selected.push(entry);
     }
 
-    return top;
+    for (const {entry} of scored) {
+      if (selected.length >= this.topK) break;
+      if (!selected.some((tool) => tool.name === entry.name)) selected.push(entry);
+    }
+
+    return selected;
   }
 
   private toolDescription(entry: ToolEntry): string {

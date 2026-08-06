@@ -32,8 +32,7 @@ export function createListDirectoryTool(pathGuard: PathGuard) {
 
         // Directories first
         if (dirs.length > 0) {
-          lines.push('');
-          lines.push('📁 Directories:');
+          lines.push('', '📁 Directories:');
           for (const d of dirs) {
             lines.push(`   📁 ${d.name}/`);
           }
@@ -41,30 +40,25 @@ export function createListDirectoryTool(pathGuard: PathGuard) {
 
         // Files
         if (files.length > 0) {
-          lines.push('');
-          lines.push('📄 Files:');
+          lines.push('', '📄 Files:');
           // Show up to 50 files; note if there are more
           const shown = files.slice(0, 50);
           for (const f of shown) {
             lines.push(`   📄 ${f.name}`);
           }
+
           if (files.length > 50) {
-            lines.push(`   ... and ${files.length - 50} more files`);
-            lines.push(`   💡 Use fileExtension filter with search_codebase or context_retrieval to narrow.`);
+            lines.push(`   ... and ${files.length - 50} more files`, `   💡 Use fileExtension filter with search_codebase or context_retrieval to narrow.`);
           }
         }
 
         if (entries.length === 0) {
-          lines.push('');
-          lines.push('[EMPTY]');
+          lines.push('', '[EMPTY]');
         }
 
         // Chaining hint
         if (files.length > 0) {
-          lines.push('');
-          lines.push(`── Next steps ──`);
-          lines.push(`• Search: context_retrieval({ query: "<vuln pattern in this directory>" })`);
-          lines.push(`• Inspect: read_file_content({ filePath: "${relative !== '.' ? relative + '/' : ''}<filename>", startLine: 1, endLine: 80 })`);
+          lines.push('', `── Next steps ──`, `• Search: context_retrieval({ query: "<vuln pattern in this directory>" })`, `• Inspect: read_file_content({ filePath: "${relative === '.' ? '' : relative + '/'}<filename>", startLine: 1, endLine: 80 })`);
         }
 
         return lines.join('\n');

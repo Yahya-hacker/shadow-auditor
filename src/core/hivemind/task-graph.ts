@@ -317,6 +317,63 @@ private tasks: Map<string, Task> = new Map();
   }
 
   /**
+   * Reset a failed or cancelled task back to pending so it can be retried.
+   *
+   * This is the primary mechanism for recovering from agent failures without
+   * requiring a full mission restart. Dependents that were blocked by this
+   * task are also re-evaluated after the reset.
+   *
+   * Only `failed` and `cancelled` tasks can be reset; completed tasks are
+   * considered final and immutable.
+   */
+  resetTask(taskId: string): Result<Task, string> {
+    const task = this.tasks.get(taskId);
+    if (!task) {
+      return err(`Task not found: ${taskId}`);
+    }
+
+    if (task.status !== 'failed' && task.status !== 'cancelled') {
+      return err(`Task must be failed or cancelled to reset (status: ${task.status})`);
+    }
+
+    const updated: Task = {
+      ...task,
+      assignedAgent: undefined,
+      claimedAt: undefined,
+      completedAt: undefined,
+      errorMessage: undefined,
+      result: undefined,
+      status: this.determineInitialStatus(task.dependencies),
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.updateTaskInternal(updated);
+    return ok(updated);
+  }
+
+  /**
+   * Reset all failed tasks for a specific agent role.
+   *
+   * Returns the number of tasks that were reset. This is used by the QA
+   * restart flow to mass-reset all verifier tasks so a new verification
+   * cycle can begin immediately after a failure (e.g. post-refactor).
+   */
+  resetTasksByRole(role: AgentRole): number {
+    const failedTasks = this.getTasksByStatus('failed')
+      .filter((t) => t.requiredRole === role);
+    const cancelledTasks = this.getTasksByStatus('cancelled')
+      .filter((t) => t.requiredRole === role);
+
+    let resetCount = 0;
+    for (const task of [...failedTasks, ...cancelledTasks]) {
+      const result = this.resetTask(task.taskId);
+      if (result.ok) resetCount++;
+    }
+
+    return resetCount;
+  }
+
+  /**
    * Start working on a claimed task.
    */
   startTask(taskId: string): Result<Task, string> {
@@ -336,6 +393,28 @@ private tasks: Map<string, Task> = new Map();
     };
 
     this.updateTaskInternal(updated);
+    return ok(updated);
+  }
+
+  /**
+   * Update a task's parameters in-place without changing status.
+   *
+   * Used by the dispatch node to stamp retry counts on auto-recovered tasks
+   * without triggering a full state transition.
+   */
+  updateTaskParameters(taskId: string, parameters: Record<string, unknown>): Result<Task, string> {
+    const task = this.tasks.get(taskId);
+    if (!task) {
+      return err(`Task not found: ${taskId}`);
+    }
+
+    const updated: Task = {
+      ...task,
+      parameters,
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.tasks.set(task.taskId, updated);
     return ok(updated);
   }
 

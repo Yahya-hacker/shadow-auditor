@@ -218,9 +218,6 @@ export class ConsensusManager {
     reached: boolean;
   } {
     const votes = record.votes;
-    if (votes.length < this.defaultQuorum) {
-      return { reached: false };
-    }
 
     // Filter out votes that lack required evidence/trust metadata when such
     // metadata is present on *any* vote. This prevents consensus from being
@@ -234,6 +231,10 @@ export class ConsensusManager {
         if (v.trustScore !== undefined && v.trustScore < this.trustThreshold) return false;
         return true;
       });
+    }
+
+    if (eligibleVotes.length < this.defaultQuorum) {
+      return { reached: false };
     }
 
     const approves = eligibleVotes.filter((v) => v.vote === 'approve').length;

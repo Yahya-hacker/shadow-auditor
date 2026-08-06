@@ -15,11 +15,8 @@
 
 import { execFile } from 'node:child_process';
 import * as crypto from 'node:crypto';
-import { promisify } from 'node:util';
 
 import { type OastCallback } from './dast-schema.js';
-
-const execFileAsync = promisify(execFile);
 
 // =============================================================================
 // Validation
@@ -37,6 +34,7 @@ function validateSafeIdentifier(value: string, context: string): string {
       'Only alphanumeric characters, dots, hyphens, and underscores are permitted.',
     );
   }
+
   return value;
 }
 
@@ -45,6 +43,7 @@ function validateSafeIdentifier(value: string, context: string): string {
 // =============================================================================
 
 export interface MirageOASTOptions {
+  dockerExecutor?: typeof execFile;
   networkName: string;
   runId: string;
 }
@@ -55,6 +54,7 @@ export interface MirageOASTOptions {
 export class MirageOAST {
   private readonly callbackLog: OastCallback[] = [];
   private containerName: string;
+  private readonly dockerExecutor: typeof execFile;
   private readonly networkName: string;
   private readonly runId: string;
   private running = false;
@@ -63,6 +63,7 @@ export class MirageOAST {
     this.runId = validateSafeIdentifier(options.runId, 'runId');
     this.networkName = validateSafeIdentifier(options.networkName, 'networkName');
     this.containerName = `mirage-oast-${this.runId}`;
+    this.dockerExecutor = options.dockerExecutor ?? execFile;
   }
 
   /**
@@ -76,8 +77,8 @@ export class MirageOAST {
    * Destroy the Mirage container.
    */
   async destroy(): Promise<void> {
-    if (!this.running) return;
-
+    // Removal is unconditional because cancellation can occur after Docker
+    // creates the container but before the start call marks it as running.
     await this.dockerExec(['rm', '-f', this.containerName]);
     this.running = false;
   }
@@ -150,7 +151,7 @@ export class MirageOAST {
    * 2. Logs every request URL, method, and headers
    * 3. The log can be queried via a management endpoint
    */
-  async start(): Promise<void> {
+  async start(signal?: AbortSignal): Promise<void> {
     if (this.running) return;
 
     // Mirage server script — passed directly as a single argument to node -e.
@@ -199,7 +200,7 @@ server.listen(8080, () => console.log('Mirage OAST listening on :8080'));
       '--cpus', '0.25',
       'node:20-alpine',
       'node', '-e', mirageScript,
-    ]);
+    ], signal);
 
     if (result.exitCode !== 0) {
       throw new Error(`Failed to start Mirage OAST: ${result.stderr}`);
@@ -211,13 +212,14 @@ server.listen(8080, () => console.log('Mirage OAST listening on :8080'));
   /**
    * Sync the callback log from the Mirage container's management endpoint.
    */
-  async syncLog(): Promise<OastCallback[]> {
+  async syncLog(signal?: AbortSignal): Promise<OastCallback[]> {
+    signal?.throwIfAborted();
     if (!this.running) return [];
 
     const result = await this.dockerExec([
       'exec', this.containerName, 'wget', '-qO-',
       'http://localhost:8080/__mirage/log',
-    ]);
+    ], signal);
 
     if (result.exitCode !== 0) return [];
 
@@ -264,24 +266,26 @@ server.listen(8080, () => console.log('Mirage OAST listening on :8080'));
    */
   private async dockerExec(
     args: string[],
+    signal?: AbortSignal,
   ): Promise<{ exitCode: number; stderr: string; stdout: string }> {
-    try {
-      const { stdout, stderr } = await execFileAsync('docker', args, {
-        maxBuffer: 5 * 1024 * 1024, // 5 MB
-        timeout: 30_000,
-      });
-      return {
-        exitCode: 0,
-        stderr: stderr || '',
-        stdout: stdout || '',
-      };
-    } catch (error: unknown) {
-      const err = error as NodeJS.ErrnoException & { stderr?: string; stdout?: string };
-      return {
-        exitCode: err.code ? Number(err.code) : (err ? 1 : 0),
-        stderr: err.stderr || err.message || '',
-        stdout: err.stdout || '',
-      };
-    }
+    return new Promise((resolve, reject) => {
+      this.dockerExecutor(
+        'docker',
+        args,
+        { maxBuffer: 5 * 1024 * 1024, signal, timeout: 30_000 },
+        (error, stdout, stderr) => {
+          if (signal?.aborted) {
+            reject(signal.reason ?? error ?? new Error('Docker operation aborted.'));
+            return;
+          }
+
+          resolve({
+            exitCode: typeof error?.code === 'number' ? error.code : (error ? 1 : 0),
+            stderr: typeof stderr === 'string' ? stderr : '',
+            stdout: typeof stdout === 'string' ? stdout : '',
+          });
+        },
+      );
+    });
   }
 }

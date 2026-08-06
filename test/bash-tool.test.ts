@@ -1,31 +1,24 @@
 import { expect } from 'chai';
+import { execFile } from 'node:child_process';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { promisify } from 'node:util';
 
 import { evaluateCommandPolicy } from '../src/core/policy/command-policy.js';
+import { createExecuteCommandTool } from '../src/core/tools/execute-command.js';
+
+const execFileAsync = promisify(execFile);
 
 describe('bash tool policy integration', () => {
   describe('Unix analysis tool allowlist', () => {
     const readOnlyCommands = [
-      'grep -rn "eval" src/',
-      'grep -rn "eval" src/ | head -20',
+      'rg -n "eval" src/',
+      'rg -n "eval" src/ | rg -v fixture',
       'find . -name "*.ts" -type f',
-      'cat package.json',
-      'cat package.json | jq .dependencies',
-      'head -50 src/core/agent.ts',
-      'tail -20 src/core/agent.ts',
-      'wc -l src/core/agent.ts',
-      'ls -la src/',
-      'ls src/',
       'echo "hello world"',
-      'sed -n "1,10p" src/core/agent.ts',
-      'awk "NR<=10" src/core/agent.ts',
-      'jq ".name" package.json',
-      'sort src/core/agent.ts | uniq',
-      'diff file1.ts file2.ts',
-      'file src/core/agent.ts',
-      'stat src/core/agent.ts',
-      'cut -d: -f1 /etc/passwd',
-      'tr "[:upper:]" "[:lower:]" <<< "Hello"',
-      'tree src/',
+      'git status --short',
+      'git log -n 5 --oneline',
     ];
 
     for (const cmd of readOnlyCommands) {
@@ -37,6 +30,28 @@ describe('bash tool policy integration', () => {
   });
 
   describe('destructive commands remain blocked', () => {
+    it('denies programmable processors and repository lifecycle scripts by default', () => {
+      for (const command of [
+        'awk \'BEGIN { system("id") }\'',
+        'sed -n \'1e id\' src/index.ts',
+        'npm test',
+      ]) {
+        expect(evaluateCommandPolicy(command).allowed, command).to.equal(false);
+      }
+    });
+
+    it('denies host paths, parent traversal, and link-following preprocessors', () => {
+      for (const command of [
+        'cat /etc/passwd',
+        'cat ../outside.txt',
+        'rg --follow password .',
+        'rg --pre "sh exploit.sh" password .',
+        'find -L . -name "*.ts"',
+      ]) {
+        expect(evaluateCommandPolicy(command).allowed, command).to.equal(false);
+      }
+    });
+
     it('still denies rm -rf', () => {
       const decision = evaluateCommandPolicy('rm -rf /tmp/demo');
       expect(decision.allowed).to.equal(false);
@@ -57,6 +72,247 @@ describe('bash tool policy integration', () => {
     it('denies a command chain containing rm -rf even with grep prefix', () => {
       const decision = evaluateCommandPolicy('grep "foo" file.txt && rm -rf /');
       expect(decision.allowed).to.equal(false);
+    });
+  });
+
+  describe('safe command execution', () => {
+    const humanInteraction = {
+      confirmCommandExecution: async () => true,
+    };
+    const itOnPosix = process.platform === 'win32' ? it.skip : it;
+
+    it('executes allowed commands and non-shell pipelines', async () => {
+      const workingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-'));
+      try {
+        const tool = createExecuteCommandTool({
+          commandPolicy: {},
+          humanInteraction: humanInteraction as never,
+          workingDirectory,
+        });
+
+        expect(await tool.execute({command: 'echo hello'})).to.equal('hello');
+        expect(await tool.execute({command: 'echo "foo|bar"'})).to.equal('foo|bar');
+        expect(await tool.execute({command: 'echo hello | echo pipeline-complete'}))
+          .to.equal('pipeline-complete');
+      } finally {
+        await fs.rm(workingDirectory, {force: true, recursive: true});
+      }
+    });
+
+    itOnPosix('reports intermediate pipeline failures with their stderr', async () => {
+      const workingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-'));
+      try {
+        const tool = createExecuteCommandTool({
+          commandPolicy: {},
+          humanInteraction: humanInteraction as never,
+          workingDirectory,
+        });
+        const result = await tool.execute({
+          command: 'find missing-directory -type f | echo pipeline-complete',
+        });
+
+        expect(result).to.include('[ERROR] Command failed: Pipeline stage 1 exited with code');
+        expect(result).to.include('[STDERR]');
+        expect(result).to.include('missing-directory');
+      } finally {
+        await fs.rm(workingDirectory, {force: true, recursive: true});
+      }
+    });
+
+    itOnPosix('terminates producers when a downstream stage closes without reading', async () => {
+      const workingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-'));
+      try {
+        await Promise.all(Array.from({length: 1500}, async (_, index) =>
+          fs.mkdir(path.join(workingDirectory, `long-directory-name-${index.toString().padStart(5, '0')}`)),
+        ));
+        const tool = createExecuteCommandTool({
+          commandPolicy: {},
+          humanInteraction: humanInteraction as never,
+          workingDirectory,
+        });
+        const startedAt = Date.now();
+        const result = await tool.execute({
+          command: 'find . -type d | echo pipeline-complete',
+          timeout: 2,
+        });
+
+        expect(result).to.equal('pipeline-complete');
+        expect(Date.now() - startedAt).to.be.lessThan(1500);
+      } finally {
+        await fs.rm(workingDirectory, {force: true, recursive: true});
+      }
+    });
+
+    itOnPosix('preserves producer errors that precede an early downstream close', async () => {
+      const workingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-'));
+      try {
+        await Promise.all(Array.from({length: 1500}, async (_, index) =>
+          fs.mkdir(path.join(workingDirectory, `long-directory-name-${index.toString().padStart(5, '0')}`)),
+        ));
+        const tool = createExecuteCommandTool({
+          commandPolicy: {},
+          humanInteraction: humanInteraction as never,
+          workingDirectory,
+        });
+        const result = await tool.execute({
+          command: 'find missing-directory . -type d | echo pipeline-complete',
+          timeout: 2,
+        });
+
+        expect(result).to.include('[ERROR] Command failed: Pipeline stage 1 exited with');
+        expect(result).to.include('missing-directory');
+      } finally {
+        await fs.rm(workingDirectory, {force: true, recursive: true});
+      }
+    });
+
+    it('hardens Git commands in every pipeline stage', async () => {
+      const workingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-'));
+      const marker = path.join(workingDirectory, 'external-diff-ran');
+      const externalDiff = path.join(workingDirectory, 'external-diff.sh');
+      try {
+        await execFileAsync('git', ['init', '--quiet'], {cwd: workingDirectory});
+        await execFileAsync('git', ['config', 'user.email', 'test@example.com'], {cwd: workingDirectory});
+        await execFileAsync('git', ['config', 'user.name', 'Test'], {cwd: workingDirectory});
+        await fs.writeFile(externalDiff, `#!/bin/sh\ntouch '${marker}'\n`, {mode: 0o755});
+        await fs.writeFile(path.join(workingDirectory, 'tracked.txt'), 'before\n');
+        await execFileAsync('git', ['add', 'tracked.txt'], {cwd: workingDirectory});
+        await execFileAsync('git', ['commit', '--quiet', '-m', 'initial'], {cwd: workingDirectory});
+        await execFileAsync('git', ['config', 'diff.external', externalDiff], {cwd: workingDirectory});
+        await fs.writeFile(path.join(workingDirectory, 'tracked.txt'), 'after\n');
+
+        const tool = createExecuteCommandTool({
+          commandPolicy: {},
+          humanInteraction: humanInteraction as never,
+          workingDirectory,
+        });
+        await tool.execute({command: 'echo input | git diff'});
+        const overrideResult = await tool.execute({command: 'echo input | git diff --ext-diff'});
+        const outputResult = await tool.execute({command: 'git diff --output=tracked.txt'});
+        const signatureResult = await tool.execute({command: 'git log --show-signature -1'});
+
+        expect(overrideResult).to.include('[ERROR] Command failed');
+        expect(overrideResult).to.include('not accepted in safe command mode');
+        expect(outputResult).to.include('Git output-file options are not accepted');
+        expect(signatureResult).to.include('Git signature-verification options are not accepted');
+        expect(await fs.readFile(path.join(workingDirectory, 'tracked.txt'), 'utf8')).to.equal('after\n');
+        try {
+          await fs.access(marker);
+          expect.fail('Repository-configured external diff was executed.');
+        } catch (error) {
+          expect((error as NodeJS.ErrnoException).code).to.equal('ENOENT');
+        }
+      } finally {
+        await fs.rm(workingDirectory, {force: true, recursive: true});
+      }
+    });
+
+    itOnPosix('revalidates parsed arguments so escapes cannot conceal host paths', async () => {
+      const workingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-'));
+      try {
+        const tool = createExecuteCommandTool({
+          commandPolicy: {},
+          humanInteraction: humanInteraction as never,
+          workingDirectory,
+        });
+        const result = await tool.execute({command: String.raw`find \/etc -maxdepth 0`});
+        const quotedUnsafeOption = await tool.execute({command: 'find . "-delete"'});
+
+        expect(result).to.include('[POLICY_DENIED]');
+        expect(result).to.not.equal('/etc');
+        expect(quotedUnsafeOption).to.include('[POLICY_DENIED]');
+      } finally {
+        await fs.rm(workingDirectory, {force: true, recursive: true});
+      }
+    });
+
+    itOnPosix('reports output limits without an unhandled rejection', async () => {
+      const workingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-'));
+      try {
+        await Promise.all(Array.from({length: 500}, async (_, index) =>
+          fs.mkdir(path.join(workingDirectory, `long-directory-name-${index.toString().padStart(5, '0')}`)),
+        ));
+        const tool = createExecuteCommandTool({
+          commandPolicy: {},
+          humanInteraction: humanInteraction as never,
+          workingDirectory,
+        });
+        const repeatedRoots = '. '.repeat(800);
+        const result = await tool.execute({
+          command: `find ${repeatedRoots}-type d`,
+          timeout: 30,
+        });
+
+        expect(result).to.include('[ERROR] Command failed: Command output exceeded');
+      } finally {
+        await fs.rm(workingDirectory, {force: true, recursive: true});
+      }
+    });
+
+    itOnPosix('preserves explicitly empty quoted arguments', async () => {
+      const workingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-'));
+      try {
+        const tool = createExecuteCommandTool({
+          commandPolicy: {},
+          humanInteraction: humanInteraction as never,
+          workingDirectory,
+        });
+        const result = await tool.execute({command: 'find "" -type f'});
+
+        expect(result).to.include('[ERROR] Command failed');
+      } finally {
+        await fs.rm(workingDirectory, {force: true, recursive: true});
+      }
+    });
+
+    it('honors cancellation before launching a process', async () => {
+      const workingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-'));
+      try {
+        const tool = createExecuteCommandTool({
+          commandPolicy: {},
+          humanInteraction: humanInteraction as never,
+          workingDirectory,
+        });
+        const controller = new AbortController();
+        controller.abort(new Error('cancelled by test'));
+
+        try {
+          await tool.execute({command: 'echo should-not-run'}, {abortSignal: controller.signal});
+          expect.fail('Expected cancellation to reject.');
+        } catch (error) {
+          expect((error as Error).message).to.equal('cancelled by test');
+        }
+      } finally {
+        await fs.rm(workingDirectory, {force: true, recursive: true});
+      }
+    });
+
+    itOnPosix('does not resolve repository-local executable hijacks', async () => {
+      const workingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-command-'));
+      const alias = `${workingDirectory}-alias`;
+      const executable = path.join(workingDirectory, 'find');
+      try {
+        await fs.writeFile(executable, '#!/bin/sh\necho HIJACKED\n', {mode: 0o755});
+        await fs.symlink(workingDirectory, alias, process.platform === 'win32' ? 'junction' : 'dir');
+        const originalPath = process.env.PATH;
+        process.env.PATH = `${alias}${path.delimiter}${originalPath ?? ''}`;
+        try {
+          const tool = createExecuteCommandTool({
+            commandPolicy: {},
+            humanInteraction: humanInteraction as never,
+            workingDirectory,
+          });
+          const result = await tool.execute({command: 'find --version'});
+
+          expect(result).to.not.include('HIJACKED');
+          expect(result).to.include('find');
+        } finally {
+          process.env.PATH = originalPath;
+        }
+      } finally {
+        await fs.rm(alias, {force: true, recursive: true});
+        await fs.rm(workingDirectory, {force: true, recursive: true});
+      }
     });
   });
 });

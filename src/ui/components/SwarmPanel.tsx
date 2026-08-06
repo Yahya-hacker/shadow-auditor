@@ -1,31 +1,31 @@
-import { Box, Text, Input } from "../../opentui/components.js";
+import React, { memo } from 'react';
 /**
  * SwarmPanel — live multi-agent swarm visualization.
  *
  * Shows agent status, task progress, claims, and consensus metrics.
- * Hidden in compact mode.
+ * Hidden in compact mode. All indicators include text labels for NO_COLOR
+ * accessibility.
  */
 
-import React, { memo } from 'react';
-
+import { Box, Text } from "../primitives.js";
 import { useAppStore } from '../store/appStore.js';
 import { colors, layout, spacing } from '../theme/chalkTheme.js';
 
-const statusGlyph: Record<string, { color: string; glyph: string }> = {
-  blocked: { color: colors.warning, glyph: '◧' },
-  cancelled: { color: colors.dim, glyph: '⊘' },
-  claimed: { color: colors.muted, glyph: '◔' },
-  completed: { color: colors.success, glyph: '✓' },
-  failed: { color: colors.error, glyph: '✖' },
-  in_progress: { color: colors.pending, glyph: '⧗' },
-  pending: { color: colors.muted, glyph: '◌' },
+const statusGlyph: Record<string, { color: string; glyph: string; textLabel: string }> = {
+  blocked: { color: colors.warning, glyph: '◧', textLabel: 'blocked' },
+  cancelled: { color: colors.dim, glyph: '⊘', textLabel: 'cancelled' },
+  claimed: { color: colors.muted, glyph: '◔', textLabel: 'claimed' },
+  completed: { color: colors.success, glyph: '✓', textLabel: 'completed' },
+  failed: { color: colors.error, glyph: '✖', textLabel: 'failed' },
+  in_progress: { color: colors.pending, glyph: '⧗', textLabel: 'in_progress' },
+  pending: { color: colors.muted, glyph: '◌', textLabel: 'pending' },
 };
 
-const agentGlyph: Record<string, { color: string; glyph: string }> = {
-  active: { color: colors.success, glyph: '●' },
-  busy: { color: colors.pending, glyph: '●' },
-  idle: { color: colors.muted, glyph: '○' },
-  offline: { color: colors.dim, glyph: '◌' },
+const agentGlyph: Record<string, { color: string; glyph: string; textLabel: string }> = {
+  active: { color: colors.success, glyph: '●', textLabel: 'active' },
+  busy: { color: colors.pending, glyph: '●', textLabel: 'busy' },
+  idle: { color: colors.muted, glyph: '○', textLabel: 'idle' },
+  offline: { color: colors.dim, glyph: '◌', textLabel: 'offline' },
 };
 
 const lightFg = colors.panelLightFg;
@@ -43,7 +43,7 @@ export const SwarmPanel: React.FC = memo(() => {
         paddingX={spacing.panelPadX}
         paddingY={spacing.panelPadY}
       >
-        <Text backgroundColor={lightBg} color={lightFg} bold>
+        <Text backgroundColor={lightBg} bold color={lightFg}>
           {'Swarm'.padEnd(panelInnerWidth)}
         </Text>
         <Text backgroundColor={lightBg} color={lightFg}>
@@ -63,16 +63,17 @@ export const SwarmPanel: React.FC = memo(() => {
       paddingX={spacing.panelPadX}
       paddingY={spacing.panelPadY}
     >
-      <Text backgroundColor={lightBg} color={lightFg} bold>
+      <Text backgroundColor={lightBg} bold color={lightFg}>
         {'Swarm'.padEnd(panelInnerWidth)}
       </Text>
 
-      <Text backgroundColor={lightBg} color={lightFg} bold>
+      <Text backgroundColor={lightBg} bold color={lightFg}>
         {'Agents'.padEnd(panelInnerWidth)}
       </Text>
       {swarmState.agents.map((agent) => {
-        const g = agentGlyph[agent.status] ?? { color: colors.muted, glyph: '•' };
-        const line = `${g.glyph} ${agent.role} ${agent.status}`;
+        const g = agentGlyph[agent.status] ?? { color: colors.muted, glyph: '•', textLabel: agent.status };
+        // Always show status text alongside glyph for NO_COLOR accessibility
+        const line = `${g.glyph} ${agent.role} ${g.textLabel}`;
         return (
           <Text backgroundColor={lightBg} color={g.color} key={agent.agentId}>
             {line.padEnd(panelInnerWidth)}
@@ -80,12 +81,12 @@ export const SwarmPanel: React.FC = memo(() => {
         );
       })}
 
-      <Text backgroundColor={lightBg} color={lightFg} bold>
+      <Text backgroundColor={lightBg} bold color={lightFg}>
         {'Tasks'.padEnd(panelInnerWidth)}
       </Text>
       {swarmState.tasks.map((task) => {
-        const g = statusGlyph[task.status] ?? { color: colors.muted, glyph: '•' };
-        const line = `${g.glyph} ${task.taskType}`;
+        const g = statusGlyph[task.status] ?? { color: colors.muted, glyph: '•', textLabel: task.status };
+        const line = `${g.glyph} ${task.taskType} ${g.textLabel}`;
         return (
           <Text backgroundColor={lightBg} color={g.color} key={task.taskId}>
             {line.padEnd(panelInnerWidth)}

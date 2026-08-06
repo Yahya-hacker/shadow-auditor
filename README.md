@@ -20,7 +20,7 @@
 | Capability | Description |
 |------------|-------------|
 | **Codebase Mapping** | Tree-sitter AST parsing builds a compressed architecture map — every function, class, and dependency indexed |
-| **Autonomous Agents** | LangGraph StateGraph with Supervisor + Specialists (SAST, GraphTracer, Verifier) + Reflector self-review |
+| **Deterministic Audit Pipeline** | LangGraph executes Codebase Intelligence → SAST Audit → Devil's Advocate → Reporting with validated handoffs |
 | **Hybrid Retrieval** | Semantic + lexical + knowledge-graph search via `context_retrieval` — never dump whole files |
 | **Multi-Agent Swarm** | 5 specialized roles (Recon, TaintTracer, ExploitAnalyst, Verifier, Reporter) with shared Blackboard |
 | **Patch Competition** | 3 competing agents propose fixes → orchestrator detects conflicts → synthesizes unified Super Patch |
@@ -31,20 +31,36 @@
 
 ## Quick Start
 
-### Installation
+### Install from npm
 
 ```bash
-npm install -g shadow-auditor
+npm install --global shadow-auditor
 ```
-the npm command is not working anymore as i decided to remove it, i prefer publishing something clean and functional
-#### Local Development
+
+The package is release-ready but is **not currently published** on the public
+npm registry. The command above will work after a maintainer publishes the
+first release. Node.js 24 is required.
+
+### Installation from source
+
 ```bash
 git clone https://github.com/Yahya-hacker/shadow-auditor.git
 cd shadow-auditor
-npm install
-npm run build
+npm ci
 npm link
 ```
+
+### Publish the prepared package
+
+After authenticating with npm and confirming the package name is still
+available:
+
+```bash
+npm test
+npm pack --dry-run
+npm publish --access public
+```
+
 ### First Run
 
 ```bash
@@ -78,8 +94,12 @@ FLAGS
   --since=<ref>           Git ref for incremental base (default: HEAD~1)
   --ci                    CI mode: deterministic output, exit code on severity
   --fail-on=<severity>    Minimum severity for non-zero CI exit (critical|high|medium|low|none)
+  --resume-run=<id>       Resume a persisted LangGraph run
+  --prompt=<text>         CI mission, or explicit answer for a paused resumed run
+  --target=<path>         Repository to audit (default: current directory)
   --expert-unsafe         Permit broader command and MCP tool execution surface
   --swarm                 Enable multi-agent swarm mode for parallel analysis
+  --watch                 Monitor source changes and run serialized incremental audits
   --reconfigure           Force the configuration wizard to run again
 ```
 
@@ -95,8 +115,14 @@ shadow-auditor --mode triage
 # CI pipeline: incremental scan, fail on high+
 shadow-auditor --ci --diff --since main --fail-on high
 
+# Resume a paused headless run with its required confirmation
+shadow-auditor --ci --resume-run <run-id> --prompt yes
+
 # Multi-agent swarm mode
 shadow-auditor --swarm
+
+# Continuously audit security-relevant source changes
+shadow-auditor --watch
 
 # Expert mode with broader tool access
 shadow-auditor --expert-unsafe
@@ -109,50 +135,43 @@ shadow-auditor --expert-unsafe
 ### LangGraph Workflow
 
 ```
-                        ┌─────────────┐
-                        │    START     │
-                        └──────┬──────┘
-                               │
-                        ┌──────▼──────┐
-                        │  Supervisor │◄──────────────────────┐
-                        └──┬───┬───┬──┘                       │
-                           │   │   │                          │
-              ┌────────────┼───┘   └────────────┐             │
-              │            │                    │             │
-     ┌────────▼───┐ ┌──────▼──────┐ ┌──────────▼──┐  ┌───────┴──────┐
-     │SastAnalyzer│ │ GraphTracer │ │  Verifier   │  │   Reflector  │
-     └──────┬─────┘ └──────┬──────┘ └──────┬──────┘  └──────┬───────┘
-            │              │               │                │
-            └──────────────┼───────────────┘                │
-                           │                                │
-                    ┌──────▼──────┐                   ┌─────▼──────┐
-                    │ToolExecutor │                   │ PASS → END │
-                    └──────┬──────┘                   │RETRY → Sup │
-                           │                          └────────────┘
-                    ┌──────▼──────────┐
-                    │HumanIntervention│
-                    │  (interrupt)    │
-                    └─────────────────┘
+START
+  │
+  ▼
+Codebase Intelligence ── repository map + architecture report
+  │
+  ▼
+SAST Audit ────────────── evidence-backed candidate findings
+  │
+  ▼
+Devil's Advocate ──────── confirmed/rejected findings with rationale
+  │
+  ▼
+Reporting ─────────────── final Markdown and bug-bounty reports
+  │
+  ▼
+END
 ```
 
 **Key nodes:**
-- **Supervisor** — Main orchestrator: decides what to do next, delegates to specialists
-- **SastAnalyzer** — Static analysis specialist: injection, auth, crypto, input validation
-- **GraphTracer** — Data flow tracer: sources → sinks, taint propagation
-- **Verifier** — Anti-hallucination: confirms findings with code evidence
-- **Reflector** — Self-review: checks output quality, routes back for improvement if needed
-- **ToolExecutor** — Executes tool calls: search, read, edit, bash
-- **HumanIntervention** — Pause point for confirmations (interruptBefore)
+- **Codebase Intelligence** — Maps architecture, trust boundaries, entry points, and data flows.
+- **SAST Audit** — Traces vulnerability sources to sinks and records code evidence.
+- **Devil's Advocate** — Challenges exploitability and rejects unsupported claims.
+- **Reporting** — Produces the only public model response, with clear impact, reproduction steps, and PoC evidence.
+
+Each stage has scoped tools and a finite runtime budget. Handoffs are schema-validated,
+checkpointed, and repaired at most once; invalid output fails closed rather than being
+published as a finding.
 
 ### Agent Intelligence System
 
 | Feature | Description |
 |---------|-------------|
 | **Working Memory** | Auto-updating summary of findings, files examined, and hypotheses — survives context trimming |
-| **Context Summarization** | When messages exceed 30, older context is compressed into working memory instead of discarded |
-| **Reflection Loop** | Every model output is reviewed for completeness, evidence quality, and hallucination risk |
-| **Dynamic System Prompt** | Working memory injected before each model call — agent always knows the current state |
-| **Tool Strategy Phases** | Discovery → Deep Analysis → Modification → Termination with anti-pattern warnings |
+| **Typed Handoffs** | Every stage consumes the validated, persisted artifact from the preceding stage |
+| **Evidence Review** | Devil's Advocate independently confirms or rejects every candidate finding |
+| **Durable Resume** | Checkpoints preserve artifacts and confirmation identity across interrupted runs |
+| **Bounded Execution** | Duplicate-call detection and model-aware tool budgets force a final synthesis |
 
 ### Tool Intelligence
 
@@ -164,7 +183,7 @@ Every tool is designed for maximum agent efficiency:
 | `search_codebase` | Results grouped by file with match counts. Shows top matches, hides noise |
 | `read_file_content` | **Line-range reads** (`startLine`/`endLine`). Auto-overview for large files. 40x token savings |
 | `list_directory` | Structured output: directories first, file counts, chaining hints |
-| `bash` | Truncated output at 100 lines, actionable narrowing tips |
+| `execute_command` | Policy-gated host command execution with approval, timeout, and output limits |
 | `edit_file` | Exact-match validation, confirmation flow, line-change summary |
 | `finish_task` | Pre-call checklist, structured summary format |
 
@@ -187,7 +206,7 @@ Every tool is designed for maximum agent efficiency:
 ```
 
 Each role has a **recommended tool workflow** to minimize thrashing:
-- Recon: `list_directory` → `context_retrieval` → `bash` → `submit_claim`
+- Recon: `list_directory` → `context_retrieval` → `execute_command` → `submit_claim`
 - TaintTracer: `query_claims` → `context_retrieval` per entry → `search_codebase` → `submit_claim`
 - ExploitAnalyst: `query_claims` → `read_file` → `context_retrieval` mitigations → classify CWE
 - Verifier: `query_claims` → `read_file` → `context_retrieval` → `verify_claim`/`contest_claim`
@@ -280,13 +299,19 @@ Saved to `~/.shadow-auditor.json`:
 }
 ```
 
+For private local indexing, set `embeddingProvider` to `ollama`. The index honors
+`OLLAMA_HOST`; `indexing.embeddingBaseUrl` can override it, and
+`indexing.embeddingDimension` must match the selected embedding model (768 for
+the default `nomic-embed-text`). Ollama requests are batched and response vectors
+are validated before the active index is replaced.
+
 API keys are stored in the OS keychain (via `keychain` adapter). For backward compatibility, keys may also be read from the config file.
 
 ---
 
 ## Requirements
 
-- **Node.js** >= 24.14.1
+- **Node.js** >= 24 and < 25
 - **npm** (or pnpm/yarn)
 - Optional: **Ollama** for local embeddings (`ollama pull nomic-embed-text`)
 
@@ -299,7 +324,7 @@ git clone https://github.com/Yahya-hacker/shadow-auditor.git
 cd shadow-auditor
 npm install
 npm run build        # Compile TypeScript
-npm test             # Run test suite (347 tests)
+npm test             # Run tests, then lint
 npm run lint         # ESLint
 ```
 
@@ -309,21 +334,21 @@ npm run lint         # ESLint
 src/
 ├── commands/shell.tsx         # CLI entry point (oclif)
 ├── core/
-│   ├── agent.ts               # AgentSession — main agent orchestrator
+│   ├── agent.ts               # AgentSession — runtime composition
 │   ├── system-prompt.ts       # System prompt builder with working memory
-│   ├── session.ts             # Vercel AI SDK session (swarm workers)
-│   ├── model-router.ts        # Multi-provider model instantiation
+│   ├── services/              # Tool assembly, execution, persistence
+│   ├── model-router.ts        # LangChain provider instantiation
 │   ├── model-capabilities.ts  # Runtime setting resolution
 │   ├── graph/
-│   │   ├── workflow.ts        # LangGraph StateGraph (8 nodes)
+│   │   ├── workflow.ts        # Deterministic four-stage LangGraph pipeline
 │   │   ├── state.ts           # AgentState annotations
 │   │   ├── tool-retriever.ts  # Dynamic top-K tool selection
 │   │   └── tools/
 │   │       └── langchain-wrapper.ts  # AI SDK → LangChain adapter
-│   ├── tools/                 # Agent tools (7 tools)
-│   │   ├── bash.ts
+│   ├── tools/                 # Policy-scoped agent tools
 │   │   ├── context-retrieval.ts
 │   │   ├── edit-file.ts
+│   │   ├── execute-command.ts
 │   │   ├── finish-task.ts
 │   │   ├── list-directory.ts
 │   │   ├── read-file.ts
@@ -381,7 +406,11 @@ src/
 
 ## License
 
-ARR
+The source code is distributed under the [MIT License](LICENSE).
+
+Paid feature licenses are validated through Polar. Distributors enabling paid
+tiers must set `SHADOW_POLAR_ORG_ID` to the issuing Polar organization ID;
+without it, paid modes fail closed with an explicit configuration error.
 
 ---
 

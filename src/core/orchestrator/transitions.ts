@@ -2,8 +2,6 @@
  * Mission Transitions - State transition logic and validation.
  */
 
-import type { EventStore } from '../memory/event-store.js';
-
 import { err, ok, type Result } from '../schema/base.js';
 import {
   type BudgetState,

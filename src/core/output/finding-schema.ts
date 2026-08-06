@@ -223,6 +223,14 @@ export const reportMetadataSchema = z.object({
   
   /** Report generation timestamp */
   generatedAt: z.string().datetime(),
+
+  /** Runtime capabilities enabled for this audit */
+  modes: z.object({
+    ci: z.boolean(),
+    dast: z.boolean(),
+    remediation: z.boolean(),
+    swarm: z.boolean(),
+  }).optional(),
   
   /** Unique report ID */
   reportId: z.string().min(1),

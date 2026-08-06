@@ -1,5 +1,6 @@
 export type SupportedProvider =
   | 'anthropic'
+  | 'azure'
   | 'custom'
   | 'deepseek'
   | 'google'
@@ -8,6 +9,7 @@ export type SupportedProvider =
   | 'nvidia'
   | 'ollama'
   | 'openai'
+  | 'openrouter'
   | 'perplexity'
   | 'qwen';
 
@@ -17,7 +19,7 @@ const OPENAI_COMPATIBLE_PROVIDERS = new Set<string>([
   'moonshot',
   'nvidia',
   'openai',
-  'perplexity',
+  'openrouter',
   'qwen',
 ]);
 
@@ -25,16 +27,18 @@ const PROVIDER_BASE_URLS: Record<string, string> = {
   deepseek: 'https://api.deepseek.com/v1',
   moonshot: 'https://api.moonshot.ai/v1',
   nvidia: 'https://integrate.api.nvidia.com/v1',
-  perplexity: 'https://api.perplexity.ai',
-  qwen: 'https://ws-w4be56kh33b5j2nl.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+  openrouter: 'https://openrouter.ai/api/v1',
+  qwen: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
 };
 
 const PROVIDER_EMBEDDING_MODELS: Record<string, string> = {
-  deepseek: 'deepseek-embedding',
-  moonshot: 'text-embedding-v1',
   nvidia: 'nvidia/nv-embedqa-e5-v5',
   openai: 'text-embedding-3-small',
-  qwen: 'text-embedding-v3',
+};
+
+const PROVIDER_EMBEDDING_DIMENSIONS: Record<string, number> = {
+  nvidia: 1024,
+  openai: 1536,
 };
 
 /**
@@ -48,15 +52,25 @@ export const PROVIDER_MODELS: Record<string, Array<{ label: string; value: strin
     { label: 'Claude Haiku 3.5', value: 'claude-3-5-haiku-20241022' },
     { label: 'Claude Sonnet 3.5', value: 'claude-3-5-sonnet-20241022' },
   ],
+  azure: [
+    { label: 'GPT-5.6 Sol', value: 'gpt-5.6-sol' },
+    { label: 'GPT-5.4', value: 'gpt-5.4' },
+    { label: 'GPT-5.2 Codex', value: 'gpt-5.2-codex' },
+    { label: 'GPT-5.2', value: 'gpt-5.2' },
+    { label: 'GPT-5.1 Codex', value: 'gpt-5.1-codex' },
+    { label: 'GPT-5.1', value: 'gpt-5.1' },
+    { label: 'GPT-5', value: 'gpt-5' },
+    { label: 'GPT-4.1', value: 'gpt-4.1' },
+  ],
   deepseek: [
-    { label: 'DeepSeek Chat (V3)', value: 'deepseek-chat' },
-    { label: 'DeepSeek Reasoner (R1)', value: 'deepseek-reasoner' },
+    { label: 'DeepSeek V4 Pro', value: 'deepseek-v4-pro' },
+    { label: 'DeepSeek V4 Flash', value: 'deepseek-v4-flash' },
   ],
   google: [
-    { label: 'Gemini 2.5 Pro', value: 'gemini-2.5-pro-preview-05-06' },
-    { label: 'Gemini 2.5 Flash', value: 'gemini-2.5-flash-preview-05-20' },
-    { label: 'Gemini 2.0 Flash', value: 'gemini-2.0-flash' },
-    { label: 'Gemini 2.0 Flash-Lite', value: 'gemini-2.0-flash-lite' },
+    { label: 'Gemini 3.6 Flash', value: 'gemini-3.6-flash' },
+    { label: 'Gemini 3.5 Flash', value: 'gemini-3.5-flash' },
+    { label: 'Gemini 3.5 Flash-Lite', value: 'gemini-3.5-flash-lite' },
+    { label: 'Gemini 2.5 Pro', value: 'gemini-2.5-pro' },
   ],
   mistral: [
     { label: 'Mistral Large', value: 'mistral-large-latest' },
@@ -65,9 +79,9 @@ export const PROVIDER_MODELS: Record<string, Array<{ label: string; value: strin
     { label: 'Codestral', value: 'codestral-latest' },
   ],
   moonshot: [
-    { label: 'Moonshot v1 128k', value: 'moonshot-v1-128k' },
-    { label: 'Moonshot v1 32k', value: 'moonshot-v1-32k' },
-    { label: 'Moonshot v1 8k', value: 'moonshot-v1-8k' },
+    { label: 'Kimi K3', value: 'kimi-k3' },
+    { label: 'Kimi K2.7 Code', value: 'kimi-k2.7-code' },
+    { label: 'Kimi K2.6', value: 'kimi-k2.6' },
   ],
   nvidia: [
     { label: 'Llama 3.1 70B Instruct', value: 'meta/llama-3.1-70b-instruct' },
@@ -80,9 +94,6 @@ export const PROVIDER_MODELS: Record<string, Array<{ label: string; value: strin
     { label: 'Llama 3.1 70B', value: 'llama3.1:70b' },
     { label: 'Qwen 2.5 Coder 7B', value: 'qwen2.5-coder:7b' },
     { label: 'Qwen 2.5 14B', value: 'qwen2.5:14b' },
-    { label: 'Mistral 7B', value: 'mistral' },
-    { label: 'DeepSeek R1', value: 'deepseek-r1' },
-    { label: 'CodeLlama 13B', value: 'codellama:13b' },
   ],
   openai: [
     { label: 'GPT-4o (recommended)', value: 'gpt-4o' },
@@ -90,6 +101,12 @@ export const PROVIDER_MODELS: Record<string, Array<{ label: string; value: strin
     { label: 'o3-mini', value: 'o3-mini' },
     { label: 'o1', value: 'o1' },
     { label: 'GPT-4.1', value: 'gpt-4.1' },
+  ],
+  openrouter: [
+    { label: 'Auto (recommended)', value: 'openrouter/auto' },
+    { label: 'GPT-5.2', value: 'openai/gpt-5.2' },
+    { label: 'Claude Sonnet 4.5', value: 'anthropic/claude-sonnet-4.5' },
+    { label: 'Gemini 3 Flash Preview', value: 'google/gemini-3-flash-preview' },
   ],
   perplexity: [
     { label: 'Sonar Pro', value: 'sonar-pro' },
@@ -115,7 +132,8 @@ export function normalizeProviderName(provider: string): string {
 }
 
 export function providerRequiresApiKey(provider: string): boolean {
-  return normalizeProviderName(provider) !== 'ollama';
+  const normalized = normalizeProviderName(provider);
+  return normalized !== 'custom' && normalized !== 'ollama';
 }
 
 export function isOpenAICompatibleProvider(provider: string): boolean {
@@ -124,9 +142,10 @@ export function isOpenAICompatibleProvider(provider: string): boolean {
 
 export function getProviderBaseUrl(provider: string, customBaseUrl?: string): string | undefined {
   const normalizedProvider = normalizeProviderName(provider);
-  if (normalizedProvider === 'custom') {
+  if (normalizedProvider === 'custom' || normalizedProvider === 'qwen') {
     const normalizedCustomBaseUrl = customBaseUrl?.trim();
-    return normalizedCustomBaseUrl || undefined;
+    if (normalizedCustomBaseUrl) return normalizedCustomBaseUrl;
+    if (normalizedProvider === 'custom') return undefined;
   }
 
   return PROVIDER_BASE_URLS[normalizedProvider];
@@ -138,6 +157,10 @@ export function getProviderBaseUrl(provider: string, customBaseUrl?: string): st
  */
 export function providerHasNativeEmbedding(provider: string): boolean {
   return normalizeProviderName(provider) in PROVIDER_EMBEDDING_MODELS;
+}
+
+export function getProviderEmbeddingDimension(provider: string): number | undefined {
+  return PROVIDER_EMBEDDING_DIMENSIONS[normalizeProviderName(provider)];
 }
 
 /**
@@ -153,8 +176,8 @@ export function getProviderModels(provider: string): Array<{ label: string; valu
  * Fetch available models from an OpenAI-compatible API endpoint.
  *
  * Uses native `fetch` (Node ≥ 18) against the standard `GET /models` route
- * that all OpenAI-compatible providers expose.  Returns `null` on any failure
- * so the caller can fall back to the hardcoded PROVIDER_MODELS list.
+ * that OpenAI-compatible providers commonly expose. Returns `null` only when
+ * discovery is unsupported; authentication and connectivity failures surface.
  */
 export async function fetchApiModels(
   provider: string,
@@ -172,27 +195,43 @@ export async function fetchApiModels(
   try {
     const url = `${baseUrl.replace(/\/+$/, '')}/models`;
 
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+
     const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       signal: AbortSignal.timeout(8000),
     });
 
-    if (!response.ok) return null;
+    if (response.status === 404 || response.status === 405) return null;
+    if (!response.ok) {
+      throw new Error(
+        response.status === 401 || response.status === 403
+          ? `Provider authentication failed (${response.status}). Check the API key and endpoint.`
+          : `Provider model discovery failed with HTTP ${response.status}.`,
+      );
+    }
 
     const body = (await response.json()) as {
       data?: Array<{ id: string }>;
     };
 
-    if (!Array.isArray(body.data)) return null;
+    if (!Array.isArray(body.data)) {
+      throw new TypeError('Provider returned an invalid model-discovery response.');
+    }
 
     return body.data
       .map((m) => ({ label: m.id, value: m.id }))
       .sort((a, b) => a.value.localeCompare(b.value));
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Provider ')) throw error;
+    throw new Error(
+      `Could not connect to the provider model endpoint: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
 }
 

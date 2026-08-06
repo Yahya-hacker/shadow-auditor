@@ -1,214 +1,134 @@
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
-import type { CompiledStateGraph } from '@langchain/langgraph';
-import type { LanguageModel, ModelMessage, StepResult, ToolSet } from 'ai';
+import type { ModelMessage, ToolSet } from 'ai';
 
-import { HumanMessage } from '@langchain/core/messages';
+/* eslint-disable perfectionist/sort-classes -- Keep automatic compaction beside its serialized public entry point. */
+import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 
-import type { AgentStateType, HumanInputRequest } from './graph/state.js';
-import type { MCPRawInvoker } from './mcp/types.js';
-import type { MissionObjective, MissionPhase, TransitionReason } from './orchestrator/mission-state.js';
-import type { TransitionContext } from './orchestrator/transitions.js';
-import type { SecurityReport } from './output/report-schema.js';
+import type { AuditStage } from './graph/pipeline-artifacts.js';
+import type { HumanInputRequest } from './graph/state.js';
+import type { MissionObjective } from './orchestrator/mission-state.js';
+import type { EnhancedFinding, EnhancedReport } from './output/finding-schema.js';
 
-import { resetHumanInLoopState, disableLangGraphContext } from '../utils/human-in-loop.js';
-import { type ShadowConfig } from '../utils/config.js';
-import { getEmbeddingDefaults, getProviderBaseUrl, normalizeProviderName } from '../utils/provider-catalog.js';
-import { compileWorkflow } from './graph/workflow.js';
+import { saveConfig, type ShadowConfig } from '../utils/config.js';
+import { diagnoseAzureError } from '../utils/error-classification.js';
+import { HumanInteractionService } from '../utils/human-in-loop.js';
+import { logToStderr } from '../utils/stderr-logger.js';
+import { compileWorkflow, WORKFLOW_RECURSION_LIMIT } from './graph/workflow.js';
 import { SwarmCoordinator } from './hivemind/swarm-coordinator.js';
 import { type SwarmStateSnapshot } from './hivemind/swarm-supervisor.js';
 import { createChromeDevtoolsAdapter } from './mcp/adapters/chrome-devtools.js';
 import { createKaliLinuxAdapter } from './mcp/adapters/kali-linux.js';
 import { MCPManager } from './mcp/manager.js';
-import { vulnerabilityCanonicalId } from './memory/entity-normalizer.js';
-import { HybridRetriever } from './memory/hybrid-retriever.js';
 import {
-  type EmbeddingProvider,
-  NullEmbeddingProvider,
-  OllamaEmbeddingProvider,
-  OpenAIEmbeddingProvider,
-  SemanticIndex,
-} from './memory/semantic-index.js';
-import { resolveRuntimeSettings, type RuntimeSettings } from './model-capabilities.js';
-import { getLangchainModel, getModel } from './model-router.js';
+  FalsePositiveStore,
+  type SuppressionDecision,
+  type SuppressionListEntry,
+} from './memory/false-positive-store.js';
+import { type SemanticIndex } from './memory/semantic-index.js';
+import {
+  effectiveContextWindowTokens,
+  resolveModelCapabilities,
+  resolveRuntimeSettings,
+  type RuntimeSettings,
+} from './model-capabilities.js';
+import { getLangchainModel } from './model-router.js';
 import { PersistentCheckpointSaver } from './orchestrator/checkpoint-saver.js';
 import { MissionEngine } from './orchestrator/mission-engine.js';
-import { computeCiExitCode, type FailOnSeverity, formatCiSummary } from './output/ci-exit.js';
-import { deduplicateFindings } from './output/dedup.js';
 import { ReportBuilder } from './output/report-builder.js';
-import { validateAndRepairReport } from './output/report-validator.js';
-import { generateEnhancedSarifReport } from './output/sarif.js';
 import { createPathGuard } from './policy/path-guard.js';
-import { RunArtifacts } from './run-artifacts.js';
+import { RunArtifacts, type ToolArtifactEvent } from './run-artifacts.js';
+import { maybeCreateHttpInvoker } from './services/mcp-http-invoker.js';
+import { persistMessages } from './services/message-persistence.js';
+import { assembleRuntimeTools, type RuntimeToolAssembly } from './services/runtime-tool-assembler.js';
+import { initializeSemanticIndex } from './services/semantic-index-initializer.js';
+import { MAX_TOOL_CALLS_PER_RESPONSE } from './services/tool-execution-policy.js';
 import { type StreamActivity } from './session.js';
+import { processAgentStream } from './stream-processor.js';
 import { buildSystemPrompt } from './system-prompt.js';
-import { createBashTool } from './tools/bash.js';
-import { createContextRetrievalTool } from './tools/context-retrieval.js';
 import { createEditFileTool } from './tools/edit-file.js';
 import { createExecuteCommandTool } from './tools/execute-command.js';
 import { createFinishTaskTool } from './tools/finish-task.js';
 import { createListDirectoryTool } from './tools/list-directory.js';
 import { createReadFileTool } from './tools/read-file.js';
+import {
+  createStagedReportFindingTool,
+} from './tools/report-finding.js';
 import { createSearchCodebaseTool } from './tools/search-codebase.js';
 
 export interface AgentSessionOptions {
   /** Diff scope hint from incremental mode (pre-built string) */
   diffScopeHint?: string;
   expertUnsafe?: boolean;
+  /** Maximum duration of one send/resume/restart operation. */
+  operationTimeoutMs?: number;
+  /** Existing run ID to reopen and resume from its persisted checkpoints. */
+  resumeRunId?: string;
   /** Name of the user — injected into the system prompt for personalization. */
   userName?: string;
 }
 
 export interface AgentStreamEvent {
+  agent?: string;
+  auditTelemetry?: {
+    activeStage: AuditStage;
+    candidateIds: string[];
+    verifiedFindingIds: string[];
+  };
+  detail?: string;
   humanInputRequest?: HumanInputRequest;
-  kind: 'human_input_required' | 'status' | 'swarm_state' | StreamActivity['kind'];
+  kind: 'agent_progress' | 'audit_telemetry' | 'human_input_required' | 'status' | 'swarm_state' | 'token_usage' | StreamActivity['kind'];
   message: string;
+  resultPreview?: string;
+  stage?: AuditStage;
+  succeeded?: boolean;
   swarmState?: SwarmStateSnapshot;
   timestamp: string;
   toolCallId?: string;
   toolName?: string;
-}
-
-const REPORT_REPAIR_SYSTEM_PROMPT = `You are a strict JSON repair engine.
-Return only valid JSON for this schema:
-{
-  "findings": [
-    {
-      "vuln_id": "string",
-      "title": "string",
-      "severity_label": "Critical|High|Medium|Low|Info",
-      "cvss_v31_score": 0.0,
-      "cvss_v31_vector": "CVSS:3.1/...",
-      "cvss_v40_score": null,
-      "cwe": "CWE-000",
-      "file_paths": ["path/to/file"]
-    }
-  ]
-}
-If no findings, return {"findings":[]}.
-Do not include markdown fences or extra text.`;
-
-function normalizeRole(role: string): 'assistant' | 'system' | 'tool' | 'user' {
-  if (role === 'assistant' || role === 'tool' || role === 'user') {
-    return role;
-  }
-
-  return 'system';
-}
-
-function maybeCreateHttpInvoker(endpoint?: string): MCPRawInvoker | undefined {
-  const normalizedEndpoint = endpoint?.trim();
-  if (!normalizedEndpoint) {
-    return undefined;
-  }
-
-  // Validate the URL to prevent SSRF against internal services
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(normalizedEndpoint);
-  } catch {
-    logToStderr(`[MCP] Invalid endpoint URL: "${normalizedEndpoint}". MCP adapter disabled.`);
-    return undefined;
-  }
-
-  // Block obviously internal targets (loopback, link-local, private ranges)
-  if (isBlockedHost(parsedUrl.hostname)) {
-    logToStderr(`[MCP] Refusing to connect to internal host: "${parsedUrl.hostname}". MCP adapter disabled.`);
-    return undefined;
-  }
-
-  const validUrl = parsedUrl.href;
-
-  return async (operation: string, input: Record<string, unknown>) => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30_000); // 30s timeout
-
-    try {
-      const response = await fetch(validUrl, {
-        body: JSON.stringify({ input, operation }),
-        headers: {
-          'content-type': 'application/json',
-        },
-        method: 'POST',
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`MCP endpoint error (${response.status}): ${response.statusText}`);
-      }
-
-      const rawBody = await response.text();
-      if (!rawBody) {
-        return '';
-      }
-
-      try {
-        return JSON.parse(rawBody) as unknown;
-      } catch {
-        return rawBody;
-      }
-    } finally {
-      clearTimeout(timeoutId);
-    }
+  usage?: {
+    completion: number;
+    prompt: number;
+    total: number;
   };
 }
 
-/**
- * Block connections to hosts that are clearly internal/private.
- * Prevents SSRF attacks where a compromised MCP endpoint URL points
- * to internal services.
- */
-function isBlockedHost(hostname: string): boolean {
-  // Loopback
-  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '0.0.0.0') {
-    return true;
-  }
-  // Link-local
-  if (hostname.startsWith('169.254.')) return true;
-  // Private ranges
-  if (hostname.startsWith('10.') || hostname.startsWith('192.168.') || hostname.startsWith('172.16.') || hostname.startsWith('172.17.')) {
-    // Allow 172.17.x.x only if it's a Docker bridge, but better safe than sorry
-    return true;
-  }
-  // More specific 172.16-31 range
-  const ipParts = hostname.split('.');
-  if (ipParts.length === 4) {
-    const second = parseInt(ipParts[1]!, 10);
-    if (ipParts[0] === '172' && second >= 16 && second <= 31) return true;
-  }
-  return false;
-}
-
-function toContentString(content: ModelMessage['content']): string {
-  if (typeof content === 'string') {
-    return content;
-  }
-
-  return JSON.stringify(content);
-}
-
-/**
- * Write to stderr without interfering with Ink's stdout rendering.
- */
-function logToStderr(message: string): void {
-  process.stderr.write(`[ShadowAuditor] ${message}\n`);
+export interface AuditStatus {
+  completed: boolean;
+  evidenceActions: number;
+  inspectedPaths: string[];
 }
 
 export class AgentSession {
+  private activeOperation: null | string = null;
+  private activeOperationController: AbortController | null = null;
+  private activeOperationPromise: null | Promise<unknown> = null;
   private artifacts: null | RunArtifacts = null;
+  private auditStatus: AuditStatus = { completed: false, evidenceActions: 0, inspectedPaths: [] };
+  private checkpointer: null | PersistentCheckpointSaver = null;
   private compiledWorkflow: null | ReturnType<typeof compileWorkflow> = null;
   private diffScopeHint: string;
+  private disposed = false;
+  private disposePromise: null | Promise<void> = null;
   private expertUnsafe: boolean;
+  private readonly humanInteraction = new HumanInteractionService();
+  private readonly initializationController = new AbortController();
   private initialized: Promise<void>;
   private langchainModel: BaseChatModel | null = null;
+  private lastRunFindings: EnhancedFinding[] = [];
+  private readonly latestFindings = new Map<string, EnhancedFinding>();
   private mcpManager: MCPManager | null = null;
   private messages: ModelMessage[] = [];
   private missionEngine: MissionEngine | null = null;
-  private model: LanguageModel;
-  private runtime: RuntimeSettings;
+  private readonly operationTimeoutMs: number;
   private reportBuilder: null | ReportBuilder = null;
+  private readonly resumeRunId: string | undefined;
+  private runtime: RuntimeSettings;
+  private runtimeToolAssembly: null | RuntimeToolAssembly = null;
   private runtimeWarnings: string[] = [];
   private semanticIndex: null | SemanticIndex = null;
+  private suppressionStore: FalsePositiveStore | null = null;
   private swarmCoordinator: null | SwarmCoordinator = null;
   private systemPrompt = '';
   private threadCounter = 0;
@@ -216,14 +136,15 @@ export class AgentSession {
   private userName: string;
 
   constructor(
-    private readonly config: ShadowConfig,
+    private config: ShadowConfig,
     private readonly repoMap: string,
     private readonly targetPath: string,
     options: AgentSessionOptions = {},
   ) {
-    this.model = getModel(config);
     this.expertUnsafe = options.expertUnsafe ?? config.expertUnsafe ?? false;
     this.diffScopeHint = options.diffScopeHint ?? '';
+    this.operationTimeoutMs = options.operationTimeoutMs ?? 30 * 60 * 1000;
+    this.resumeRunId = options.resumeRunId;
     this.userName = options.userName ?? 'User';
     this.runtime = resolveRuntimeSettings(
       config,
@@ -263,15 +184,6 @@ Use your tools to inspect implementation details, verify assumptions, and produc
   }
 
   /**
-   * Wait for the session to finish initialization.
-   * Public accessor for worker-thread and TUI code that needs to
-   * await readiness without reaching into private fields.
-   */
-  async waitForReady(): Promise<void> {
-    await this.initialized;
-  }
-
-  /**
    * Snapshot of runtime warnings collected during initialization.
    * Exposed read-only so worker threads can forward them to the TUI.
    */
@@ -279,24 +191,119 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     return this.runtimeWarnings;
   }
 
-  /**
-   * Check if the workflow is currently paused awaiting human input.
-   */
-  async isPausedAwaitingHumanInput(): Promise<boolean> {
-    await this.initialized;
-    if (!this.compiledWorkflow) return false;
+  cancelActiveOperation(): boolean {
+    if (!this.activeOperationController || this.activeOperationController.signal.aborted) {
+      return false;
+    }
 
-    const config = {
+    this.activeOperationController.abort(new Error('Operation cancelled by the user.'));
+    return true;
+  }
+
+  async compactContext(): Promise<{ afterTokens: number; beforeTokens: number }> {
+    return this.runOperation('compact context', () => this.compactContextInternal());
+  }
+
+  // Kept adjacent to the public entry point because automatic compaction must bypass its operation lock.
+  private async compactContextInternal(): Promise<{ afterTokens: number; beforeTokens: number }> {
+    await this.initialized;
+    if (!this.compiledWorkflow || !this.langchainModel) {
+      throw new Error('Agent workflow is not ready for context compaction.');
+    }
+
+    const graphConfig = {
       configurable: { thread_id: 'session_main' },
       version: 'v3' as const,
     };
-
-    try {
-      const stateSnapshot = await this.compiledWorkflow.getState(config);
-      return stateSnapshot?.values?.pendingHumanInput != null;
-    } catch {
-      return false;
+    const snapshot = await this.compiledWorkflow.getState(graphConfig);
+    const values = snapshot.values as {
+      auditedFiles?: string[];
+      discoveredFindings?: string[];
+      messages?: Array<{content: unknown}>;
+      mission?: string;
+      pendingHumanInput?: HumanInputRequest | null;
+      pipelineFindings?: EnhancedFinding[];
+      sastAudit?: unknown;
+      verdicts?: unknown[];
+      workingMemory?: string;
+    };
+    if (values.pendingHumanInput !== null && values.pendingHumanInput !== undefined) {
+      throw new Error('Context cannot be compacted while human input is pending. Respond to the request first.');
     }
+
+    const messages = values.messages ?? [];
+    const beforeTokens = estimateContextTokens(messages);
+    if (messages.length < 3) return {afterTokens: beforeTokens, beforeTokens};
+
+    const durableState = JSON.stringify({
+      auditedFiles: values.auditedFiles ?? [],
+      discoveredFindings: values.discoveredFindings ?? [],
+      mission: values.mission ?? '',
+      pipelineFindings: values.pipelineFindings ?? [],
+      sastAudit: values.sastAudit ?? null,
+      verdicts: values.verdicts ?? [],
+      workingMemory: values.workingMemory ?? '',
+    });
+    const transcript = messages.map((message) => messageText(message.content)).join('\n\n');
+    const signal = this.activeOperationController?.signal;
+    signal?.throwIfAborted();
+    const response = await this.langchainModel.invoke(
+      [
+        new SystemMessage(
+          'Create a precise continuation summary for an active security audit. Preserve every verified fact, candidate ID, file and line, source-to-sink path, tool result, rejected hypothesis, unresolved task, user constraint, and workflow stage. Do not invent evidence. Return Markdown only.',
+        ),
+        new HumanMessage(`DURABLE STRUCTURED STATE:\n${durableState}\n\nTRANSCRIPT:\n${transcript}`),
+      ],
+      {signal},
+    );
+    signal?.throwIfAborted();
+    const summary = messageText(response.content).trim();
+    if (!summary) throw new Error('The model returned an empty context summary.');
+
+    const replacement = new HumanMessage({
+      additional_kwargs: { shadowCompactReplace: true },
+      content: `## COMPACTED AUDIT CONTEXT\n\n${summary}`,
+    });
+    await this.compiledWorkflow.updateState(
+      graphConfig,
+      {
+        messages: [replacement],
+        workingMemory: summary.slice(0, 20_000),
+      },
+    );
+    return {
+      afterTokens: estimateContextTokens([replacement]),
+      beforeTokens,
+    };
+  }
+
+  async dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+
+    this.disposed = true;
+    this.activeOperationController?.abort(new Error('Agent session disposed.'));
+    this.initializationController.abort(new Error('Agent session disposed during initialization.'));
+    const activeOperationPromise = this.activeOperationPromise;
+    this.disposePromise = (async () => {
+      try {
+        try {
+          await this.initialized;
+        } catch (error) {
+          if (!this.initializationController.signal.aborted) throw error;
+        }
+
+        if (activeOperationPromise) {
+          await Promise.allSettled([activeOperationPromise]);
+        }
+      } finally {
+        this.humanInteraction.reset();
+        await Promise.all([
+          this.runtimeToolAssembly?.cleanup(),
+          this.mcpManager?.shutdown(),
+        ]);
+      }
+    })();
+    return this.disposePromise;
   }
 
   /**
@@ -305,17 +312,22 @@ Use your tools to inspect implementation details, verify assumptions, and produc
    * Runs the complete report pipeline: deduplication, SARIF generation,
    * JSON export, and Markdown export. Returns paths to all generated files.
    */
-  async generateReport(): Promise<{
+  async generateReport(): Promise<null | {
     jsonPath?: string;
     markdownPath?: string;
+    report: EnhancedReport;
     sarifPath?: string;
-  } | null> {
+  }> {
     await this.initialized;
     if (!this.reportBuilder || !this.artifacts) return null;
+    if (!this.auditStatus.completed) {
+      throw new Error(
+        'The audit is incomplete. Finish the reporting stage and resolve rejected findings before exporting a final report.',
+      );
+    }
 
     // Set coverage stats before building
-    const indexedFiles = this.semanticIndex?.getIndexedFilePaths().length ?? 0;
-    this.reportBuilder.setCoverage(indexedFiles);
+    this.reportBuilder.setCoverage(this.auditStatus.inspectedPaths.length);
 
     const generated = await this.reportBuilder.generate();
     logToStderr(`[Report] Generated: ${[
@@ -338,15 +350,90 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     return {
       jsonPath: generated.jsonPath,
       markdownPath: generated.markdownPath,
+      report: generated.report,
       sarifPath: generated.sarifPath,
     };
+  }
+
+  getAuditStatus(): AuditStatus {
+    return {
+      ...this.auditStatus,
+      inspectedPaths: [...this.auditStatus.inspectedPaths],
+    };
+  }
+
+  getLatestFindings(): EnhancedFinding[] {
+    return structuredClone(this.lastRunFindings);
+  }
+
+  async getPendingHumanInput(): Promise<HumanInputRequest | null> {
+    await this.initialized;
+    if (!this.compiledWorkflow) return null;
+
+    const config = {
+      configurable: { thread_id: 'session_main' },
+      version: 'v3' as const,
+    };
+
+    try {
+      const stateSnapshot = await this.compiledWorkflow.getState(config);
+      const request = (
+        stateSnapshot?.values as undefined | {pendingHumanInput?: HumanInputRequest | null}
+      )?.pendingHumanInput;
+      return request ? structuredClone(request) : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
    * Get the report builder (for adding findings during analysis).
    */
-  getReportBuilder(): ReportBuilder | null {
+  getReportBuilder(): null | ReportBuilder {
     return this.reportBuilder;
+  }
+
+  /**
+   * Check if the workflow is currently paused awaiting human input.
+   */
+  async isPausedAwaitingHumanInput(): Promise<boolean> {
+    return (await this.getPendingHumanInput()) !== null;
+  }
+
+  async listSuppressions(): Promise<SuppressionListEntry[]> {
+    await this.initialized;
+    if (!this.suppressionStore) throw new Error('False-positive memory is unavailable.');
+    return this.suppressionStore.list();
+  }
+
+  /**
+   * Restart the QA / verification mission after a verifier agent failure.
+   *
+   * Called when the QA agent (verifier) fails to complete its assigned work,
+   * typically after a major refactoring operation. In swarm mode, this resets
+   * failed verifier tasks and re-invokes the supervisor to re-dispatch them.
+   * In single-agent mode, it re-invokes the LangGraph workflow for a fresh
+   * verification pass via the Reflector node.
+   *
+   * @param onChunk  - Stream callback for incremental text output
+   * @param onEvent  - Optional structured event callback (status, swarm_state, etc.)
+   * @returns The final output text from the restarted mission
+   */
+  async restartQAMission(
+    onChunk: (text: string) => void,
+    onEvent?: (event: AgentStreamEvent) => void,
+  ): Promise<string> {
+    return this.runOperation('restart QA mission', () => this.restartQAMissionInternal(onChunk, onEvent));
+  }
+
+  async resumeFromCheckpoint(
+    onChunk: (text: string) => void,
+    onEvent?: (event: AgentStreamEvent) => void,
+  ): Promise<string> {
+    return this.runOperation(
+      'resume checkpoint',
+      () => this.resumeWithHumanInputInternal(undefined, onChunk, onEvent),
+    );
   }
 
   /**
@@ -355,192 +442,23 @@ Use your tools to inspect implementation details, verify assumptions, and produc
    * Called by the TUI after the user responds to a `human_input_required`
    * event. Injects the answer as a HumanMessage, clears pendingHumanInput,
    * and re-runs the graph from the checkpoint. The stream processing is
-   * identical to sendSingleAgentMessage, including interrupt detection
-   * (a subsequent tool may also need confirmation).
+   * delegated to processAgentStream (shared with sendSingleAgentMessage).
    */
   async resumeWithHumanInput(
     answer: boolean | string,
     onChunk: (text: string) => void,
     onEvent?: (event: AgentStreamEvent) => void,
   ): Promise<string> {
+    return this.runOperation('resume', () => this.resumeWithHumanInputInternal(answer, onChunk, onEvent));
+  }
+
+  async revokeSuppression(
+    suppressionId: string,
+    rationale: string,
+  ): Promise<SuppressionDecision> {
     await this.initialized;
-    if (!this.compiledWorkflow) {
-      throw new Error('Workflow not compiled.');
-    }
-
-    const emitEvent = (event: Omit<AgentStreamEvent, 'timestamp'>) => {
-      onEvent?.({ ...event, timestamp: new Date().toISOString() });
-    };
-
-    // Use the same stable thread ID as sendSingleAgentMessage so the
-    // checkpointer can find the paused state and resume from it.
-    const config = {
-      configurable: { thread_id: 'session_main' },
-      version: 'v3' as const,
-    };
-
-    const answerText = typeof answer === 'boolean'
-      ? (answer ? 'Yes, approved.' : 'No, denied.')
-      : answer;
-
-    const inputs = {
-      messages: [new HumanMessage({ content: answerText })],
-      pendingHumanInput: null,
-    };
-
-    emitEvent({
-      kind: 'status',
-      message: `Resuming with human input: ${answerText}`,
-    });
-
-    let fullResponse = '';
-    let eventsProcessed = 0;
-
-    try {
-      const stream = await this.compiledWorkflow.streamEvents(inputs, config);
-
-      for await (const event of stream) {
-        try {
-          // ── LangGraph v2 ProtocolEvent format ──────────────────────────
-          if (event.type === 'event') {
-            const method = event.method;
-            const params = event.params ?? {};
-            const data = params.data;
-            const nodeName = params.node;
-
-            if (method === 'messages' && data) {
-              eventsProcessed++;
-              const msgData = data as Record<string, unknown>;
-	              const msgEvent = msgData.event as string | undefined;
-
-	              if (msgEvent === 'content-block-delta') {
-	                const delta = msgData.delta as Record<string, unknown> | undefined;
-	                if (delta && typeof delta === 'object') {
-	                  if (delta.type === 'text-delta' && typeof delta.text === 'string') {
-	                    onChunk(delta.text);
-	                    fullResponse += delta.text;
-	                  }
-	                }
-	              } else if (msgEvent === 'content-block-start' || msgEvent === 'content-block-finish') {
-	                const content = msgData.content as Record<string, unknown> | undefined;
-	                if (
-	                  content &&
-	                  typeof content === 'object' &&
-	                  content.type === 'text' &&
-	                  typeof content.text === 'string' &&
-	                  content.text
-	                ) {
-	                  if (!fullResponse.includes(content.text)) {
-	                    onChunk(content.text);
-	                    fullResponse += content.text;
-	                  }
-	                }
-	              }
-	            }
-
-	            if (method === 'updates' && data) {
-	              const updates = data as Record<string, unknown>;
-	              for (const [, value] of Object.entries(updates)) {
-	                const nodeUpdate = value as Record<string, unknown>;
-	                const msgs = nodeUpdate?.messages;
-	                if (Array.isArray(msgs)) {
-	                  for (const msg of msgs) {
-	                    const msgObj = msg as Record<string, unknown>;
-	                    if (msgObj.tool_calls && Array.isArray(msgObj.tool_calls)) {
-	                      for (const tc of msgObj.tool_calls as Array<Record<string, unknown>>) {
-	                        emitEvent({
-	                          kind: 'tool_call',
-	                          message: `[${nodeName ?? 'agent'}] Executing tool: ${tc.name}`,
-	                          toolCallId: tc.id as string,
-	                          toolName: tc.name as string,
-	                        });
-	                      }
-	                    }
-
-	                    if (
-	                      msgObj.type === 'tool' ||
-	                      (typeof (msgObj as any)._getType === 'function' && (msgObj as any)._getType() === 'tool')
-	                    ) {
-	                      emitEvent({
-	                        kind: 'tool_result',
-	                        message: `[${nodeName ?? 'agent'}] Completed tool: ${msgObj.name}`,
-	                        toolCallId: msgObj.tool_call_id as string,
-	                        toolName: msgObj.name as string,
-	                      });
-	                    }
-	                  }
-	                }
-	              }
-	            }
-          }
-        } catch (streamError) {
-          logToStderr(
-            `[streamEvents] Error processing resume event: ${
-              streamError instanceof Error ? streamError.message : String(streamError)
-            }`,
-          );
-        }
-      }
-
-      // Check for another interrupt (nested confirmation)
-
-      // Detect silent failures in resume path too.
-      if (eventsProcessed === 0 && !fullResponse) {
-        logToStderr(
-          `[resumeWithHumanInput] WARNING: No processable events in resumed stream.`,
-        );
-        emitEvent({
-          kind: 'status',
-          message: 'No response received on resume. Check provider logs.',
-        });
-      }
-
-      const stateSnapshot = await this.compiledWorkflow.getState(config);
-      const pendingInput = stateSnapshot?.values?.pendingHumanInput;
-      if (pendingInput) {
-        emitEvent({
-          humanInputRequest: {
-            context: pendingInput.context,
-            question: pendingInput.question,
-            type: pendingInput.type,
-          },
-          kind: 'human_input_required',
-          message: pendingInput.question,
-        });
-        return `[AWAITING_HUMAN_INPUT] ${pendingInput.question}`;
-      }
-
-      await this.persistMessages([{ content: answerText, role: 'user' }]);
-      await this.persistMessages([{ content: fullResponse, role: 'assistant' }]);
-      return fullResponse;
-    } catch (error) {
-      this.runtimeWarnings.push(`Resume failed: ${error instanceof Error ? error.message : String(error)}`);
-      emitEvent({ kind: 'status', message: 'Resume aborted due to error.' });
-
-      // The graph may have paused at HumanIntervention again (nested
-      // confirmation) before the stream error occurred. Check the
-      // checkpointed state so the TUI can show the nested question.
-      try {
-        const stateSnapshot = await this.compiledWorkflow!.getState(config);
-        const pendingInput = stateSnapshot?.values?.pendingHumanInput;
-        if (pendingInput) {
-          emitEvent({
-            humanInputRequest: {
-              context: pendingInput.context,
-              question: pendingInput.question,
-              type: pendingInput.type,
-            },
-            kind: 'human_input_required',
-            message: pendingInput.question,
-          });
-          return `[AWAITING_HUMAN_INPUT] ${pendingInput.question}`;
-        }
-      } catch {
-        // getState itself failed — the checkpoint may be corrupt.
-      }
-
-      return '[Resume Failed]';
-    }
+    if (!this.suppressionStore) throw new Error('False-positive memory is unavailable.');
+    return this.suppressionStore.revoke(suppressionId, this.userName, rationale);
   }
 
   /**
@@ -552,66 +470,102 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     onChunk: (text: string) => void,
     onEvent?: (event: AgentStreamEvent) => void,
   ): Promise<string> {
-    await this.initialized;
-    if (!this.artifacts) {
-      throw new Error('Run artifacts are not initialized.');
-    }
-
-    const emitEvent = (event: Omit<AgentStreamEvent, 'timestamp'>) => {
-      onEvent?.({
-        ...event,
-        timestamp: new Date().toISOString(),
-      });
-    };
-
-    // Route to swarm mode if enabled
-    if (this.config.swarm?.enabled && this.swarmCoordinator) {
-      return this.sendSwarmMessage(userMessage, onChunk, onEvent, emitEvent);
-    }
-
-    return this.sendSingleAgentMessage(userMessage, onChunk, onEvent, emitEvent);
-  }
-
-  private createEmbeddingProvider(): EmbeddingProvider {
-    const indexingConfig = this.config.indexing;
-    const providerDefaults = getEmbeddingDefaults(this.config.provider);
-    const embeddingProvider = indexingConfig?.embeddingProvider ?? providerDefaults.embeddingProvider;
-    const embeddingModel = indexingConfig?.embeddingModel ?? providerDefaults.embeddingModel;
-
-    if (embeddingProvider === 'ollama') {
-      return new OllamaEmbeddingProvider({
-        model: embeddingModel,
-      });
-    }
-
-    if (!this.config.apiKey) {
-      throw new Error(
-        `[SemanticIndex] Embedding provider "${embeddingProvider}" requires an API key for "${this.config.provider}".`,
-      );
-    }
-
-    const normalizedProvider = normalizeProviderName(this.config.provider);
-    const baseUrl = getProviderBaseUrl(normalizedProvider, this.config.customBaseUrl);
-
-    return new OpenAIEmbeddingProvider({
-      apiKey: this.config.apiKey,
-      baseUrl,
-      model: embeddingModel,
-      providerName: normalizedProvider,
+    return this.runOperation('send message', async () => {
+      await this.maybeCompactContext();
+      return this.sendMessageInternal(userMessage, onChunk, onEvent);
     });
   }
 
+  async setReasoningEffort(
+    effort: NonNullable<ShadowConfig['reasoningEffort']>,
+  ): Promise<void> {
+    await this.initialized;
+    if (this.activeOperation) {
+      throw new Error('Reasoning level cannot change while an agent operation is running.');
+    }
+
+    const capabilities = resolveModelCapabilities(this.config);
+    if (!capabilities.supportsReasoningMode) {
+      throw new Error(
+        `${this.config.provider}/${this.config.model} does not expose a supported reasoning-level control.`,
+      );
+    }
+
+    const provider = this.config.provider.trim().toLowerCase();
+    if (provider !== 'azure' && provider !== 'deepseek' && provider !== 'openai') {
+      throw new Error(
+        `Reasoning-level mutation is not implemented for ${provider}; refusing to send an undocumented parameter.`,
+      );
+    }
+
+    this.config = {...this.config, reasoningEffort: effort};
+    await saveConfig(this.config);
+    this.langchainModel = getLangchainModel(this.resolvedModelConfig());
+    this.recompileWorkflow();
+  }
+
+  async suppressFinding(
+    findingId: string,
+    rationale: string,
+    expiresAt?: string,
+  ): Promise<SuppressionDecision> {
+    await this.initialized;
+    if (!this.suppressionStore) throw new Error('False-positive memory is unavailable.');
+    const finding = this.latestFindings.get(findingId);
+    if (!finding) {
+      throw new Error(
+        `Finding "${findingId}" is not available in this session. Run the audit and use the exact reported finding ID.`,
+      );
+    }
+
+    return this.suppressionStore.approve(
+      finding,
+      this.userName,
+      rationale,
+      expiresAt,
+    );
+  }
+
+  /**
+   * Wait for the session to finish initialization.
+   * Public accessor for worker-thread and TUI code that needs to
+   * await readiness without reaching into private fields.
+   */
+  async waitForReady(): Promise<void> {
+    await this.initialized;
+  }
+
+  private ingestFindings(findings: readonly EnhancedFinding[]): void {
+    if (!this.reportBuilder) return;
+    this.lastRunFindings = structuredClone([...findings]);
+    for (const finding of findings) {
+      this.latestFindings.set(finding.vulnId, finding);
+      this.reportBuilder.addFinding(finding);
+    }
+  }
+
   private async initialize(): Promise<void> {
-    // Reset module-level human-in-the-loop state so each session starts
-    // with a clean slate — no stale pending signatures or decision history
-    // from a previous session in the same process.
-    resetHumanInLoopState();
+    const {signal} = this.initializationController;
+    signal.throwIfAborted();
+    this.humanInteraction.reset();
+    this.humanInteraction.enableLangGraphContext();
 
     const pathGuard = await createPathGuard(this.targetPath);
+    signal.throwIfAborted();
     const resolvedTargetPath = pathGuard.rootRealPath;
+    this.suppressionStore = await FalsePositiveStore.open(resolvedTargetPath);
+    const suppressionStatus = this.suppressionStore.getStatus();
+    if (suppressionStatus.storeError || suppressionStatus.invalidRecords > 0) {
+      const warning =
+        `False-positive memory integrity warning: ${suppressionStatus.storeError ??
+          `${suppressionStatus.invalidRecords} invalid record(s)`}. Suppressions fail closed.`;
+      this.runtimeWarnings.push(warning);
+      logToStderr(warning);
+    }
 
     const mcpEnabled = this.isMcpEnabled();
     const mcpTools = await this.initializeMcpTools(resolvedTargetPath, mcpEnabled);
+    signal.throwIfAborted();
 
     const commandPolicyConfig = {
       additionalAllowedCommandPatterns: this.config.commandPolicy?.additionalAllowedCommandPatterns,
@@ -621,19 +575,31 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     };
 
     // Initialize artifacts and mission runtime first (needed for semantic index graph integration)
-    this.artifacts = await RunArtifacts.create(resolvedTargetPath, {
-      maxOutputTokens: this.runtime.maxOutputTokens,
-      maxToolSteps: this.runtime.maxToolSteps,
-      mcpEnabled: Object.keys(mcpTools).length > 0,
+    this.artifacts = this.resumeRunId
+      ? await RunArtifacts.open(resolvedTargetPath, this.resumeRunId)
+      : await RunArtifacts.create(resolvedTargetPath, {
+        maxOutputTokens: this.runtime.maxOutputTokens,
+        maxToolSteps: this.runtime.maxToolSteps,
+        mcpEnabled: Object.keys(mcpTools).length > 0,
+        model: this.config.model,
+        provider: this.config.provider,
+        targetPath: resolvedTargetPath,
+        warnings: [...this.runtimeWarnings],
+      });
+    this.artifacts.assertCompatible({
       model: this.config.model,
       provider: this.config.provider,
-      targetPath: resolvedTargetPath,
-      warnings: [...this.runtimeWarnings],
     });
 
     // Initialize the report builder — findings collected during analysis
     // will be fed through deduplication and SARIF/JSON/Markdown generation.
     this.reportBuilder = new ReportBuilder({
+      modes: {
+        ci: this.config.ci?.enabled ?? false,
+        dast: this.config.dast?.enabled ?? false,
+        remediation: this.config.remediation?.enabled ?? false,
+        swarm: this.config.swarm?.enabled ?? false,
+      },
       outputDir: this.artifacts.getRunDirectory(),
       runId: path.basename(this.artifacts.getRunDirectory()),
       scanMode: this.config.auditMode,
@@ -643,26 +609,42 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     this.reportBuilder.setStartTime(Date.now());
 
     await this.initializeMissionRuntime(resolvedTargetPath);
+    signal.throwIfAborted();
 
     // Initialize semantic indexing after MissionEngine (needs KnowledgeGraph for HybridRetriever)
-    const contextRetrievalTools = await this.initializeSemanticIndex(resolvedTargetPath);
+    const semanticIndex = await initializeSemanticIndex({
+      config: this.config,
+      missionEngine: this.missionEngine,
+      onWarning: (warning) => this.runtimeWarnings.push(warning),
+      runDirectory: this.artifacts.getRunDirectory(),
+      signal,
+      targetPath: resolvedTargetPath,
+    });
+    this.semanticIndex = semanticIndex.index;
+    const contextRetrievalTools = semanticIndex.tools;
+    this.runtimeToolAssembly = await assembleRuntimeTools(
+      this.config,
+      resolvedTargetPath,
+      path.basename(this.artifacts.getRunDirectory()),
+      undefined,
+      (request) => this.humanInteraction.reviewValidatedPatch(request),
+    );
 
     this.tools = {
-      bash: createBashTool({
-        commandPolicy: commandPolicyConfig,
-        workingDirectory: resolvedTargetPath,
-      }),
-      edit_file: createEditFileTool(pathGuard),
+      edit_file: createEditFileTool(pathGuard, this.humanInteraction),
       execute_command: createExecuteCommandTool({
         commandPolicy: commandPolicyConfig,
+        humanInteraction: this.humanInteraction,
         workingDirectory: resolvedTargetPath,
       }),
       finish_task: createFinishTaskTool(),
       list_directory: createListDirectoryTool(pathGuard),
       read_file_content: createReadFileTool(pathGuard),
+      report_finding: createStagedReportFindingTool(),
       search_codebase: createSearchCodebaseTool(pathGuard),
       ...contextRetrievalTools,
       ...mcpTools,
+      ...this.runtimeToolAssembly.tools,
     };
 
     this.systemPrompt = buildSystemPrompt({
@@ -676,28 +658,31 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     });
 
     // Compile the LangGraph workflow ONCE for reuse across messages
-    this.langchainModel = getLangchainModel(this.config);
+    this.langchainModel = getLangchainModel(this.resolvedModelConfig());
     const toolsArray = Object.entries(this.tools).map(([name, tool]) => ({ name, tool }));
 
     // Create a persistent checkpointer for state management and human interrupts
     const runDirectory = this.artifacts.getRunDirectory();
     const checkpointer = new PersistentCheckpointSaver({ storagePath: runDirectory });
+    this.checkpointer = checkpointer;
     await checkpointer.initialize();
+    await checkpointer.prune('session_main');
 
     this.compiledWorkflow = compileWorkflow({
       checkpointer,
+      evidenceVerifier: this.runtimeToolAssembly.evidenceStore,
+      indexingSummary: this.buildIndexingSummary(resolvedTargetPath),
+      maxToolSteps: this.runtime.maxToolSteps,
       model: this.langchainModel,
       providerHint: this.config.provider,
+      repoMap: this.repoMap,
+      suppressionStore: this.suppressionStore,
       systemPrompt: this.systemPrompt,
       tools: toolsArray,
     });
 
     // Initialize swarm coordinator if enabled.
-    // Swarm mode uses the Vercel AI SDK's streamText, not LangGraph's
-    // StateGraph, so human-in-the-loop confirmation must use the blocking
-    // Promise pattern, not LangGraph Command throws.
     if (this.config.swarm?.enabled) {
-      disableLangGraphContext();
       await this.initializeSwarmCoordinator(resolvedTargetPath);
     }
 
@@ -721,6 +706,7 @@ Use your tools to inspect implementation details, verify assumptions, and produc
 
     const manager = new MCPManager({
       expertUnsafe: this.expertUnsafe,
+      humanInteraction: this.humanInteraction,
       targetPath,
     });
 
@@ -768,7 +754,7 @@ Use your tools to inspect implementation details, verify assumptions, and produc
 
       this.missionEngine = new MissionEngine({
         maxTokens: this.runtime.maxOutputTokens * Math.max(1, this.runtime.maxToolSteps),
-        maxToolCalls: this.runtime.maxToolSteps,
+        maxToolCalls: this.runtime.maxToolSteps * MAX_TOOL_CALLS_PER_RESPONSE,
         runId,
         storagePath: runDirectory,
       });
@@ -782,136 +768,7 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     }
   }
 
-  private async initializeSemanticIndex(resolvedTargetPath: string): Promise<ToolSet> {
-    const indexingConfig = this.config.indexing;
-
-    // Skip semantic indexing if explicitly disabled
-    if (indexingConfig?.enabled === false) {
-      return {};
-    }
-
-    try {
-      // Create embedding provider based on configuration
-      let provider = this.createEmbeddingProvider();
-
-      // Preflight: test the embedding provider connection before committing
-      // to a full repository indexing pass. This prevents the 400-error spam
-      // that occurs when a non-OpenAI provider hits the OpenAI embeddings endpoint.
-      if (provider.testConnection) {
-        const isHealthy = await provider.testConnection();
-        if (!isHealthy) {
-          logToStderr(
-            `[SemanticIndex] Embedding provider "${provider.name}" failed health check. ` +
-            'Attempting fallback...',
-          );
-
-          // Try Ollama as fallback
-          const ollamaFallback = new OllamaEmbeddingProvider();
-          const ollamaHealthy = await ollamaFallback.testConnection();
-          if (ollamaHealthy) {
-            logToStderr(
-              '[SemanticIndex] Falling back to local Ollama embeddings.',
-            );
-            provider = ollamaFallback;
-          } else {
-            logToStderr(
-              '[SemanticIndex] Embeddings unavailable or misconfigured. ' +
-              'Disabling semantic search for this session.',
-            );
-            this.semanticIndex = null;
-            this.runtimeWarnings.push(
-              'Semantic indexing disabled: no working embedding provider available. ' +
-              'Install Ollama and pull nomic-embed-text for local embeddings.',
-            );
-            return {};
-          }
-        }
-      }
-
-      // Create semantic index
-      const storagePath = this.artifacts
-        ? path.join(this.artifacts.getRunDirectory(), 'semantic-index')
-        : path.join(resolvedTargetPath, '.shadow-auditor', 'semantic-index');
-
-      this.semanticIndex = new SemanticIndex({
-        maxChunkChars: indexingConfig?.maxChunkChars ?? 4000,
-        provider,
-        rootPath: resolvedTargetPath,
-        storagePath,
-      });
-
-      await this.semanticIndex.initialize();
-
-      // Index the repository — wrapped in its own try/catch so that
-      // embedding failures during indexing are caught cleanly
-      try {
-        const { chunksIndexed, filesIndexed } = await this.semanticIndex.indexRepository(
-          (progress) => {
-            if (progress.filesIndexed % 50 === 0 || progress.filesIndexed === progress.totalFiles) {
-              logToStderr(
-                `[SemanticIndex] Indexed ${progress.filesIndexed}/${progress.totalFiles} files (${progress.currentFile})`,
-              );
-            }
-          },
-        );
-
-        logToStderr(
-          `[SemanticIndex] Indexing complete: ${filesIndexed} files, ${chunksIndexed} chunks`,
-        );
-      } catch (indexError) {
-        // Embedding API failed during indexing — disable gracefully
-        logToStderr(
-          '[SemanticIndex] Embeddings unavailable or misconfigured. ' +
-          'Disabling semantic search for this session.',
-        );
-        this.semanticIndex = null;
-        this.runtimeWarnings.push(
-          `Semantic indexing disabled after embedding error: ${
-            indexError instanceof Error ? indexError.message : String(indexError)
-          }`,
-        );
-        return {};
-      }
-
-      // Build HybridRetriever if MissionEngine graph is available
-      if (this.missionEngine) {
-        const graph = this.missionEngine.getGraph();
-        const retrieval = this.missionEngine.getRetrieval();
-
-        const hybridRetriever = new HybridRetriever(
-          graph,
-          retrieval,
-          this.semanticIndex,
-          { rootPath: resolvedTargetPath },
-        );
-
-        // Attach hybrid retriever to the retrieval service
-        retrieval.setHybridRetriever(hybridRetriever);
-
-        // Create context retrieval tool
-        return {
-          context_retrieval: createContextRetrievalTool({
-            retriever: hybridRetriever,
-            rootPath: resolvedTargetPath,
-          }),
-        };
-      }
-
-      // Fallback: create a minimal hybrid retriever without graph
-      // (MissionEngine may not be initialized yet)
-      return {};
-    } catch {
-      // Top-level catch for any unexpected errors (initialization, etc.)
-      logToStderr(
-        '[SemanticIndex] Embeddings unavailable or misconfigured. ' +
-        'Disabling semantic search for this session.',
-      );
-      this.semanticIndex = null;
-      return {};
-    }
-  }
-
-  private async initializeSwarmCoordinator(resolvedTargetPath: string): Promise<void> {
+  private async initializeSwarmCoordinator(_resolvedTargetPath: string): Promise<void> {
     if (!this.artifacts) {
       return;
     }
@@ -925,7 +782,33 @@ Use your tools to inspect implementation details, verify assumptions, and produc
         auditMode: this.config.auditMode ?? 'balanced',
         config: this.config,
         diffScopeHint: this.diffScopeHint,
-        model: this.model,
+        maxToolSteps: Math.max(
+          1,
+          Math.floor(this.runtime.maxToolSteps * (this.config.swarm?.workerBudgetRatio ?? 1)),
+        ),
+        model: this.langchainModel!,
+        onReportBatch: (findings) => {
+          const blackboard = this.swarmCoordinator?.getBlackboard();
+          if (!blackboard) return { added: false, reason: 'Swarm blackboard is unavailable.' };
+          const claims = blackboard.getAllClaims();
+          for (const { sourceClaimId } of findings) {
+            const claim = claims.find((candidate) => candidate.claimId === sourceClaimId);
+            if (
+              !claim ||
+              (claim.status !== 'verified' && claim.status !== 'consensus') ||
+              !/vulnerab|finding/i.test(claim.claimType)
+            ) {
+              return {
+                added: false,
+                reason: `Source claim "${sourceClaimId}" is not a verified vulnerability claim.`,
+              };
+            }
+          }
+
+          return this.reportBuilder!.addFindingsAtomically(
+            findings.map(({ finding }) => finding),
+          );
+        },
         runId,
         storagePath: path.join(runDirectory, 'swarm'),
       });
@@ -947,60 +830,308 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     return process.env.SHADOW_AUDITOR_ENABLE_MCP === '1';
   }
 
-  private async persistMessages(messages: ModelMessage[]): Promise<void> {
-    if (!this.artifacts) {
+  private async maybeCompactContext(): Promise<void> {
+    if (
+      this.config.contextManagement?.enabled === false ||
+      !this.compiledWorkflow ||
+      this.config.swarm?.enabled
+    ) {
       return;
     }
 
-    for (const message of messages) {
-      await this.artifacts.recordMessage({
-        content: toContentString(message.content),
-        role: normalizeRole(message.role),
-        timestamp: new Date().toISOString(),
-      });
+    const snapshot = await this.compiledWorkflow.getState({
+      configurable: {thread_id: 'session_main'},
+    });
+    const messages = (snapshot.values as {messages?: Array<{content: unknown}>}).messages ?? [];
+    const capacity = effectiveContextWindowTokens(this.config);
+    const threshold = this.config.contextManagement?.compactAt ?? 0.7;
+    if (estimateContextTokens(messages) >= capacity * threshold) {
+      await this.compactContextInternal();
     }
   }
 
-  private async persistToolEvents(steps: Array<StepResult<ToolSet>>): Promise<void> {
+  private async persistMessages(messages: ModelMessage[]): Promise<void> {
+    await persistMessages(this.artifacts, messages);
+  }
+
+  private buildIndexingSummary(targetPath = path.resolve(this.targetPath)): string | undefined {
+    if (!this.semanticIndex) return undefined;
+    const counts = new Map<string, number>();
+    for (const filePath of this.semanticIndex.getIndexedFilePaths()) {
+      const extension = path.extname(filePath).toLowerCase() || '(none)';
+      counts.set(extension, (counts.get(extension) ?? 0) + 1);
+    }
+
+    return JSON.stringify({
+      diagnostics: this.semanticIndex.getIndexingDiagnostics()
+        .slice(0, 20)
+        .map(({filePath, reason}) => ({
+          filePath: path.relative(targetPath, filePath),
+          reason,
+        })),
+      extensions: Object.fromEntries(
+        [...counts].sort(([left], [right]) => left.localeCompare(right)),
+      ),
+      semanticSearchAvailable: this.semanticIndex.semanticSearchAvailable,
+      stats: this.semanticIndex.stats(),
+    });
+  }
+
+  private recompileWorkflow(): void {
+    if (!this.checkpointer || !this.langchainModel || !this.runtimeToolAssembly) {
+      throw new Error('Agent workflow cannot be recompiled before initialization completes.');
+    }
+
+    this.compiledWorkflow = compileWorkflow({
+      checkpointer: this.checkpointer,
+      evidenceVerifier: this.runtimeToolAssembly.evidenceStore,
+      indexingSummary: this.buildIndexingSummary(),
+      maxToolSteps: this.runtime.maxToolSteps,
+      model: this.langchainModel,
+      providerHint: this.config.provider,
+      repoMap: this.repoMap,
+      suppressionStore: this.suppressionStore ?? undefined,
+      systemPrompt: this.systemPrompt,
+      tools: Object.entries(this.tools).map(([name, tool]) => ({name, tool})),
+    });
+  }
+
+  private resolvedModelConfig(): ShadowConfig {
+    return {...this.config, maxOutputTokens: this.runtime.maxOutputTokens};
+  }
+
+  private async restartQAMissionInternal(
+    onChunk: (text: string) => void,
+    onEvent?: (event: AgentStreamEvent) => void,
+  ): Promise<string> {
+
+    const emitEvent = (event: Omit<AgentStreamEvent, 'timestamp'>) => {
+      onEvent?.({ ...event, timestamp: new Date().toISOString() });
+    };
+
+    // Swarm mode: restart via the coordinator's dedicated restart path.
+    if (this.config.swarm?.enabled && this.swarmCoordinator) {
+      emitEvent({
+        kind: 'status',
+        message: 'Restarting QA verification mission (swarm mode)...',
+      });
+
+      try {
+        const result = await this.swarmCoordinator.restartMission();
+        onChunk(result);
+        await this.persistMessages([
+          { content: '[QA Mission Restarted]', role: 'user' },
+          { content: result, role: 'assistant' },
+        ]);
+        return result;
+      } catch (error) {
+        this.runtimeWarnings.push(
+          `QA mission restart failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        emitEvent({ kind: 'status', message: 'QA mission restart aborted due to error.' });
+        return '[QA Restart Failed]';
+      }
+    }
+
+    // Single-agent mode: re-invoke the LangGraph workflow with a QA-focused
+    // prompt that triggers the Reflector for fresh verification.
+    emitEvent({
+      kind: 'status',
+      message: 'Restarting QA verification (single-agent Reflector pass)...',
+    });
+
+    return this.sendSingleAgentMessage(
+      'RESTART QUALITY ASSURANCE: Perform a complete quality review of all previous findings. ' +
+      'Verify each vulnerability candidate for accuracy, completeness, and evidence quality. ' +
+      'Re-run the Reflector quality gate on all analysis output.',
+      onChunk,
+      onEvent,
+      emitEvent,
+    );
+  }
+
+  private async resumeWithHumanInputInternal(
+    answer: boolean | string | undefined,
+    onChunk: (text: string) => void,
+    onEvent?: (event: AgentStreamEvent) => void,
+  ): Promise<string> {
+    if (!this.compiledWorkflow) {
+      throw new Error('Workflow not compiled.');
+    }
+
+    const emitEvent = (event: Omit<AgentStreamEvent, 'timestamp'>) => {
+      onEvent?.({ ...event, timestamp: new Date().toISOString() });
+    };
+
+    const config = {
+      configurable: { thread_id: 'session_main' },
+      recursionLimit: WORKFLOW_RECURSION_LIMIT,
+      signal: this.activeOperationController?.signal,
+      version: 'v3' as const,
+    };
+
+    const answerText = typeof answer === 'boolean'
+      ? (answer ? 'Yes, approved.' : 'No, denied.')
+      : answer ?? '';
+    if (typeof answer === 'boolean') {
+      const snapshot = await this.compiledWorkflow.getState(config);
+      const pendingRequest = (
+        snapshot.values as undefined | {pendingHumanInput?: HumanInputRequest}
+      )?.pendingHumanInput;
+      if (
+        pendingRequest?.type !== 'confirmation' ||
+        !pendingRequest.requestId ||
+        !this.humanInteraction.resolvePendingDecision(answer, pendingRequest.requestId)
+      ) {
+        throw new Error('No valid pending confirmation exists for this response.');
+      }
+    }
+
+    emitEvent({
+      kind: 'status',
+      message: answer === undefined
+        ? 'Resuming interrupted workflow from its durable checkpoint.'
+        : `Resuming with human input: ${answerText}`,
+    });
+
+    try {
+      if (answer !== undefined) {
+        await this.persistMessages([{content: answerText, role: 'user'}]);
+        await this.compiledWorkflow.updateState(
+          config,
+          {pendingHumanInput: null},
+          'HumanIntervention',
+        );
+      }
+
+      const result = await processAgentStream(onChunk, emitEvent, {
+        inputs: null,
+        lcConfig: config,
+        logLabel: 'resumeWithHumanInput',
+        providerHint: this.config.provider,
+        reasoningSummaryEnabled:
+          this.config.provider === 'azure' && Boolean(this.config.azure?.reasoningSummary),
+        recordToolEvent: (event) => this.artifacts!.recordToolEvent(event),
+        workflow: this.compiledWorkflow,
+      });
+      await this.checkpointer?.prune('session_main');
+      this.ingestFindings(result.findings);
+      if (result.pipelineArtifacts) {
+        if (!this.artifacts) {
+          throw new Error('Run artifacts are unavailable after workflow execution.');
+        }
+
+        await this.artifacts.writePipelineArtifacts(result.pipelineArtifacts);
+      }
+
+      const previousAuditStatus = this.auditStatus;
+      this.auditStatus = {
+        completed: result.finishTaskCompleted && result.reportFindingsAccepted,
+        evidenceActions: Math.max(previousAuditStatus.evidenceActions, result.evidenceActions),
+        inspectedPaths: [
+          ...new Set([...previousAuditStatus.inspectedPaths, ...result.inspectedPaths]),
+        ],
+      };
+
+      // If there was a nested interrupt, return the marker
+      if (result.humanInputRequest) {
+        return result.fullResponse;
+      }
+
+      if (!result.fullResponse.trim()) {
+        throw new Error('The workflow completed without producing a public response.');
+      }
+
+      // Persist the assistant response
+      await this.persistMessages([{ content: result.fullResponse, role: 'assistant' }]);
+      if (this.auditStatus.completed) await this.artifacts?.markCompleted();
+      return result.fullResponse;
+    } catch (error) {
+      const rawDetail = error instanceof Error ? error.message : String(error);
+      const detail = this.config.provider === 'azure' && this.config.azure
+        ? diagnoseAzureError(rawDetail, this.config.azure)
+        : rawDetail;
+      this.runtimeWarnings.push(`Resume failed: ${detail}`);
+      throw new Error(`Resume failed: ${detail}`, { cause: error });
+    }
+  }
+
+  private async runOperation<T>(name: string, operation: () => Promise<T>): Promise<T> {
+    await this.initialized;
+    if (this.disposed) {
+      throw new Error('Agent session is disposed.');
+    }
+
+    if (this.activeOperation) {
+      throw new Error(`Cannot ${name} while "${this.activeOperation}" is in progress.`);
+    }
+
+    this.activeOperation = name;
+    this.activeOperationController = new AbortController();
+    const timer = setTimeout(() => {
+      this.activeOperationController?.abort(
+        new Error(`${name} exceeded the ${this.operationTimeoutMs}ms operation deadline.`),
+      );
+    }, this.operationTimeoutMs);
+    timer.unref?.();
+
+    const operationPromise = Promise.resolve().then(operation);
+    this.activeOperationPromise = operationPromise;
+    try {
+      return await operationPromise;
+    } finally {
+      clearTimeout(timer);
+      this.activeOperationController = null;
+      if (this.activeOperationPromise === operationPromise) {
+        this.activeOperationPromise = null;
+      }
+
+      this.activeOperation = null;
+    }
+  }
+
+  private async sendMessageInternal(
+    userMessage: string,
+    onChunk: (text: string) => void,
+    onEvent?: (event: AgentStreamEvent) => void,
+  ): Promise<string> {
     if (!this.artifacts) {
-      return;
+      throw new Error('Run artifacts are not initialized.');
     }
 
-    for (const step of steps) {
-      for (const toolCall of step.toolCalls) {
-        await this.artifacts.recordToolEvent({
-          data: toolCall.input,
-          event: 'call',
-          timestamp: new Date().toISOString(),
-          toolCallId: toolCall.toolCallId,
-          toolName: toolCall.toolName,
-        });
-      }
+    this.auditStatus = { completed: false, evidenceActions: 0, inspectedPaths: [] };
+    this.reportBuilder?.reset();
+    this.latestFindings.clear();
+    this.lastRunFindings = [];
+    await this.artifacts.markActive();
 
-      for (const toolResult of step.toolResults) {
-        await this.artifacts.recordToolEvent({
-          data: toolResult.output,
-          event: 'result',
-          timestamp: new Date().toISOString(),
-          toolCallId: toolResult.toolCallId,
-          toolName: toolResult.toolName,
-        });
-      }
+    const emitEvent = (event: Omit<AgentStreamEvent, 'timestamp'>) => {
+      onEvent?.({
+        ...event,
+        timestamp: new Date().toISOString(),
+      });
+    };
+
+    await this.persistMessages([{content: userMessage, role: 'user'}]);
+    // Route to swarm mode if enabled
+    if (this.config.swarm?.enabled && this.swarmCoordinator) {
+      return this.sendSwarmMessage(userMessage, onChunk, onEvent, emitEvent);
     }
+
+    return this.sendSingleAgentMessage(userMessage, onChunk, onEvent, emitEvent);
   }
 
   /**
    * Send message through the single-agent LangGraph workflow.
    *
    * Uses a persistent thread ID so the checkpointer maintains conversation
-   * state across messages. This lets the model see prior turns and the
-   * initial system context (repo map, tool descriptions) that was seeded
-   * into the first invocation.
+   * state across messages. Stream processing is delegated to processAgentStream
+   * (shared with resumeWithHumanInput).
    */
   private async sendSingleAgentMessage(
     userMessage: string,
     onChunk: (text: string) => void,
-    onEvent: ((event: AgentStreamEvent) => void) | undefined,
+    _onEvent: ((event: AgentStreamEvent) => void) | undefined,
     emitEvent: (event: Omit<AgentStreamEvent, 'timestamp'>) => void,
   ): Promise<string> {
     emitEvent({
@@ -1008,15 +1139,12 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       message: 'Processing mission sequence...',
     });
 
-    // Declare outside try so they're accessible in catch for state recovery.
-    const threadId = `session_main`;
     this.threadCounter++;
     const lcConfig = {
-      configurable: { thread_id: threadId },
+      configurable: { thread_id: 'session_main' },
+      recursionLimit: WORKFLOW_RECURSION_LIMIT,
+      signal: this.activeOperationController?.signal,
       version: 'v3' as const,
-    };
-    const inputs = {
-      messages: [new HumanMessage({ content: userMessage })],
     };
 
     try {
@@ -1024,190 +1152,79 @@ Use your tools to inspect implementation details, verify assumptions, and produc
         throw new Error('Workflow not compiled. Initialization may have failed.');
       }
 
-      let fullResponse = '';
-      let eventsProcessed = 0;
-
-      // Stream events from the LangGraph execution.
-      // LangGraph v2 emits ProtocolEvent objects: { type: "event", method: "...", params: { ... } }
-      // Older LangChain versions emit: { event: "on_...", data: { ... }, run_id, name }
-      const stream = await this.compiledWorkflow.streamEvents(inputs, lcConfig);
-
-      for await (const event of stream) {
-        try {
-        // ── LangGraph v2 ProtocolEvent format ──────────────────────────
-          if (event.type === 'event') {
-            const method = event.method;
-            const params = event.params ?? {};
-            const data = params.data;
-            const nodeName = params.node;
-
-            // Stream message content chunks from 'messages' events.
-            // v3 ProtocolEvent MessagesData is a discriminated union on
-            // `event`: "message-start", "content-block-start",
-            // "content-block-delta", "content-block-finish",
-            // "message-finish", "error".
-            if (method === 'messages' && data) {
-              eventsProcessed++;
-              const msgData = data as Record<string, unknown>;
-	              const msgEvent = msgData.event as string | undefined;
-
-	              if (msgEvent === 'content-block-delta') {
-	                // Streaming text chunks arrive via text-delta deltas.
-	                const delta = msgData.delta as Record<string, unknown> | undefined;
-	                if (delta && typeof delta === 'object') {
-	                  if (delta.type === 'text-delta' && typeof delta.text === 'string') {
-	                    onChunk(delta.text);
-	                    fullResponse += delta.text;
-	                  }
-	                }
-	              } else if (msgEvent === 'content-block-start' || msgEvent === 'content-block-finish') {
-	                // Finalized text content block (content-block-finish) or
-	                // initial block from non-streaming providers.
-	                const content = msgData.content as Record<string, unknown> | undefined;
-	                if (
-	                  content &&
-	                  typeof content === 'object' &&
-	                  content.type === 'text' &&
-	                  typeof content.text === 'string' &&
-	                  content.text
-	                ) {
-	                  // Avoid emitting duplicates: if deltas already streamed
-	                  // this content, fullResponse already contains it.
-	                  if (!fullResponse.includes(content.text)) {
-	                    onChunk(content.text);
-	                    fullResponse += content.text;
-	                  }
-	                }
-	              }
-	              // "message-start", "message-finish", "error" are metadata-only
-	            }
-
-	            // Track tool invocations and results from 'updates' events.
-	            // Each node update carries the messages produced during that
-	            // step, including AIMessages with tool_calls and ToolMessages
-	            // with tool results.
-	            if (method === 'updates' && data) {
-              const updates = data as Record<string, unknown>;
-              for (const [, value] of Object.entries(updates)) {
-                const nodeUpdate = value as Record<string, unknown>;
-                const msgs = nodeUpdate?.messages;
-                if (Array.isArray(msgs)) {
-                  for (const msg of msgs) {
-                    const msgObj = msg as Record<string, unknown>;
-                    // AIMessage with tool calls
-                    if (msgObj.tool_calls && Array.isArray(msgObj.tool_calls)) {
-                      for (const tc of msgObj.tool_calls as Array<Record<string, unknown>>) {
-                        emitEvent({
-                          kind: 'tool_call',
-                          message: `[${nodeName ?? 'agent'}] Executing tool: ${tc.name}`,
-                          toolCallId: tc.id as string,
-                          toolName: tc.name as string,
-                        });
-                      }
-                    }
-
-                    // ToolMessage with results
-                    if (
-                      msgObj.type === 'tool' ||
-                      (typeof (msgObj as any)._getType === 'function' && (msgObj as any)._getType() === 'tool')
-                    ) {
-                      emitEvent({
-                        kind: 'tool_result',
-                        message: `[${nodeName ?? 'agent'}] Completed tool: ${msgObj.name}`,
-                        toolCallId: msgObj.tool_call_id as string,
-                        toolName: msgObj.name as string,
-                      });
-                    }
-                  }
-                }
-              }
-            }
-          }
-        } catch (streamError) {
-          // Don't let a single malformed event kill the entire stream.
-          // Log and continue processing subsequent events.
-          logToStderr(
-            `[streamEvents] Error processing event: ${
-              streamError instanceof Error ? streamError.message : String(streamError)
-            }`,
-          );
-        }
-      }
-
-      // After the stream ends, check if the graph paused at HumanIntervention
-      // (interruptBefore). This happens when a tool threw a Command to request
-      // human confirmation. The stream completes gracefully (no error), but the
-      // checkpointed state has pendingHumanInput set.
-
-      // Detect silent failures: if the stream produced zero processable events
-      // (no messages, no tool calls, nothing), the model may have failed
-      // silently or the provider returned an unrecognized event format.
-      if (eventsProcessed === 0 && !fullResponse) {
-        logToStderr(
-          `[sendSingleAgentMessage] WARNING: No processable events in stream. ` +
-          'The provider may have returned an unrecognized response format, ' +
-          'or the model failed silently.',
-        );
-        emitEvent({
-          kind: 'status',
-          message: 'No response received from the model. Check provider logs.',
-        });
-      }
-
-      const stateSnapshot = await this.compiledWorkflow.getState(lcConfig);
-      const pendingInput = stateSnapshot?.values?.pendingHumanInput;
-      if (pendingInput) {
-        emitEvent({
-          humanInputRequest: {
-            context: pendingInput.context,
-            question: pendingInput.question,
-            type: pendingInput.type,
+      const result = await processAgentStream(onChunk, emitEvent, {
+        inputs: {
+          activeStage: 'codebase_intelligence',
+          auditedFiles: [],
+          auditRunId: randomUUID(),
+          codebaseIntelligence: null,
+          devilsAdvocate: null,
+          discoveredFindings: [],
+          evidenceActions: 0,
+          messages: [new HumanMessage({ content: userMessage })],
+          mission: userMessage,
+          pendingHumanInput: null,
+          pipelineFindings: [],
+          pipelineReport: '',
+          sastAudit: null,
+          stageIterations: {
+            codebase_intelligence: 0,
+            devils_advocate: 0,
+            reporting: 0,
+            sast_audit: 0,
           },
-          kind: 'human_input_required',
-          message: pendingInput.question,
-        });
-
-        // Don't persist yet — the conversation is incomplete until the human
-        // responds. Return a marker so the TUI knows the run is paused.
-        return `[AWAITING_HUMAN_INPUT] ${pendingInput.question}`;
-      }
-
-      await this.persistMessages([{ content: userMessage, role: 'user' }]);
-      await this.persistMessages([{ content: fullResponse, role: 'assistant' }]);
-
-      return fullResponse;
-    } catch (error) {
-      this.runtimeWarnings.push(`Workflow execution failed: ${error instanceof Error ? error.message : String(error)}`);
-      emitEvent({
-        kind: 'status',
-        message: 'Workflow execution aborted due to error.',
+          verdicts: [],
+          workingMemory: '',
+        },
+        lcConfig,
+        logLabel: 'sendSingleAgentMessage',
+        providerHint: this.config.provider,
+        reasoningSummaryEnabled:
+          this.config.provider === 'azure' && Boolean(this.config.azure?.reasoningSummary),
+        recordToolEvent: (event) => this.artifacts!.recordToolEvent(event),
+        workflow: this.compiledWorkflow,
       });
-
-      // The graph may have paused at HumanIntervention before the stream
-      // error occurred (e.g., a tool threw a Command, then the stream
-      // connection broke). Check the checkpointed state so the TUI can
-      // still show the question instead of silently discarding the pause.
-      try {
-        const stateSnapshot = await this.compiledWorkflow!.getState(lcConfig);
-        const pendingInput = stateSnapshot?.values?.pendingHumanInput;
-        if (pendingInput) {
-          emitEvent({
-            humanInputRequest: {
-              context: pendingInput.context,
-              question: pendingInput.question,
-              type: pendingInput.type,
-            },
-            kind: 'human_input_required',
-            message: pendingInput.question,
-          });
-          return `[AWAITING_HUMAN_INPUT] ${pendingInput.question}`;
+      await this.checkpointer?.prune('session_main');
+      this.ingestFindings(result.findings);
+      if (result.pipelineArtifacts) {
+        if (!this.artifacts) {
+          throw new Error('Run artifacts are unavailable after workflow execution.');
         }
-      } catch {
-        // getState itself failed — the checkpoint may be corrupt. Continue
-        // to return the failure marker below.
+
+        await this.artifacts.writePipelineArtifacts(result.pipelineArtifacts);
       }
 
-      return '[Workflow Failed]';
+      this.auditStatus = {
+        completed: result.finishTaskCompleted && result.reportFindingsAccepted,
+        evidenceActions: result.evidenceActions,
+        inspectedPaths: result.inspectedPaths,
+      };
+
+      // If there was a human interrupt, return the marker (don't persist yet)
+      if (result.humanInputRequest) {
+        return result.fullResponse;
+      }
+
+      if (!result.fullResponse.trim()) {
+        throw new Error('The workflow completed without producing a public response.');
+      }
+
+      // Persist the assistant response
+      await this.persistMessages([{ content: result.fullResponse, role: 'assistant' }]);
+      if (this.auditStatus.completed) await this.artifacts?.markCompleted();
+      return result.fullResponse;
+    } catch (error) {
+      const rawDetail = error instanceof Error ? error.message : String(error);
+      const providerDetail = this.config.provider === 'azure' && this.config.azure
+        ? diagnoseAzureError(rawDetail, this.config.azure)
+        : rawDetail;
+      const detail = /recursion limit/i.test(providerDetail)
+        ? 'The analysis reached its safety limit before producing a final answer. Try narrowing the target or request.'
+        : providerDetail;
+      this.runtimeWarnings.push(`Workflow execution failed: ${detail}`);
+      logToStderr(`[sendSingleAgentMessage] Workflow execution failed: ${detail}`);
+      if (error instanceof Error && error.stack) logToStderr(error.stack);
+      throw new Error(detail, { cause: error });
     }
   }
 
@@ -1217,7 +1234,7 @@ Use your tools to inspect implementation details, verify assumptions, and produc
   private async sendSwarmMessage(
     userMessage: string,
     onChunk: (text: string) => void,
-    onEvent: ((event: AgentStreamEvent) => void) | undefined,
+    _onEvent: ((event: AgentStreamEvent) => void) | undefined,
     emitEvent: (event: Omit<AgentStreamEvent, 'timestamp'>) => void,
   ): Promise<string> {
     emitEvent({
@@ -1225,10 +1242,27 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       message: 'Dispatching to swarm coordinator...',
     });
 
+    const toolEvents: ToolArtifactEvent[] = [];
+    let persistedToolEvents = 0;
     try {
+      let evidenceActions = 0;
+      const inspectedPaths = new Set<string>();
       const result = await this.swarmCoordinator!.executeMission(
         userMessage,
         (workerRole, activity) => {
+          if (
+            activity.kind === 'tool_result' &&
+            activity.succeeded !== false &&
+            (
+              activity.toolName === 'context_retrieval' ||
+              activity.toolName === 'read_file_content' ||
+              activity.toolName === 'search_codebase'
+            )
+          ) {
+            evidenceActions++;
+            collectInspectedPaths(inspectedPaths, activity.toolName, activity.args, activity.result);
+          }
+
           if (activity.kind === 'swarm_state' && activity.swarmState) {
             // Structured swarm snapshot for the live panel / status bar.
             emitEvent({
@@ -1239,85 +1273,115 @@ Use your tools to inspect implementation details, verify assumptions, and produc
             return;
           }
 
+          if (activity.kind === 'token_usage' && activity.usage) {
+            emitEvent({
+              kind: 'token_usage',
+              message: `[${workerRole}] Model usage recorded.`,
+              usage: activity.usage,
+            });
+            return;
+          }
+
+          if (
+            (activity.kind === 'tool_call' || activity.kind === 'tool_result') &&
+            activity.toolName
+          ) {
+            toolEvents.push({
+              data: activity.kind === 'tool_call' ? activity.args : activity.result,
+              event: activity.kind === 'tool_call' ? 'call' : 'result',
+              timestamp: new Date().toISOString(),
+              toolCallId: activity.toolCallId ?? `${workerRole}-${activity.toolName}-${toolEvents.length}`,
+              toolName: activity.toolName,
+            });
+          }
+
           emitEvent({
             kind: activity.kind === 'tool_call' ? 'tool_call' : activity.kind === 'tool_result' ? 'tool_result' : 'status',
             message: `[${workerRole}] ${activity.message}`,
             toolName: activity.toolName,
           });
         },
+        this.activeOperationController?.signal,
       );
+      for (const event of toolEvents) {
+        await this.artifacts!.recordToolEvent(event);
+        persistedToolEvents++;
+      }
 
       onChunk(result);
-      await this.persistMessages([
-        { content: userMessage, role: 'user' },
-        { content: result, role: 'assistant' },
-      ]);
+      await this.persistMessages([{ content: result, role: 'assistant' }]);
+      this.auditStatus = {
+        completed: true,
+        evidenceActions,
+        inspectedPaths: [...inspectedPaths],
+      };
+      await this.artifacts?.markCompleted();
 
       return result;
     } catch (error) {
-      this.runtimeWarnings.push(`Swarm execution failed: ${error instanceof Error ? error.message : String(error)}`);
-      emitEvent({
-        kind: 'status',
-        message: 'Swarm execution aborted due to error.',
-      });
-      return '[Swarm Failed]';
+      for (const event of toolEvents.slice(persistedToolEvents)) {
+        await this.artifacts?.recordToolEvent(event);
+      }
+
+      const rawDetail = error instanceof Error ? error.message : String(error);
+      const detail = this.config.provider === 'azure' && this.config.azure
+        ? diagnoseAzureError(rawDetail, this.config.azure)
+        : rawDetail;
+      this.runtimeWarnings.push(`Swarm execution failed: ${detail}`);
+      logToStderr(`[sendSwarmMessage] Swarm execution failed: ${detail}`);
+      if (error instanceof Error && error.stack) logToStderr(error.stack);
+      throw new Error(`Swarm execution failed: ${detail}`, { cause: error });
     }
   }
+}
 
-  private async startMissionCycle(userMessage: string): Promise<null | string> {
-    if (!this.missionEngine) {
-      return null;
-    }
-
-    const hypothesis = this.missionEngine.addHypothesis({
-      confidence: 0.35,
-      description: userMessage.slice(0, 1000),
-      evidenceIds: [],
-      status: 'investigating',
-      type: 'user-request',
-    });
-
-    await this.transitionMission('ORIENT', 'evidence_collected', {
-      hypothesesUpdated: [hypothesis],
-    });
-    await this.transitionMission('DECIDE', 'hypotheses_formed', {});
-
-    const action = this.missionEngine.queueAction({
-      estimatedTokens: Math.min(4096, this.runtime.maxOutputTokens),
-      parameters: {
-        promptPreview: userMessage.slice(0, 240),
-      },
-      priority: 1,
-      rationale: 'Drive the next OODA ACT phase from the latest user request.',
-      toolName: 'llm_orchestrator',
-    });
-
-    await this.transitionMission('ACT', 'action_selected', {
-      newActions: [action],
-    });
-
-    return action.actionId;
+function collectInspectedPaths(
+  inspectedPaths: Set<string>,
+  toolName: string | undefined,
+  args: unknown,
+  result: unknown,
+): void {
+  if (toolName === 'read_file_content' && args && typeof args === 'object') {
+    const filePath = (args as { filePath?: unknown }).filePath;
+    if (typeof filePath === 'string' && filePath.trim()) inspectedPaths.add(filePath.trim());
+    return;
   }
 
-  private async transitionMission(
-    targetPhase: MissionPhase,
-    reason: TransitionReason,
-    context: TransitionContext,
-  ): Promise<void> {
-    if (!this.missionEngine) {
-      return;
+  if (typeof result !== 'string') return;
+  if (toolName === 'context_retrieval') {
+    const matchedFiles = /^Files matched: (.+)$/m.exec(result)?.[1];
+    for (const filePath of matchedFiles?.split(',') ?? []) {
+      if (filePath.trim()) inspectedPaths.add(filePath.trim());
     }
-
-    const currentState = this.missionEngine.getState();
-    if (currentState.currentPhase === targetPhase) {
-      return;
-    }
-
-    const result = await this.missionEngine.transition(targetPhase, reason, context);
-    if (!result.ok) {
-      this.runtimeWarnings.push(
-        `Mission transition ${currentState.currentPhase}→${targetPhase} blocked: ${result.error}`,
-      );
+  } else if (toolName === 'search_codebase') {
+    for (const match of result.matchAll(/^📄 (.+?) — \d+ matches?$/gm)) {
+      if (match[1]?.trim()) inspectedPaths.add(match[1].trim());
     }
   }
+}
+
+function messageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part) => {
+      if (typeof part === 'string') return part;
+      if (part && typeof part === 'object' && 'text' in part) {
+        return typeof part.text === 'string' ? part.text : '';
+      }
+
+      return '';
+    })
+    .join('');
+}
+
+function estimateContextTokens(messages: Array<{content: unknown}>): number {
+  let characters = 0;
+  for (const message of messages) {
+    const content = messageText(message.content);
+    characters += content.length;
+  }
+
+  // Deliberately conservative across prose, code, JSON, and non-Latin text.
+  return Math.ceil(characters / 3);
 }

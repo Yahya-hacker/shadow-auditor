@@ -9,6 +9,8 @@ import * as path from 'node:path';
 import type { EventStore } from '../memory/event-store.js';
 import type { KnowledgeGraph } from '../memory/knowledge-graph.js';
 
+import { recoverAtomicWrite, writeFileAtomic } from '../../utils/fs-atomic.js';
+import { logToStderr } from '../../utils/stderr-logger.js';
 import { err, ok, type Result, safeParseJson } from '../schema/base.js';
 import { ConsensusManager } from './consensus.js';
 import {
@@ -18,7 +20,6 @@ import {
   type BlackboardState,
   blackboardStateSchema,
   type ConflictMarker,
-  conflictMarkerSchema,
   type ConflictType,
   type ConsensusRecord,
   type EvidenceClaim,
@@ -47,6 +48,7 @@ export type TaskListener = (task: Task) => void;
  */
 export class Blackboard {
   private agents: Map<string, AgentRegistration> = new Map();
+  private agentTrustScores: Map<string, number> = new Map();
   private claims: Map<string, EvidenceClaim> = new Map();
   private claimSubmittedListeners: Set<ClaimListener> = new Set();
   private claimTypeListeners: Map<string, Set<ClaimListener>> = new Map();
@@ -136,6 +138,15 @@ export class Blackboard {
       return err('Agent cannot contest its own claim');
     }
 
+    if (claim.contestedBy.includes(contestingAgentId)) {
+      return err('Agent has already contested this claim');
+    }
+
+    const contestingTrustScore = this.agentTrustScores.get(contestingAgentId);
+    if (contestingTrustScore === undefined) {
+      return err(`Trust score is not registered for contesting agent: ${contestingAgentId}`);
+    }
+
     const updated: EvidenceClaim = {
       ...claim,
       contestedBy: [...claim.contestedBy, contestingAgentId],
@@ -150,7 +161,7 @@ export class Blackboard {
     if (proposal) {
       this.consensusManager.vote(proposal.consensusId, contestingAgentId, 'reject', {
         evidenceHash: updated.evidenceHash,
-        trustScore: updated.trustScore,
+        trustScore: contestingTrustScore,
       });
     }
 
@@ -409,12 +420,9 @@ export class Blackboard {
     }
 
     this.agents.set(agentId, registration);
+    this.agentTrustScores.set(agentId, 0.5);
     return ok(registration);
   }
-
-  // ==========================================================================
-  // Persistence
-  // ==========================================================================
 
   /**
    * Resolve a conflict.
@@ -435,6 +443,10 @@ export class Blackboard {
     this.conflicts.set(conflictId, updated);
     return ok(updated);
   }
+
+  // ==========================================================================
+  // Persistence
+  // ==========================================================================
 
   /**
    * Save blackboard state.
@@ -462,8 +474,21 @@ export class Blackboard {
         throw new Error(`Invalid blackboard state: ${validation.error.message}`);
       }
 
-      await fs.writeFile(this.snapshotPath, JSON.stringify(state, null, 2), 'utf8');
+      await writeFileAtomic(this.snapshotPath, JSON.stringify(state, null, 2));
     });
+  }
+
+  setAgentTrustScore(agentId: string, trustScore: number): Result<void, string> {
+    if (!this.agents.has(agentId)) {
+      return err(`Agent not found: ${agentId}`);
+    }
+
+    if (!Number.isFinite(trustScore) || trustScore < 0 || trustScore > 1) {
+      return err(`Invalid trust score for agent ${agentId}`);
+    }
+
+    this.agentTrustScores.set(agentId, trustScore);
+    return ok();
   }
 
   /**
@@ -599,6 +624,15 @@ export class Blackboard {
       return err('Agent cannot verify its own claim');
     }
 
+    if (claim.verifiedBy.includes(verifyingAgentId)) {
+      return err('Agent has already verified this claim');
+    }
+
+    const verifierTrustScore = this.agentTrustScores.get(verifyingAgentId);
+    if (verifierTrustScore === undefined) {
+      return err(`Trust score is not registered for verifying agent: ${verifyingAgentId}`);
+    }
+
     const updated: EvidenceClaim = {
       ...claim,
       status: this.determineClaimStatus(claim.verifiedBy.length + 1, claim.contestedBy.length),
@@ -613,7 +647,7 @@ export class Blackboard {
     if (proposal) {
       this.consensusManager.vote(proposal.consensusId, verifyingAgentId, 'approve', {
         evidenceHash: updated.evidenceHash,
-        trustScore: updated.trustScore,
+        trustScore: verifierTrustScore,
       });
     }
 
@@ -690,7 +724,7 @@ export class Blackboard {
         // Ensure the queue continues even if an individual operation fails.
         // Log the error so it is not silently swallowed — the caller still
         // receives the rejection via their own promise.
-        console.error('[Blackboard] Queued write operation failed:', error instanceof Error ? error.message : String(error));
+        logToStderr(`[Blackboard] Queued write operation failed: ${error instanceof Error ? error.message : String(error)}`);
       });
     });
   }
@@ -700,11 +734,12 @@ export class Blackboard {
    */
   private async loadSnapshot(): Promise<void> {
     try {
+      await recoverAtomicWrite(this.snapshotPath);
       const content = await fs.readFile(this.snapshotPath, 'utf8');
       const result = safeParseJson(blackboardStateSchema, content);
 
       if (!result.ok) {
-        console.warn('[Blackboard] Invalid snapshot, starting fresh:', result.error);
+        logToStderr(`[Blackboard] Invalid snapshot, starting fresh: ${result.error}`);
         return;
       }
 
@@ -713,6 +748,7 @@ export class Blackboard {
       // Restore agents
       for (const agent of state.agents) {
         this.agents.set(agent.agentId, agent);
+        this.agentTrustScores.set(agent.agentId, 0.5);
       }
 
       // Restore claims

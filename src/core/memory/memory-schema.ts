@@ -6,10 +6,7 @@ import { z } from 'zod';
 
 import {
   canonicalIdSchema,
-  codeEvidenceSchema,
   confidenceSchema,
-  evidenceRefSchema,
-  fileLocationSchema,
   SCHEMA_VERSION,
   shortIdSchema,
   timestampSchema,

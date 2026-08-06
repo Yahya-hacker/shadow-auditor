@@ -14,11 +14,11 @@
  * persisted agent registrations on resume (see `spawnWorkers`).
  */
 
+import type { RunnableConfig } from '@langchain/core/runnables';
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 
 import { END, Send, START, StateGraph } from '@langchain/langgraph';
 
-import type { ShadowConfig } from '../../utils/config.js';
 import type { AgentWorker } from './agent-worker.js';
 import type { Blackboard } from './blackboard.js';
 import type { AgentRole, BlackboardState, Task } from './hivemind-schema.js';
@@ -66,10 +66,19 @@ export interface SwarmStateSnapshot {
  * without parsing a message string.
  */
 export interface SwarmActivity {
+  args?: unknown;
   kind: string;
   message: string;
+  result?: unknown;
+  succeeded?: boolean;
   swarmState?: SwarmStateSnapshot;
+  toolCallId?: string;
   toolName?: string;
+  usage?: {
+    completion: number;
+    prompt: number;
+    total: number;
+  };
 }
 
 /**
@@ -88,9 +97,16 @@ export function buildSwarmSupervisor(options: {
   async function planMission(): Promise<Partial<GraphState>> {
     const taskGraph = blackboard.getTaskGraph();
 
-    // Idempotent: if the graph already has tasks, do not re-plan.
-    if (taskGraph.getAllTasks().length > 0) {
-      return { blackboard: blackboardToState(blackboard) };
+    const existingTasks = taskGraph.getAllTasks();
+    if (existingTasks.length > 0) {
+      const previousMissionFinished = existingTasks.every((task) =>
+        task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled'
+      );
+      if (!previousMissionFinished) {
+        return { blackboard: blackboardToState(blackboard) };
+      }
+
+      taskGraph.importTasks([]);
     }
 
     const userMessage = coordinator.getUserMessage();
@@ -106,7 +122,6 @@ export function buildSwarmSupervisor(options: {
     const reconTaskId = reconRes.value.taskId;
 
     const taintRes = taskGraph.createTask({
-      dependencies: [reconTaskId],
       description: 'Trace data flow from input sources to sinks',
       parameters: {},
       priority: 'high',
@@ -117,7 +132,7 @@ export function buildSwarmSupervisor(options: {
     const taintTaskId = taintRes.value.taskId;
 
     const exploitRes = taskGraph.createTask({
-      dependencies: [taintTaskId],
+      dependencies: [reconTaskId, taintTaskId],
       description: 'Analyze potential vulnerability candidates and classify CWEs',
       parameters: {},
       priority: 'high',
@@ -216,6 +231,11 @@ export function buildSwarmSupervisor(options: {
       coordinator.getConfig().model,
       overrides,
     );
+    const trustResult = blackboard.setAgentTrustScore(agentId, trustScore);
+    if (!trustResult.ok) {
+      throw new Error(trustResult.error);
+    }
+
     const worker = coordinator.createWorker({
       agentId,
       model: workerModel,
@@ -227,14 +247,16 @@ export function buildSwarmSupervisor(options: {
   }
 
   /**
-   * Dispatch node: reset stale in_progress tasks (crash recovery), then claim
-   * and start every claimable task that has an idle worker. The conditional
-   * edge `routeFromDispatch` then fans out one Send per in_progress task.
+   * Dispatch node: reset stale in_progress tasks (crash recovery), auto-retry
+   * failed verifier tasks (QA recovery), then claim and start every claimable
+   * task that has an idle worker. The conditional edge `routeFromDispatch` then
+   * fans out one Send per in_progress task.
    */
   async function dispatch(): Promise<Partial<GraphState>> {
     const taskGraph = blackboard.getTaskGraph();
     const activeAgents = blackboard.getActiveAgents();
     const assignedWorkers = new Set<string>();
+    const maxWorkers = Math.max(1, coordinator.getConfig().swarm?.maxWorkers ?? 6);
 
     // Release in_progress tasks whose agents have gone offline or run too long.
     // On resume from a crash, in-memory promises were lost but the blackboard
@@ -249,7 +271,39 @@ export function buildSwarmSupervisor(options: {
       }
     }
 
+    // ── QA Recovery ─────────────────────────────────────────────────────
+    // Auto-retry failed verifier tasks so the QA pipeline self-heals after
+    // agent crashes, model failures, or post-refactor verification errors.
+    // Each task tracks its retry count; after MAX_FAILED_RETRIES the task is
+    // left in the failed state for the operator to inspect.
+    const MAX_FAILED_RETRIES = 3;
+    for (const task of taskGraph.getTasksByStatus('failed')) {
+      if (task.requiredRole === 'verifier') {
+        const retryCount = (task.parameters?._retryCount as number) ?? 0;
+        if (retryCount < MAX_FAILED_RETRIES) {
+          const resetRes = taskGraph.resetTask(task.taskId);
+          if (resetRes.ok) {
+            // Stamp the retry count so we don't loop forever.
+            const reset = resetRes.value;
+            taskGraph.updateTaskParameters(reset.taskId, {
+              ...reset.parameters,
+              _retryCount: retryCount + 1,
+            });
+            debugLog(
+              `[SwarmCoordinator] Auto-retry verifier task ${task.taskId} ` +
+              `(attempt ${retryCount + 1}/${MAX_FAILED_RETRIES}): ${task.errorMessage ?? 'unknown error'}`,
+            );
+          }
+        }
+      }
+    }
+
+    let availableSlots = Math.max(
+      0,
+      maxWorkers - taskGraph.getTasksByStatus('in_progress').length,
+    );
     for (const task of taskGraph.getClaimableTasks()) {
+      if (availableSlots === 0) break;
       if (!task.requiredRole) continue;
       const idleWorker = coordinator.findIdleWorker(task.requiredRole, blackboard, assignedWorkers);
       if (!idleWorker) continue;
@@ -258,6 +312,7 @@ export function buildSwarmSupervisor(options: {
       const startRes = taskGraph.startTask(task.taskId);
       if (!startRes.ok) continue;
       assignedWorkers.add(idleWorker.agentId);
+      availableSlots--;
     }
 
     return { blackboard: blackboardToState(blackboard) };
@@ -274,7 +329,7 @@ export function buildSwarmSupervisor(options: {
    * registration. This prevents the old behavior where all in-progress tasks
    * would silently freeze because `findWorkerByAgentId` returned undefined.
    */
-  async function executeTask(state: GraphState): Promise<Partial<GraphState>> {
+  async function executeTask(state: GraphState, config?: RunnableConfig): Promise<Partial<GraphState>> {
     const { agentId, taskId } = state;
     const taskGraph = blackboard.getTaskGraph();
     if (!taskId || !agentId) {
@@ -305,14 +360,19 @@ export function buildSwarmSupervisor(options: {
         try {
           await ensureWorkerForAgent(registeredAgent.agentId, registeredAgent.role);
           worker = coordinator.findWorkerByAgentId(agentId);
-        } catch (err) {
-          debugLog(`[SwarmCoordinator] Lazy hydration failed for agent ${agentId}: ${err}`);
+        } catch (error) {
+          debugLog(`[SwarmCoordinator] Lazy hydration failed for agent ${agentId}: ${error}`);
         }
       }
     }
 
     if (!task || !worker) {
-      if (task) {
+      if (!task) {
+        debugLog(`[SwarmCoordinator] Task ${taskId} not found in task graph — may have been cancelled or already completed`);
+      }
+
+      if (task && !worker) {
+        debugLog(`[SwarmCoordinator] Worker ${agentId} unavailable for task ${taskId} (${task.taskType}) — marking task as failed`);
         taskGraph.failTask(taskId, `Worker ${agentId} unavailable`);
       }
 
@@ -320,7 +380,7 @@ export function buildSwarmSupervisor(options: {
     }
 
     try {
-      await executeTaskWithWorker(task, worker, blackboard, coordinator.getOnActivity());
+      await executeTaskWithWorker(task, worker, blackboard, coordinator.getOnActivity(), config?.signal);
     } catch (error) {
       debugLog(`[SwarmCoordinator] Task ${taskId} failed: ${error}`);
       taskGraph.failTask(taskId, error instanceof Error ? error.message : String(error));
@@ -337,6 +397,22 @@ export function buildSwarmSupervisor(options: {
    */
   async function evaluateConsensus(): Promise<Partial<GraphState>> {
     blackboard.expireConsensusProposals();
+    const taskGraph = blackboard.getTaskGraph();
+    const tasks = taskGraph.getAllTasks();
+    const hasActiveWork = tasks.some((task) =>
+      task.status === 'in_progress' ||
+      task.status === 'claimed' ||
+      (task.status === 'pending' && task.dependencies.every(
+        (dependencyId) => taskGraph.getTask(dependencyId)?.status === 'completed',
+      ))
+    );
+    if (!hasActiveWork) {
+      for (const task of tasks) {
+        if (task.status === 'blocked' || task.status === 'pending') {
+          taskGraph.cancelTask(task.taskId);
+        }
+      }
+    }
 
     const onActivity = coordinator.getOnActivity();
     if (onActivity) {
@@ -354,6 +430,19 @@ export function buildSwarmSupervisor(options: {
   }
 
   async function cleanup(): Promise<Partial<GraphState>> {
+    const patchResults = blackboard.getTaskGraph().getAllTasks()
+      .filter((task) => task.status === 'completed' && (
+        task.requiredRole === 'patch-engineer' || task.taskType.includes('patch')
+      ))
+      .map((task) => task.result);
+    const synthesis = await coordinator.finalizePatchCompetition(patchResults);
+    if (synthesis) {
+      coordinator.getOnActivity()?.('orchestrator', {
+        kind: 'patch_competition',
+        message: synthesis.summary,
+      });
+    }
+
     coordinator.terminateAllWorkers();
     await blackboard.saveSnapshot();
     return { blackboard: blackboardToState(blackboard) };
@@ -421,20 +510,11 @@ function routeAfterEvaluate(state: GraphState): string {
       t.dependencies.every((d) => tasks.find((x) => x.taskId === d)?.status === 'completed'),
   );
 
-  // Blocked tasks have unmet dependencies — we must not terminate while
-  // they exist because a sibling task might resolve their blocker later.
-  const hasBlocked = tasks.some(
-    (t) =>
-      t.status === 'pending' &&
-      !t.dependencies.every((d) => tasks.find((x) => x.taskId === d)?.status === 'completed'),
-  );
-
-  if (hasInProgress || hasClaimable || hasBlocked) {
+  if (hasInProgress || hasClaimable) {
     return 'dispatch';
   }
 
-  debugLog('[SwarmCoordinator] Swarm stalled: deadlock or unresolved dependencies.');
-  return END;
+  return 'cleanup';
 }
 
 async function executeTaskWithWorker(
@@ -442,10 +522,11 @@ async function executeTaskWithWorker(
   worker: AgentWorker,
   blackboard: Blackboard,
   onActivity?: SwarmCoordinatorRuntime['onActivity'],
+  signal?: AbortSignal,
 ): Promise<void> {
   const result = await worker.executeTask(task, (activity) => {
     onActivity?.(worker.role, activity);
-  });
+  }, signal);
   blackboard.completeTask(task.taskId, result);
 }
 
@@ -501,6 +582,7 @@ export interface SwarmCoordinatorRuntime {
     trustScore: number;
   }) => AgentWorker;
   diffScopeHint: string;
+  finalizePatchCompetition: (results: unknown[]) => Promise<import('../orchestrator/patch-competition-schema.js').SynthesisResult | null>;
   findIdleWorker: (role: AgentRole, blackboard: Blackboard, excludedWorkers?: Set<string>) => AgentWorker | undefined;
   findWorkerByAgentId: (agentId: string) => AgentWorker | undefined;
   getConfig: () => SwarmCoordinatorOptions['config'];

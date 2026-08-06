@@ -1,10 +1,13 @@
 import * as fs from 'node:fs/promises';
-import * as fsSync from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { z } from 'zod';
 
-import { writeFileAtomic } from './fs-atomic.js';
+import {
+  type AzureProviderConfig,
+  validateAzureProviderConfig,
+} from './azure-provider.js';
+import { recoverAtomicWrite, writeFileAtomic } from './fs-atomic.js';
 
 const CONFIG_FILE_MODE_MASK = 0o077; // Bits that should NOT be set for config file
 
@@ -14,6 +17,7 @@ const CONFIG_FILE_MODE_MASK = 0o077; // Bits that should NOT be set for config f
 export interface ShadowConfig {
   apiKey: string;
   auditMode?: 'balanced' | 'deep' | 'deep-sast' | 'full-report' | 'patch-only' | 'quick' | 'triage';
+  azure?: AzureProviderConfig;
   /** CI mode: produce deterministic machine outputs, exit non-zero on threshold */
   ci?: {
     enabled?: boolean;
@@ -24,6 +28,11 @@ export interface ShadowConfig {
     additionalAllowedCommandPatterns?: string[];
     additionalDeniedPatterns?: string[];
     allowPnpmYarn?: boolean;
+  };
+  contextManagement?: {
+    /** Fraction of the context window that triggers automatic compaction. */
+    compactAt?: number;
+    enabled?: boolean;
   };
   continuation?: {
     maxContinuations?: number;
@@ -47,6 +56,10 @@ export interface ShadowConfig {
   indexing?: {
     /** Chunking strategy: 'function' (default), 'class', or 'file' */
     chunkStrategy?: 'class' | 'file' | 'function';
+    /** Base URL for a local Ollama embedding server. Defaults to OLLAMA_HOST or localhost. */
+    embeddingBaseUrl?: string;
+    /** Expected embedding vector dimension. Defaults to 768 for nomic-embed-text. */
+    embeddingDimension?: number;
     /** Embedding model name. Defaults are auto-selected from the main provider when supported. */
     embeddingModel?: string;
     /** Embedding provider: 'ollama' (local) or 'openai' (OpenAI-compatible embeddings API). */
@@ -67,6 +80,7 @@ export interface ShadowConfig {
   };
   model: string;
   provider: string;
+  reasoningEffort?: 'high' | 'low' | 'medium' | 'minimal' | 'none' | 'xhigh';
   remediation?: {
     autoRevert?: boolean;
     containerImage?: string;
@@ -80,7 +94,13 @@ export interface ShadowConfig {
   swarm?: {
     enabled?: boolean;
     maxWorkers?: number;
-    modelOverrides?: Record<string, { apiKey?: string; model: string; provider: string }>;
+    modelOverrides?: Record<string, {
+      apiKey?: string;
+      azure?: AzureProviderConfig;
+      customBaseUrl?: string;
+      model: string;
+      provider: string;
+    }>;
     roles?: string[];
     workerBudgetRatio?: number;
   };
@@ -92,6 +112,29 @@ let plaintextApiKeyWarningShown = false;
 const shadowConfigSchema = z.object({
   apiKey: z.string().optional().default(''),
   auditMode: z.enum(['balanced', 'deep', 'deep-sast', 'full-report', 'patch-only', 'quick', 'triage']).optional(),
+  azure: z.object({
+    apiMode: z.enum(['auto', 'chat-completions', 'responses']).default('auto'),
+    apiVersion: z.string().min(1).optional(),
+    authMode: z.enum(['api-key', 'entra-id']).default('api-key'),
+    credentialMode: z.enum(['default', 'managed-identity']).optional(),
+    deployment: z.string().min(1),
+    embeddingDeployment: z.string().min(1).optional(),
+    embeddingDimension: z.number().int().positive().optional(),
+    endpoint: z.string().url(),
+    endpointType: z.enum([
+      'azure-openai-legacy',
+      'azure-openai-v1',
+      'foundry-project',
+      'foundry-resource',
+      'model-inference',
+    ]),
+    managedIdentityClientId: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
+    reasoningSummary: z.enum(['auto', 'concise', 'detailed']).optional(),
+    tokenScope: z.string().min(1).optional(),
+    verbosity: z.enum(['low', 'medium', 'high']).optional(),
+  }).optional(),
   ci: z.object({
     enabled: z.boolean().optional(),
     failOn: z.enum(['critical', 'high', 'info', 'low', 'medium', 'none']).optional(),
@@ -100,6 +143,10 @@ const shadowConfigSchema = z.object({
     additionalAllowedCommandPatterns: z.array(z.string()).optional(),
     additionalDeniedPatterns: z.array(z.string()).optional(),
     allowPnpmYarn: z.boolean().optional(),
+  }).optional(),
+  contextManagement: z.object({
+    compactAt: z.number().min(0.5).max(0.9).optional(),
+    enabled: z.boolean().optional(),
   }).optional(),
   continuation: z.object({
     maxContinuations: z.number().int().optional(),
@@ -120,6 +167,8 @@ const shadowConfigSchema = z.object({
   expertUnsafe: z.boolean().optional(),
   indexing: z.object({
     chunkStrategy: z.enum(['class', 'file', 'function']).optional(),
+    embeddingBaseUrl: z.string().url().optional(),
+    embeddingDimension: z.number().int().positive().optional(),
     embeddingModel: z.string().optional(),
     embeddingProvider: z.enum(['ollama', 'openai']).optional(),
     enabled: z.boolean().optional(),
@@ -136,6 +185,7 @@ const shadowConfigSchema = z.object({
   }).optional(),
   model: z.string().min(1),
   provider: z.string().min(1),
+  reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
   remediation: z.object({
     autoRevert: z.boolean().optional(),
     containerImage: z.string().optional(),
@@ -151,6 +201,30 @@ const shadowConfigSchema = z.object({
     maxWorkers: z.number().int().optional(),
     modelOverrides: z.record(z.object({
       apiKey: z.string().optional(),
+      azure: z.object({
+        apiMode: z.enum(['auto', 'chat-completions', 'responses']).default('auto'),
+        apiVersion: z.string().min(1).optional(),
+        authMode: z.enum(['api-key', 'entra-id']).default('api-key'),
+        credentialMode: z.enum(['default', 'managed-identity']).optional(),
+        deployment: z.string().min(1),
+        embeddingDeployment: z.string().min(1).optional(),
+        embeddingDimension: z.number().int().positive().optional(),
+        endpoint: z.string().url(),
+        endpointType: z.enum([
+          'azure-openai-legacy',
+          'azure-openai-v1',
+          'foundry-project',
+          'foundry-resource',
+          'model-inference',
+        ]),
+        managedIdentityClientId: z.string().min(1).optional(),
+        model: z.string().min(1).optional(),
+        reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
+        reasoningSummary: z.enum(['auto', 'concise', 'detailed']).optional(),
+        tokenScope: z.string().min(1).optional(),
+        verbosity: z.enum(['low', 'medium', 'high']).optional(),
+      }).optional(),
+      customBaseUrl: z.string().optional(),
       model: z.string(),
       provider: z.string(),
     })).optional(),
@@ -168,7 +242,25 @@ export function validateConfig(data: unknown): null | ShadowConfig {
     return null;
   }
 
-  return result.data as ShadowConfig;
+  const config = result.data as ShadowConfig;
+  try {
+    if (config.provider === 'azure') {
+      if (!config.azure) {
+        throw new Error('azure configuration is required when provider is "azure".');
+      }
+
+      validateAzureProviderConfig(config.azure);
+    } else if (config.azure) {
+      throw new Error('azure configuration is only valid when provider is "azure".');
+    }
+  } catch (error) {
+    process.stderr.write(
+      `[ShadowAuditor][WARN] Invalid config: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    return null;
+  }
+
+  return config;
 }
 
 /**
@@ -201,6 +293,7 @@ export async function loadConfig(): Promise<null | ShadowConfig> {
   const configPath = getConfigPath();
 
   try {
+    await recoverAtomicWrite(configPath);
     const raw = await fs.readFile(configPath, 'utf8');
     const parsedRaw = JSON.parse(raw) as unknown;
     const parsed = validateConfig(parsedRaw);
@@ -211,10 +304,10 @@ export async function loadConfig(): Promise<null | ShadowConfig> {
     // Check file permissions: warn if config file is readable by group/others
     try {
       const stat = await fs.stat(configPath);
-      if ((stat.mode & CONFIG_FILE_MODE_MASK) !== 0) {
+      if ((stat.mode & CONFIG_FILE_MODE_MASK) !== 0) { // eslint-disable-line no-bitwise
         process.stderr.write(
           `[ShadowAuditor][WARN] Config file at ${configPath} has overly permissive permissions ` +
-          `(${(stat.mode & 0o777).toString(8)}). It contains your API key. ` +
+          `(${(stat.mode & 0o777).toString(8)}). It contains your API key. ` + // eslint-disable-line no-bitwise
           `Run: chmod 600 ${configPath} to secure it.\n`,
         );
       }
@@ -225,15 +318,18 @@ export async function loadConfig(): Promise<null | ShadowConfig> {
     // Track if API key was in plaintext config (for warning)
     const hadPlaintextApiKey = parsed.apiKey !== '';
 
-    // API key is required for non-Ollama providers
-    if (parsed.provider !== 'ollama' && !parsed.apiKey && secretStoreAdapter) {
+    const requiresApiKey = parsed.provider !== 'custom' &&
+      parsed.provider !== 'ollama' &&
+      !(parsed.provider === 'azure' && parsed.azure?.authMode === 'entra-id');
+
+    if (requiresApiKey && !parsed.apiKey && secretStoreAdapter) {
       const secureApiKey = await secretStoreAdapter.getApiKey(parsed.provider);
       if (secureApiKey) {
         parsed.apiKey = secureApiKey;
       }
     }
 
-    if (parsed.provider !== 'ollama' && !parsed.apiKey) {
+    if (requiresApiKey && !parsed.apiKey) {
       process.stderr.write(
         `[ShadowAuditor][WARN] No API key configured for provider "${parsed.provider}". ` +
         'Run with --reconfigure to set up your API key, or switch to Ollama with --provider ollama.\n',
@@ -256,6 +352,7 @@ export async function loadConfig(): Promise<null | ShadowConfig> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return null;
     }
+
     const message = error instanceof SyntaxError
       ? `Config file is corrupt (invalid JSON) at ${configPath}. Run with --reconfigure to reset.`
       : `Cannot read config file at ${configPath}: ${error instanceof Error ? error.message : String(error)}`;

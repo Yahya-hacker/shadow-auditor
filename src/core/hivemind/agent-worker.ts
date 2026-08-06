@@ -2,9 +2,14 @@
  * Agent Worker - Autonomous specialized worker with private OODA loop.
  */
 
-import { type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
+import { type BaseChatModel } from '@langchain/core/language_models/chat_models';
+import { type BaseMessage } from '@langchain/core/messages';
+import { type ToolSet } from 'ai';
 
-import { streamWithContinuation } from '../session.js';
+import { logToStderr } from '../../utils/stderr-logger.js';
+import { DEFAULT_MAX_TOOL_STEPS } from '../model-capabilities.js';
+import { type EnhancedFinding } from '../output/finding-schema.js';
+import { executeLangChainToolLoop } from '../services/langchain-tool-executor.js';
 import { createBlackboardTools } from './blackboard-tools.js';
 import { type Blackboard } from './blackboard.js';
 import { EvidenceTracker } from './evidence-tracker.js';
@@ -18,10 +23,13 @@ export interface AgentWorkerOptions {
   auditMode?: string;
   blackboard: Blackboard;
   diffScopeHint?: string;
-  maxOutputTokens?: number;
   maxToolSteps?: number;
-  model: LanguageModel;
+  model: BaseChatModel;
   modelTier?: ModelTier;
+  onReportBatch?: (
+    findings: Array<{ finding: EnhancedFinding; sourceClaimId: string }>,
+  ) => { added: boolean; reason?: string };
+  providerHint?: string;
   role: AgentRole;
   trustScore?: number;
 }
@@ -42,10 +50,11 @@ export class AgentWorker {
   private heartbeatInterval?: ReturnType<typeof setInterval>;
   private isTerminated = false;
   private readonly maxContextMessages: number;
-  private readonly maxOutputTokens: number;
   private readonly maxToolSteps: number;
-  private readonly messages: ModelMessage[] = [];
-  private readonly model: LanguageModel;
+  private readonly messages: BaseMessage[] = [];
+  private readonly model: BaseChatModel;
+  private readonly onReportBatch?: AgentWorkerOptions['onReportBatch'];
+  private readonly providerHint?: string;
   private readonly systemPrompt: string;
   private readonly tools: ToolSet;
 
@@ -53,6 +62,8 @@ export class AgentWorker {
     this.agentId = options.agentId;
     this.role = options.role;
     this.model = options.model;
+    this.onReportBatch = options.onReportBatch;
+    this.providerHint = options.providerHint;
     this.blackboard = options.blackboard;
     this.modelTier = options.modelTier ?? 'standard';
     this.trustScore = options.trustScore ?? 0.7;
@@ -66,8 +77,7 @@ export class AgentWorker {
       trustScore: this.trustScore,
     });
     this.tools = { ...roleTools, ...blackboardTools };
-    this.maxOutputTokens = options.maxOutputTokens ?? 4096;
-    this.maxToolSteps = options.maxToolSteps ?? 10;
+    this.maxToolSteps = options.maxToolSteps ?? DEFAULT_MAX_TOOL_STEPS;
     this.maxContextMessages = 40; // cap to prevent unbounded growth across tasks
     this.auditMode = options.auditMode ?? 'sast';
     this.diffScopeHint = options.diffScopeHint ?? '';
@@ -78,6 +88,7 @@ export class AgentWorker {
       diffScope: this.diffScopeHint,
       modelTier: this.modelTier,
     });
+    this.blackboard.heartbeat(this.agentId, 'idle');
 
     // Start periodic heartbeat to prevent timeouts during long tool runs.
     // `unref()` ensures the timer doesn't keep the Node.js event loop alive
@@ -104,7 +115,21 @@ export class AgentWorker {
    */
   async executeTask(
     task: Task,
-    onActivity?: (activity: { kind: string; message: string; toolName?: string }) => void,
+    onActivity?: (activity: {
+      args?: unknown;
+      kind: string;
+      message: string;
+      result?: unknown;
+      succeeded?: boolean;
+      toolCallId?: string;
+      toolName?: string;
+      usage?: {
+        completion: number;
+        prompt: number;
+        total: number;
+      };
+    }) => void,
+    signal?: AbortSignal,
   ): Promise<string> {
     if (this.isTerminated) {
       throw new Error(`Worker ${this.agentId} is terminated.`);
@@ -126,55 +151,105 @@ Parameters: ${JSON.stringify(task.parameters, null, 2)}
 
 Collaborate with the swarm. Inspect the blackboard if necessary, perform your task using your tools, and submit any relevant evidence/findings to the Blackboard. When you are fully done, call finish_task.`;
 
-    this.messages.push({
-      content: userPrompt,
-      role: 'user',
-    });
-    this.trimMessages();
+    try {
+      const streamResult = await executeLangChainToolLoop({
+        history: this.messages,
+        maxToolSteps: this.maxToolSteps,
+        model: this.model,
+        onActivity: (activity) => {
+          onActivity?.({
+            args: activity.args,
+            kind: activity.kind === 'tool' ? 'tool_call' : activity.kind,
+            message: activity.summary,
+            result: activity.result,
+            succeeded: activity.succeeded,
+            toolCallId: activity.toolCallId,
+            toolName: activity.toolName,
+            usage: activity.usage,
+          });
 
-    // Execute via streamWithContinuation
-    const streamResult = await streamWithContinuation({
-      maxOutputTokens: this.maxOutputTokens,
-      maxToolSteps: this.maxToolSteps,
-      messages: this.messages,
-      model: this.model,
-      onActivity: (activity) => {
-        onActivity?.({
-          kind: activity.kind,
-          message: activity.summary,
-          toolName: activity.toolName,
+          // Periodic heartbeat during tool calls
+          this.blackboard.heartbeat(this.agentId, 'busy');
+        },
+        prompt: userPrompt,
+        providerHint: this.providerHint,
+        signal,
+        systemPrompt: this.systemPrompt,
+        tools: this.tools,
+      });
+
+      const finishCalls = streamResult.toolCalls.filter((call) => call.name === 'finish_task');
+      const successfulFinish = finishCalls.some((call) =>
+        !(typeof call.result === 'string' && call.result.trimStart().startsWith('[ERROR]'))
+      );
+      if (!successfulFinish) {
+        throw new Error(`Worker ${this.agentId} did not complete task ${task.taskId} with finish_task.`);
+      }
+
+      if (this.role === 'reporter' && task.taskType === 'report') {
+        const acceptedClaimIds = this.blackboard.getAllClaims().filter((claim) =>
+          (claim.status === 'verified' || claim.status === 'consensus') &&
+          /vulnerab|finding/i.test(claim.claimType),
+        ).map((claim) => claim.claimId);
+        const reportCalls = streamResult.toolCalls.filter((call) => call.name === 'report_finding');
+        const rejectedReports = reportCalls.filter((call) => {
+          if (call.result && typeof call.result === 'object') {
+            return (call.result as { accepted?: unknown }).accepted !== true;
+          }
+
+          if (typeof call.result !== 'string') return true;
+          try {
+            return (JSON.parse(call.result) as { accepted?: unknown }).accepted !== true;
+          } catch {
+            return true;
+          }
         });
-        
-        // Periodic heartbeat during tool calls
-        this.blackboard.heartbeat(this.agentId, 'busy');
-      },
-      onChunk() {},
-      systemPrompt: this.systemPrompt,
-      tools: this.tools,
-    });
+        const reportedClaimIds = reportCalls
+          .filter((call) => !rejectedReports.includes(call))
+          .map((call) => (call.args as { sourceClaimId?: unknown }).sourceClaimId)
+          .filter((claimId): claimId is string => typeof claimId === 'string');
+        const uniqueReportedClaimIds = new Set(reportedClaimIds);
+        const missingClaimIds = acceptedClaimIds.filter((claimId) => !uniqueReportedClaimIds.has(claimId));
+        const unknownClaimIds = [...uniqueReportedClaimIds].filter((claimId) => !acceptedClaimIds.includes(claimId));
+        if (
+          missingClaimIds.length > 0 ||
+          unknownClaimIds.length > 0 ||
+          reportedClaimIds.length !== uniqueReportedClaimIds.size ||
+          rejectedReports.length > 0
+        ) {
+          throw new Error(
+            'Reporter structured findings do not match accepted vulnerability claims. ' +
+            `Missing: ${missingClaimIds.join(', ') || 'none'}; ` +
+            `unknown: ${unknownClaimIds.join(', ') || 'none'}; ` +
+            `duplicates: ${reportedClaimIds.length - uniqueReportedClaimIds.size}; ` +
+            `rejected: ${rejectedReports.length}.`,
+          );
+        }
 
-    this.messages.push(...streamResult.messagesDelta);
-    this.trimMessages();
+        if (this.onReportBatch) {
+          const batch = reportCalls.map((call) => {
+            const { sourceClaimId, ...finding } = call.args as EnhancedFinding & {
+              sourceClaimId: string;
+            };
+            return { finding, sourceClaimId };
+          });
+          const commit = this.onReportBatch(batch);
+          if (!commit.added) {
+            throw new Error(
+              `Reporter finding batch was rejected: ${commit.reason ?? 'unknown reason'}.`,
+            );
+          }
+        }
+      }
 
-    // Heartbeat back to idle
-    this.blackboard.heartbeat(this.agentId, 'idle');
-
-    return streamResult.text;
-  }
-
-  /**
-   * Trim message history to prevent unbounded growth across multiple
-   * task executions. Keeps the first message (system/context anchor)
-   * and the most recent N-1 messages, mirroring the cap in the main
-   * workflow graph.
-   */
-  private trimMessages(): void {
-    const max = this.maxContextMessages;
-    if (this.messages.length <= max) return;
-    const first = this.messages[0];
-    const recent = this.messages.slice(-(max - 1));
-    this.messages.length = 0;
-    this.messages.push(first!, ...recent);
+      this.messages.push(...streamResult.messagesDelta);
+      this.trimMessages();
+      return streamResult.text;
+    } finally {
+      if (!this.isTerminated) {
+        this.blackboard.heartbeat(this.agentId, 'idle');
+      }
+    }
   }
 
   /**
@@ -188,7 +263,7 @@ Collaborate with the swarm. Inspect the blackboard if necessary, perform your ta
       try {
         cleanup();
       } catch (error) {
-        console.error(`Error in cleanup callback for worker ${this.agentId}:`, error);
+        logToStderr(`Error in cleanup callback for worker ${this.agentId}: ${String(error)}`);
       }
     }
 
@@ -222,5 +297,43 @@ Collaborate with the swarm. Inspect the blackboard if necessary, perform your ta
     };
 
     scan(task.parameters);
+  }
+
+  /**
+   * Trim message history to prevent unbounded growth across multiple
+   * task executions without separating an assistant tool call from its
+   * corresponding tool results.
+   */
+  private trimMessages(): void {
+    const max = this.maxContextMessages;
+    if (this.messages.length <= max) return;
+    const groups: BaseMessage[][] = [];
+    for (const message of this.messages) {
+      const previous = groups.at(-1);
+      if (
+        message._getType() === 'tool' &&
+        previous?.some((entry) =>
+          entry._getType() === 'ai' &&
+          Array.isArray((entry as {tool_calls?: unknown[]}).tool_calls) &&
+          (entry as {tool_calls?: unknown[]}).tool_calls!.length > 0
+        )
+      ) {
+        previous.push(message);
+      } else {
+        groups.push([message]);
+      }
+    }
+
+    const retained: BaseMessage[][] = [];
+    let retainedCount = 0;
+    for (let index = groups.length - 1; index >= 0; index--) {
+      const group = groups[index]!;
+      if (retained.length > 0 && retainedCount + group.length > max) break;
+      retained.unshift(group);
+      retainedCount += group.length;
+    }
+
+    this.messages.length = 0;
+    this.messages.push(...retained.flat());
   }
 }

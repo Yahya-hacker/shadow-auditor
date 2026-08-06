@@ -1,32 +1,76 @@
-import { Box, Text, Input } from "../../opentui/components.js";
+import React, { useCallback, useMemo, useState } from 'react';
 /**
- * FiltersPanel — checkbox-style filter sidebar.
+ * FiltersPanel — checkbox-style filter sidebar with real message categories.
  *
- * Uses `scrollOffset` from the store as the highlighted index (driven by
- * ShellScreen's global keyboard handler: j/k to navigate, Space to toggle).
- * Tab/Esc/i return focus to input.
+ * Categories: all, findings, tool_calls, errors, agent, user.
+ * Handles its own keyboard navigation when focused (j/k to navigate,
+ * Space to toggle, Tab/Esc/i to return focus to input).
  */
 
-import React from 'react';
-
+import { Box, type KeyEvent, Text, useKeyHandler } from "../primitives.js";
 import { useAppStore } from '../store/appStore.js';
 import { colors, getPanelStyle, layout } from '../theme/chalkTheme.js';
+
+const filterLabels: Record<string, string> = {
+  'agent': 'Agent Messages',
+  'all': 'Show All',
+  'errors': 'Errors',
+  'findings': 'Findings',
+  'tool_calls': 'Tool Calls',
+  'user': 'User Messages',
+};
 
 export const FiltersPanel: React.FC = () => {
   const filters = useAppStore((state) => state.filters);
   const focus = useAppStore((state) => state.focus);
-  const scrollOffset = useAppStore((state) => state.scrollOffset);
+  const [highlightIdx, setHighlightIdx] = useState(0);
 
   const isFocused = focus === 'filters';
   const panelStyle = getPanelStyle(isFocused, true);
-  const entries = Object.entries(filters);
+  const entries = useMemo(() => Object.entries(filters), [filters]);
   const panelInnerWidth = layout.MIN_SIDEBAR_WIDTH - 2;
-
-  // Use scrollOffset as the selected index when focused
-  const selectedIndex = Math.min(scrollOffset, entries.length - 1);
 
   const lightFg = colors.panelLightFg;
   const lightBg = colors.panelLightBg;
+
+  // Clamp highlight to valid range
+  const safeHighlight = Math.min(highlightIdx, entries.length - 1);
+
+  // Handle keyboard navigation locally when focused
+  const handleKeyDown = useCallback(
+    (evt: KeyEvent) => {
+      if (!isFocused) return;
+      switch (evt.key) {
+        case ' ': {
+          const key = entries[safeHighlight]?.[0];
+          if (key) useAppStore.getState().toggleFilter(key);
+          break;
+        }
+
+        case 'ArrowDown':
+        case 'j': {
+          setHighlightIdx((p) => Math.min(p + 1, entries.length - 1));
+          break;
+        }
+
+        case 'ArrowUp':
+        case 'k': {
+          setHighlightIdx((p) => Math.max(p - 1, 0));
+          break;
+        }
+
+        case 'Escape':
+        case 'i':
+        case 'Tab': {
+          useAppStore.getState().setFocus('input');
+          break;
+        }
+      }
+    },
+    [isFocused, entries, safeHighlight],
+  );
+
+  useKeyHandler(handleKeyDown, isFocused);
 
   return (
     <Box
@@ -35,24 +79,25 @@ export const FiltersPanel: React.FC = () => {
       paddingX={1}
     >
       <Text
-        color={lightFg}
-        bold
         backgroundColor={lightBg}
+        bold
+        color={lightFg}
       >
         {'Filters'.padEnd(panelInnerWidth)}
       </Text>
       {entries.map(([key, value], index) => {
-        const isSelected = isFocused && index === selectedIndex;
+        const isSelected = isFocused && index === safeHighlight;
         const check = value ? 'x' : ' ';
-        const label = `[${check}] ${key}`;
+        const displayName = filterLabels[key] ?? key;
+        const label = `[${check}] ${displayName}`;
         const paddedLabel = label.padEnd(panelInnerWidth);
 
         return (
           <Text
-            key={key}
             backgroundColor={lightBg}
-            color={isSelected ? colors.focusBorder : lightFg}
             bold={isSelected}
+            color={isSelected ? colors.focusBorder : lightFg}
+            key={key}
           >
             {paddedLabel}
           </Text>

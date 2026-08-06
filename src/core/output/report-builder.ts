@@ -8,17 +8,16 @@ import * as path from 'node:path';
 
 import type { VerificationGates, VerificationResult } from '../verify/gates.js';
 
+import { writeFileAtomic } from '../../utils/fs-atomic.js';
 import { SCHEMA_VERSION } from '../schema/base.js';
 import {
   type EnhancedFinding,
   enhancedFindingSchema,
   type EnhancedReport,
-  enhancedReportSchema,
   type ReportMetadata,
   type ReportSummary,
 } from './finding-schema.js';
 import { generateEnhancedSarifReport } from './sarif.js';
-import { writeFileAtomic } from '../../utils/fs-atomic.js';
 
 // =============================================================================
 // Report Builder
@@ -40,6 +39,9 @@ export interface ReportBuilderOptions {
   /** Whether to generate SARIF report */
   generateSarif?: boolean;
   
+  /** Runtime capabilities enabled for this audit */
+  modes?: ReportMetadata['modes'];
+
   /** Output directory */
   outputDir: string;
   
@@ -89,7 +91,7 @@ export class ReportBuilder {
       ...options,
     };
   }
-  
+
   /**
    * Add a finding with optional verification.
    */
@@ -149,6 +151,30 @@ export class ReportBuilder {
   }
   
   /**
+   * Validate and commit a complete finding batch without exposing partial state.
+   */
+  addFindingsAtomically(
+    findings: readonly EnhancedFinding[],
+  ): { added: boolean; reason?: string } {
+    const findingCount = this.findings.length;
+    const rejectedCount = this.rejectedFindings.length;
+    const findingIds = new Set(this.findingIds);
+
+    for (const finding of findings) {
+      const result = this.addFinding(finding);
+      if (!result.added) {
+        this.findings.splice(findingCount);
+        this.rejectedFindings.splice(rejectedCount);
+        this.findingIds.clear();
+        for (const findingId of findingIds) this.findingIds.add(findingId);
+        return result;
+      }
+    }
+
+    return { added: true };
+  }
+
+  /**
    * Build the complete report.
    */
   build(): EnhancedReport {
@@ -163,10 +189,11 @@ export class ReportBuilder {
         filesTotal: this.filesTotal,
         percentComplete: this.filesTotal > 0 
           ? Math.round((this.filesAnalyzed / this.filesTotal) * 100)
-          : 100,
+          : 0,
       },
       durationMs: duration,
       generatedAt: now.toISOString(),
+      modes: this.options.modes,
       reportId: this.generateReportId(),
       runId: this.options.runId,
       scanMode: this.options.scanMode,
@@ -243,12 +270,21 @@ export class ReportBuilder {
     return [...this.rejectedFindings];
   }
   
+  reset(): void {
+    this.filesAnalyzed = 0;
+    this.filesTotal = 0;
+    this.findingIds.clear();
+    this.findings.length = 0;
+    this.rejectedFindings.length = 0;
+    this.startTime = Date.now();
+  }
+
   /**
    * Set coverage statistics.
    */
   setCoverage(analyzed: number, total?: number): this {
     this.filesAnalyzed = analyzed;
-    this.filesTotal = total ?? analyzed;
+    this.filesTotal = total ?? 0;
     return this;
   }
   

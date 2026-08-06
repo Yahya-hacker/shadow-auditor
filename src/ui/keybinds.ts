@@ -17,14 +17,15 @@ export const primaryKeybinds: Keybind[] = [
   { desc: 'cycle focus', keys: 'Tab' },
   { desc: 'search', keys: '/' },
   { desc: 'help', keys: '?' },
-  { desc: 'panel', keys: 'P' },
+  { desc: 'compact', keys: 'H' },
+  { desc: 'history', keys: 'h' },
   { desc: 'quit', keys: ':q' },
 ];
 
 /** Keybinds shown in the footer while output area is focused. */
 export const outputKeybinds: Keybind[] = [
-  { desc: 'scroll', keys: 'j/k' },
-  { desc: 'top/bottom', keys: 'g/G' },
+  { desc: 'history', keys: 'h' },
+  { desc: 'compact', keys: 'H' },
   { desc: 'search', keys: '/' },
   { desc: 'next panel', keys: 'Tab' },
   { desc: 'back', keys: 'Esc' },
@@ -47,14 +48,15 @@ export const searchKeybinds: Keybind[] = [
 /** Full reference for the `?` help overlay. */
 export const helpKeybinds: Keybind[] = [
   { desc: 'Send message', keys: 'Enter' },
-  { desc: 'Scroll output up / down', keys: '↑↓ or k / j' },
-  { desc: 'Jump to top / bottom', keys: 'g / G' },
   { desc: 'Start search (live filter)', keys: '/' },
-  { desc: 'Scroll within filtered matches', keys: 'k / j' },
   { desc: 'Clear search / close overlay', keys: 'Esc' },
   { desc: 'Toggle live swarm panel', keys: 'P' },
+  { desc: 'Toggle compact header', keys: 'H (shift+h)' },
+  { desc: 'Open session history', keys: 'h' },
   { desc: 'Cycle focus (input → output → filters)', keys: 'Tab' },
   { desc: 'Toggle filter (in filters panel)', keys: 'Space' },
+  { desc: 'Dismiss toast notification', keys: 'x' },
   { desc: 'Toggle this help', keys: '?' },
+  { desc: 'Slash commands', keys: '/help /clear /report' },
   { desc: 'Quit', keys: ':q or Ctrl+C' },
 ];

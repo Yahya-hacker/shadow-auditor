@@ -66,7 +66,7 @@ function isReDosRisk(pattern: string): boolean {
 
 interface FileMatch {
   filePath: string;
-  lines: Array<{ lineNumber: number; content: string }>;
+  lines: Array<{ content: string; lineNumber: number; }>;
 }
 
 export function createSearchCodebaseTool(pathGuard: PathGuard) {
@@ -144,13 +144,13 @@ export function createSearchCodebaseTool(pathGuard: PathGuard) {
           }
 
           const lines = content.split(/\r?\n/u);
-          const matches: Array<{ lineNumber: number; content: string }> = [];
+          const matches: Array<{ content: string; lineNumber: number; }> = [];
 
           for (const [lineIndex, line] of lines.entries()) {
             if (regex.test(line)) {
               matches.push({
-                lineNumber: lineIndex + 1,
                 content: line.trim().slice(0, 120),
+                lineNumber: lineIndex + 1,
               });
               totalMatches++;
             }
@@ -196,7 +196,7 @@ export function createSearchCodebaseTool(pathGuard: PathGuard) {
 
       for (const fm of shownFiles) {
         const matchCount = fm.lines.length;
-        output.push(`📄 ${fm.filePath} — ${matchCount} match${matchCount !== 1 ? 'es' : ''}`);
+        output.push(`📄 ${fm.filePath} — ${matchCount} match${matchCount === 1 ? '' : 'es'}`);
 
         // Show up to 5 matches per file, with line numbers
         const shownLines = fm.lines.slice(0, 5);
@@ -212,15 +212,11 @@ export function createSearchCodebaseTool(pathGuard: PathGuard) {
       }
 
       if (omittedFiles > 0) {
-        output.push(`... and ${omittedFiles} more files with matches`);
-        output.push(`💡 Narrow results with fileExtension filter or more specific regex.`);
-        output.push('');
+        output.push(`... and ${omittedFiles} more files with matches`, `💡 Narrow results with fileExtension filter or more specific regex.`, '');
       }
 
       // Chaining hint
-      output.push(`── Next steps ──`);
-      output.push(`• To inspect: read_file_content({ filePath: "<path>", startLine: <line-5>, endLine: <line+20> })`);
-      output.push(`• To refine: search_codebase({ regexPattern: "<more specific>", fileExtension: ".ts" })`);
+      output.push(`── Next steps ──`, `• To inspect: read_file_content({ filePath: "<path>", startLine: <line-5>, endLine: <line+20> })`, `• To refine: search_codebase({ regexPattern: "<more specific>", fileExtension: ".ts" })`);
 
       return output.join('\n');
     },

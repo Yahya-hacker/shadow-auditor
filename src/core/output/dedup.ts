@@ -11,6 +11,18 @@ import type { SecurityFinding } from './report-schema.js';
 import { computeRootCauseFingerprint, computeVulnId } from './vuln-fingerprint.js';
 
 // ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute a grouping key that ignores file paths so findings with the same
+ * CWE and title in different files are merged under one canonical finding.
+ */
+function groupingKey(cwe: string, title: string): string {
+  return computeRootCauseFingerprint({ cwe, filePaths: [], title });
+}
+
+// ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
 
@@ -43,11 +55,7 @@ export function deduplicateFindings(findings: SecurityFinding[]): SecurityFindin
     // Group by CWE + title + primary file path. Same CWE+title in
     // different files may be independent instances of the same vulnerability
     // class; we merge them but preserve all affected file paths below.
-    const key = computeRootCauseFingerprint({
-      cwe: finding.cwe,
-      filePaths: finding.file_paths,
-      title: finding.title,
-    });
+    const key = groupingKey(finding.cwe, finding.title);
 
     const existing = groups.get(key);
     if (existing) {

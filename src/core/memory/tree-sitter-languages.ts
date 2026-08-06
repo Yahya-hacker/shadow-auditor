@@ -1,10 +1,10 @@
 /**
  * Tree-sitter language loader with graceful fallback for missing packages.
  *
- * Dynamically loads available tree-sitter grammars. If a package is not
- * installed, the import fails silently and the language is excluded from
- * the index. This allows the semantic index to work with whatever subset
- * of grammars the user has chosen to install.
+ * Dynamically loads available Tree-sitter grammars. Languages backed by
+ * production dependencies receive AST-aware chunking. Recognized extensions
+ * without an installed grammar remain available through whole-file lexical
+ * chunks and emit an explicit degradation diagnostic.
  *
  * TypeScript module declarations for all grammar packages are in
  * `src/types/tree-sitter-languages.d.ts`.
@@ -42,9 +42,13 @@ const languageLoaders: Record<string, () => Promise<unknown>> = {
   json: makeLoader('tree-sitter-json'),
   kotlin: makeLoader('tree-sitter-kotlin'),
   lua: makeLoader('tree-sitter-lua'),
-  markdown: makeLoader('tree-sitter-markdown'),
+  markdown: makeLoader('@tree-sitter-grammars/tree-sitter-markdown'),
   ocaml: makeLoader('tree-sitter-ocaml'),
-  php: makeLoader('tree-sitter-php'),
+  async php() {
+    const module = await _import('tree-sitter-php');
+    const exported = (module as {default: {php?: unknown}}).default;
+    return exported.php ?? exported;
+  },
   python: makeLoader('tree-sitter-python'),
   ruby: makeLoader('tree-sitter-ruby'),
   rust: makeLoader('tree-sitter-rust'),
@@ -61,6 +65,27 @@ const languageLoaders: Record<string, () => Promise<unknown>> = {
   yaml: makeLoader('tree-sitter-yaml'),
   zig: makeLoader('tree-sitter-zig'),
 };
+
+/** Grammars shipped as production dependencies and covered by integration tests. */
+export const GUARANTEED_LANGUAGE_KEYS = Object.freeze([
+  'c',
+  'c_sharp',
+  'cpp',
+  'elixir',
+  'go',
+  'haskell',
+  'html',
+  'java',
+  'javascript',
+  'json',
+  'markdown',
+  'php',
+  'python',
+  'ruby',
+  'rust',
+  'scala',
+  'typescript',
+] as const);
 
 // ============================================================================
 // File extension → language key mapping (55+ extensions)

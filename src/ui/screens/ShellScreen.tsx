@@ -1,4 +1,4 @@
-import { Box, Text, Input } from "../../opentui/components.js";
+import React, { memo, useCallback, useEffect } from 'react';
 /**
  * Shadow Auditor — Interactive Security Analysis Shell (OpenTUI).
  *
@@ -6,15 +6,11 @@ import { Box, Text, Input } from "../../opentui/components.js";
  * Terminal resize is handled natively — no manual column/row calculations.
  *
  * Strict Focus Isolation: when an `<Input>` has text content, ALL keystrokes
- * go to the input. Vim shortcuts (j/k/g/G/) only activate when the input is
- * empty. This prevents typing "j" in the query box from scrolling the chat.
+ * go to the input. Navigation shortcuts only activate when the input is empty.
  */
 
-import React, { memo, useCallback, useEffect, useRef } from 'react';
-
-import type { AgentStreamEvent } from '../../core/agent.js';
-
 import { useAgentSessionRef } from '../AgentSessionContext.js';
+import { type CommandContext, executeSlashCommand } from '../commands.js';
 import { FiltersPanel } from '../components/FiltersPanel.js';
 import { Footer } from '../components/Footer.js';
 import { Header } from '../components/Header.js';
@@ -24,31 +20,61 @@ import { MetadataPanel } from '../components/MetadataPanel.js';
 import { OutputArea } from '../components/OutputArea.js';
 import { StatusLine } from '../components/StatusLine.js';
 import { SwarmPanel } from '../components/SwarmPanel.js';
-import { type FocusTarget, useAppStore } from '../store/appStore.js';
+import { ToastStack } from '../components/ToastStack.js';
+import { useHandleSubmit } from '../hooks/useAgentSubmit.js';
+import { Box, type KeyEvent as InputKeyEvent, useKeyHandler } from "../primitives.js";
+import { requestShutdown } from '../shutdown.js';
+import { useAppStore } from '../store/appStore.js';
 
 // ============================================================================
 // Key handlers — use getState() at call time, zero stale closures
 // ============================================================================
 
 interface KeyEvent {
+  alt: boolean;
+  ctrl: boolean;
   key: string;
   shift: boolean;
-  ctrl: boolean;
-  alt: boolean;
 }
 
 function handleOutputFocus(evt: KeyEvent): void {
   const s = useAppStore.getState();
   switch (evt.key) {
-    case 'ArrowDown': case 'j': s.setScrollOffset(s.scrollOffset + 1); break;
-    case 'ArrowUp': case 'k': s.setScrollOffset(Math.max(0, s.scrollOffset - 1)); break;
-    case 'Tab': s.setFocus('filters'); break;
-    case 'Escape': case 'i': s.setFocus('input'); break;
-    case '/': s.setSearchActive(true); break;
-    case '?': s.toggleHelp(); break;
-    case 'G': s.setScrollOffset(Number.MAX_SAFE_INTEGER); break;
-    case 'g': s.setScrollOffset(0); break;
-    case 'P': if (!evt.shift) s.togglePanel(); break;
+    case '/': { s.setSearchActive(true); break;
+    }
+
+    case '?': { s.toggleHelp(); break;
+    }
+
+    case 'ArrowDown': { s.scrollOutput(-1); break;
+    }
+
+    case 'ArrowUp': { s.scrollOutput(1); break;
+    }
+
+    case 'Escape': { s.setFocus('input'); break;
+    }
+
+    case 'H': { if (evt.shift) s.toggleCompactHeader(); break;
+    }
+
+ case 'h': { if (!evt.ctrl && !evt.alt) s.setScreen('history'); break;
+    }
+
+    case 'i': { s.setFocus('input'); break;
+    }
+
+    case 'j': { s.scrollOutput(-1); break;
+    }
+
+    case 'k': { s.scrollOutput(1); break;
+    }
+
+    case 'P': { if (!evt.shift) s.togglePanel(); break;
+    }
+
+    case 'Tab': { s.setFocus('filters'); break;
+    }
   }
 }
 
@@ -57,36 +83,32 @@ function handlePanelFocus(evt: KeyEvent): void {
 }
 
 function handleFiltersFocus(evt: KeyEvent): void {
+  // FiltersPanel handles its own keyboard navigation (j/k/Space).
+  // Only handle global keys here.
   const s = useAppStore.getState();
   switch (evt.key) {
-    case 'ArrowDown': case 'j': s.setScrollOffset(s.scrollOffset + 1); break;
-    case 'ArrowUp': case 'k': s.setScrollOffset(Math.max(0, s.scrollOffset - 1)); break;
-    case ' ': { // Space toggles the currently highlighted filter
-      const keys = Object.keys(s.filters);
-      const idx = Math.min(s.scrollOffset, keys.length - 1);
-      const key = keys[idx];
-      if (key) s.toggleFilter(key);
-      break;
+    case 'H': { if (evt.shift) s.toggleCompactHeader(); break;
     }
-    case 'Tab': case 'Escape': case 'i': s.setFocus('input'); break;
   }
 }
 
 function handleInputFocus(evt: KeyEvent): void {
+  // In input focus the text input owns all printable keys (Ink routes them to
+  // the focused <Input>). Only Tab/Escape navigate away, so typed characters
+  // are never swallowed as shortcuts.
   const s = useAppStore.getState();
-  // CRITICAL: if input has text, ALL keystrokes go to the <Input>.
-  // Only empty input allows navigation shortcuts.
-  if (s.input.length > 0) return;
-
   switch (evt.key) {
-    case 'ArrowDown': case 'j': s.setScrollOffset(s.scrollOffset + 1); break;
-    case 'ArrowUp': case 'k': s.setScrollOffset(Math.max(0, s.scrollOffset - 1)); break;
-    case 'Tab': s.setFocus('output'); break;
-    case '/': s.setInput(''); s.setSearchActive(true); break;
-    case '?': s.toggleHelp(); break;
-    case 'G': s.setScrollOffset(Number.MAX_SAFE_INTEGER); break;
-    case 'g': s.setScrollOffset(0); break;
-    case 'P': if (!evt.shift) s.togglePanel(); break;
+    case 'ArrowDown': { s.scrollOutput(-1); break;
+    }
+
+    case 'ArrowUp': { s.scrollOutput(1); break;
+    }
+
+    case 'Escape': { s.setFocus('output'); break;
+    }
+
+    case 'Tab': { s.setFocus('output'); break;
+    }
   }
 }
 
@@ -110,146 +132,41 @@ function dispatchFocusKey(evt: KeyEvent): void {
     return;
   }
 
+  // Dismiss oldest toast with 'x' when toasts are visible
+  if (evt.key === 'x' && state.toasts.length > 0 && state.focus !== 'input') {
+    state.dismissToast(state.toasts[0]!.id);
+    return;
+  }
+
+  // Global transcript scrolling — works in any focus (these keys are unused elsewhere).
+  switch (evt.key) {
+    case 'End': { state.setOutputScroll(0); return;
+    }
+
+    case 'Home': { state.scrollOutput(Number.MAX_SAFE_INTEGER); return;
+    }
+
+    case 'PageDown': { state.scrollOutput(-10); return;
+    }
+
+    case 'PageUp': { state.scrollOutput(10); return;
+    }
+  }
+
   // ── Focus-aware dispatch ──────────────────────────────────────────
   switch (state.focus) {
-    case 'filters': handleFiltersFocus(evt); break;
-    case 'output': handleOutputFocus(evt); break;
-    case 'panel': handlePanelFocus(evt); break;
-    default: handleInputFocus(evt); break;
+    case 'filters': { handleFiltersFocus(evt); break;
+    }
+
+    case 'output': { handleOutputFocus(evt); break;
+    }
+
+    case 'panel': { handlePanelFocus(evt); break;
+    }
+
+    default: { handleInputFocus(evt); break;
+    }
   }
-}
-
-// ============================================================================
-// Stream throttling — batch chunks at 100ms so React re-renders 10×/sec
-// ============================================================================
-
-function createThrottledStream(intervalMs = 100) {
-  let chunkBuffer = '';
-  let eventBuffer: AgentStreamEvent[] = [];
-  let flushTimer: null | ReturnType<typeof setTimeout> = null;
-  // Capture the generation at creation time so we can discard chunks
-  // from a previous (aborted) stream when startStreaming() is called again.
-  const generation = useAppStore.getState().streamGeneration;
-
-  const flush = () => {
-    flushTimer = null;
-    const store = useAppStore.getState();
-    // Discard if a new stream has started since this one was created.
-    if (store.streamGeneration !== generation) {
-      chunkBuffer = '';
-      eventBuffer = [];
-      return;
-    }
-    if (chunkBuffer) {
-      store.appendStreamChunk(chunkBuffer);
-      chunkBuffer = '';
-    }
-    for (const evt of eventBuffer) store.addActivityEvent(evt);
-    eventBuffer = [];
-  };
-
-  return {
-    finish() {
-      if (flushTimer) clearTimeout(flushTimer);
-      flush();
-    },
-    onChunk(chunk: string) {
-      chunkBuffer += chunk;
-      if (!flushTimer) flushTimer = setTimeout(flush, intervalMs);
-    },
-    onEvent(event: AgentStreamEvent) {
-      eventBuffer.push(event);
-      if (!flushTimer) flushTimer = setTimeout(flush, intervalMs);
-    },
-  };
-}
-
-// ============================================================================
-// Submit handler — connects user input to agent session via throttled stream
-// ============================================================================
-
-function useHandleSubmit(): (command: string) => void {
-  const agentSessionRef = useAgentSessionRef();
-
-  return useCallback(async (command: string) => {
-    const trimmed = command.trim();
-    if (!trimmed) return;
-    if ([':q', ':quit', 'exit', 'quit'].includes(trimmed.toLowerCase())) {
-      process.exit(0);
-      return;
-    }
-
-    const store = useAppStore.getState();
-    store.setSessionPhase('ready');
-    const currentRequest = store.humanInputRequest;
-
-    if (currentRequest) {
-      store.addUserMessage(trimmed);
-      store.setInput('');
-      store.startStreaming();
-      const stream = createThrottledStream();
-      try {
-        let answer: boolean | string;
-        if (currentRequest.type === 'confirmation') {
-          answer = ['approve', 'confirm', 'ok', 'y', 'yes'].includes(trimmed.toLowerCase());
-        } else {
-          answer = trimmed;
-        }
-        await agentSessionRef.current?.resumeWithHumanInput(answer, stream.onChunk, stream.onEvent);
-        stream.finish();
-        useAppStore.getState().setHumanInputRequest(null);
-        useAppStore.getState().finishStreaming();
-      } catch (error) {
-        stream.finish();
-        const msg = (error as Error).message;
-        const isAuthError =
-          msg.includes('API key') ||
-          msg.includes('401') ||
-          msg.includes('403') ||
-          msg.includes('authentication') ||
-          msg.includes('unauthorized') ||
-          msg.includes('Invalid token') ||
-          msg.includes('key not valid');
-        if (isAuthError) {
-          useAppStore.getState().addErrorMessage('Authentication failed. Run again with --reconfigure.');
-        } else {
-          useAppStore.getState().addErrorMessage(`Error: ${msg}`);
-        }
-        useAppStore.getState().setHumanInputRequest(null);
-        useAppStore.getState().finishStreaming();
-      }
-      return;
-    }
-
-    store.addUserMessage(trimmed);
-    store.setInput('');
-    store.clearActivity();
-    store.startStreaming();
-
-    const stream = createThrottledStream();
-    try {
-      await agentSessionRef.current?.sendMessage(trimmed, stream.onChunk, stream.onEvent);
-      stream.finish();
-      useAppStore.getState().finishStreaming();
-    } catch (error) {
-      stream.finish();
-      const msg = (error as Error).message;
-      const isAuthError =
-        msg.includes('API key') ||
-        msg.includes('401') ||
-        msg.includes('403') ||
-        msg.includes('authentication') ||
-        msg.includes('unauthorized') ||
-        msg.includes('Invalid token') ||
-        msg.includes('key not valid');
-      if (isAuthError) {
-        useAppStore.getState().addErrorMessage('Authentication failed. Run again with --reconfigure.');
-      } else {
-        useAppStore.getState().addErrorMessage(`Error: ${msg}`);
-      }
-      useAppStore.getState().finishStreaming();
-    }
-  }, [agentSessionRef]);
 }
 
 // ============================================================================
@@ -292,25 +209,21 @@ export const ShellScreen: React.FC = () => {
   const isCompact = useAppStore((s) => s.isCompact);
 
   const handleSubmit = useHandleSubmit();
+  const agentSessionRef = useAgentSessionRef();
 
   // ── Terminal resize → compact mode ───────────────────────────────
-  // OpenTUI Yoga handles layout automatically, but we still need to
-  // toggle the compact sidebars when the terminal is narrow (< 80 cols).
   useEffect(() => {
     const updateCompact = () => {
-      // Guard: stdout may not be a TTY (e.g., piped output, CI). Default
-      // to non-compact when columns is unavailable.
       const cols = process.stdout.columns;
       const compact = typeof cols === 'number' && cols > 0 ? cols < 80 : false;
       useAppStore.getState().setIsCompact(compact);
     };
-    // Set initial value
+
     updateCompact();
-    // Listen for resize events (emitted by TTY on SIGWINCH).
-    // Only attach if stdout is a TTY to avoid errors in non-TTY environments.
     if (process.stdout.isTTY) {
       process.stdout.on('resize', updateCompact);
     }
+
     return () => {
       if (process.stdout.isTTY) {
         process.stdout.off('resize', updateCompact);
@@ -318,28 +231,96 @@ export const ShellScreen: React.FC = () => {
     };
   }, []);
 
+  // ── Submit handler with slash command routing ─────────────────────
+  const onSubmit = useCallback(async (command: string) => {
+    const trimmed = command.trim();
+    if (trimmed.startsWith('/')) {
+      const ctx: CommandContext = {
+        cancelActiveOperation() {
+          return agentSessionRef.current?.cancelActiveOperation() ?? false;
+        },
+        async compactContext() {
+          if (!agentSessionRef.current) throw new Error('Agent session is not ready.');
+          return agentSessionRef.current.compactContext();
+        },
+        async generateReport() {
+          return agentSessionRef.current?.generateReport() ?? null;
+        },
+        async listSuppressions() {
+          if (!agentSessionRef.current) throw new Error('Agent session is not ready.');
+          return agentSessionRef.current.listSuppressions();
+        },
+        notify(message, type = 'info') {
+          useAppStore.getState().addToast({ message, type });
+        },
+        async revokeSuppression(suppressionId, rationale) {
+          if (!agentSessionRef.current) throw new Error('Agent session is not ready.');
+          return agentSessionRef.current.revokeSuppression(suppressionId, rationale);
+        },
+        async setReasoningEffort(effort) {
+          if (!agentSessionRef.current) throw new Error('Agent session is not ready.');
+          return agentSessionRef.current.setReasoningEffort(effort);
+        },
+        async suppressFinding(findingId, rationale, expiresAt) {
+          if (!agentSessionRef.current) throw new Error('Agent session is not ready.');
+          return agentSessionRef.current.suppressFinding(findingId, rationale, expiresAt);
+        },
+      };
+      try {
+        const executed = await executeSlashCommand(trimmed, ctx);
+        if (executed) {
+          useAppStore.getState().setInput('');
+          return;
+        }
+      } catch (error) {
+        ctx.notify(
+          `Command failed: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+        return;
+      }
+    }
+
+    handleSubmit(command);
+  }, [agentSessionRef, handleSubmit]);
+
   // ── Global keyboard handler ────────────────────────────────────────
-  // Captures key events on the root <Box>. The `tabIndex` makes it
-  // focusable so keyDown events bubble here when no <Input> is focused.
-  const handleKeyDown = useCallback((evt: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((evt: InputKeyEvent) => {
+    if (evt.ctrlKey && evt.key.toLowerCase() === 'c') {
+      if (agentSessionRef.current?.cancelActiveOperation()) {
+        useAppStore.getState().addToast({
+          message: 'Cancelling the active operation...',
+          type: 'warning',
+        });
+      } else {
+        requestShutdown(130).catch(() => {
+          process.exitCode = 130;
+        });
+      }
+
+      return;
+    }
+
     dispatchFocusKey({
+      alt: evt.altKey,
+      ctrl: evt.ctrlKey,
       key: evt.key,
       shift: evt.shiftKey,
-      ctrl: evt.ctrlKey,
-      alt: evt.altKey,
     });
-  }, []);
+  }, [agentSessionRef]);
+
+  useKeyHandler(handleKeyDown);
 
   return (
     <Box
-      width="100%"
-      height="100%"
       flexDirection="column"
-      onKeyDown={handleKeyDown}
+      height="100%"
+      width="100%"
     >
       <Header />
+      <ToastStack />
 
-      <Box flexDirection="row" flexGrow={1}>
+      <Box flexDirection="row" flexGrow={1} overflow="hidden">
         {helpOpen ? (
           <Box flexGrow={1}><HelpOverlay /></Box>
         ) : isCompact ? (
@@ -350,7 +331,7 @@ export const ShellScreen: React.FC = () => {
       </Box>
 
       <StatusLine />
-      <InputArea onSubmit={handleSubmit} />
+      <InputArea onSubmit={onSubmit} />
       <Footer />
     </Box>
   );

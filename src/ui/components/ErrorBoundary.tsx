@@ -1,12 +1,11 @@
-import { Box, Text, Input } from "../../opentui/components.js";
+import React from 'react';
 /**
  * ErrorBoundary — catch render errors in the OpenTUI component tree.
  *
  * Prevents a single render error from crashing the entire terminal UI.
  */
 
-import React from 'react';
-
+import { Box, Text } from "../primitives.js";
 import { colors } from '../theme/chalkTheme.js';
 
 interface ErrorBoundaryProps {
@@ -41,7 +40,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
           padding={1}
         >
           <Box marginBottom={1}>
-            <Text color={colors.error} bold>
+            <Text bold color={colors.error}>
               ✖ UI Error — Shadow Auditor encountered a rendering error.
             </Text>
           </Box>

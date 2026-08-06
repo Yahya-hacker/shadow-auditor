@@ -137,7 +137,7 @@ export async function detectCommunities(graph: LouvainGraph): Promise<CommunityA
     // Yield the event loop after each Louvain pass so the TUI can
     // process keystrokes and re-render. A single pass over a large
     // graph can take hundreds of milliseconds of synchronous CPU.
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => { setImmediate(resolve); });
   }
 
   const modularity = computeModularity(adjacency, communities, totalWeight);

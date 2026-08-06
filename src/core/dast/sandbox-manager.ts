@@ -8,15 +8,12 @@
  */
 
 import { execFile } from 'node:child_process';
-import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
-import { promisify } from 'node:util';
 
 import { type SandboxExecResult } from './dast-schema.js';
 import { MirageOAST } from './mirage-oast.js';
-
-const execFileAsync = promisify(execFile);
 
 // =============================================================================
 // Helpers
@@ -36,6 +33,7 @@ function validateSafeIdentifier(value: string, context: string): string {
       'Only alphanumeric characters, dots, hyphens, and underscores are permitted.',
     );
   }
+
   return value;
 }
 
@@ -50,6 +48,7 @@ function validateResourceLimit(value: string, context: string): string {
       `Invalid ${context}: "${value}". Expected a numeric value with optional unit (e.g., "512m", "1.5").`,
     );
   }
+
   return value.trim();
 }
 
@@ -58,21 +57,13 @@ function validateResourceLimit(value: string, context: string): string {
  * Matches the OCI distribution spec: [registry/]name[:tag|@digest]
  */
 function validateImageRef(value: string): string {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.\/-]{0,255}(:[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127})?$/.test(value.trim())) {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_./-]{0,255}(?::[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}|@sha256:[a-fA-F0-9]{64})?$/.test(value.trim())) {
     throw new Error(
       `Invalid Docker image: "${value}". Must be a valid OCI image reference.`,
     );
   }
-  return value.trim();
-}
 
-async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
+  return value.trim();
 }
 
 // =============================================================================
@@ -82,6 +73,7 @@ async function fileExists(filePath: string): Promise<boolean> {
 export interface SandboxOptions {
   baseImage?: string;
   cpuLimit?: string;
+  dockerExecutor?: typeof execFile;
   healthCheckUrl?: string;
   memoryLimit?: string;
   runId: string;
@@ -96,11 +88,13 @@ export interface SandboxOptions {
 
 export class SandboxManager {
   private readonly containerName: string;
+  private readonly dockerExecutor: typeof execFile;
   private readonly executionLog: SandboxExecResult[] = [];
   private readonly mirage: MirageOAST;
   private readonly networkName: string;
-  private readonly options: Required<SandboxOptions>;
+  private readonly options: Required<Omit<SandboxOptions, 'dockerExecutor'>>;
   private running = false;
+  private workspaceRoot: null | string = null;
 
   constructor(options: SandboxOptions) {
     // Validate all user-configurable values before storing them
@@ -119,10 +113,12 @@ export class SandboxManager {
       targetPath: options.targetPath,
       timeoutMs: options.timeoutMs ?? 120_000,
     };
+    this.dockerExecutor = options.dockerExecutor ?? execFile;
 
     this.networkName = `shadow-net-${validatedRunId}`;
     this.containerName = `shadow-target-${validatedRunId}`;
     this.mirage = new MirageOAST({
+      dockerExecutor: this.dockerExecutor,
       networkName: this.networkName,
       runId: validatedRunId,
     });
@@ -134,95 +130,111 @@ export class SandboxManager {
    * Uses execFile with argument arrays — no shell interpolation — to
    * prevent command injection even if config values were compromised.
    */
-  async create(): Promise<void> {
-    const { runId, targetPath: optsTargetPath } = this.options;
-
-    // 1. Create the internal Docker network
-    await this.dockerExec(['network', 'create', this.networkName]);
-
-    // 2. Start the Mirage OAST sidecar
-    await this.mirage.start();
-
-    // 3. Create the target container (not started yet)
+  async create(signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    const { targetPath: optsTargetPath } = this.options;
     const absTargetPath = path.resolve(optsTargetPath);
-    const projectHash = crypto.createHash('sha256').update(absTargetPath).digest('hex').slice(0, 12);
-    const mirageContainer = this.mirage.getContainerName();
+    this.workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-dast-'));
+    const workspacePath = path.join(this.workspaceRoot, 'project');
 
-    // Build args array — all values are individually passed, no shell parsing.
-    const createArgs: string[] = [
-      'create',
-      '--name', this.containerName,
-      '--network', this.networkName,
-      '--env', `HTTP_PROXY=http://${mirageContainer}:8080`,
-      '--env', `HTTPS_PROXY=http://${mirageContainer}:8080`,
-      '--env', `http_proxy=http://${mirageContainer}:8080`,
-      '--env', `https_proxy=http://${mirageContainer}:8080`,
-      '--env', 'CI=true',
-      '--memory', this.options.memoryLimit,
-      '--cpus', this.options.cpuLimit,
-      '-v', `${absTargetPath}:/app:rw`,
-    ];
+    try {
+      await fs.cp(absTargetPath, workspacePath, {
+        filter(source) {
+          const relative = path.relative(absTargetPath, source);
+          const topLevel = relative.split(path.sep)[0];
+          return !['.git', '.shadow-auditor', 'node_modules'].includes(topLevel);
+        },
+        recursive: true,
+      });
+      signal?.throwIfAborted();
 
-    if (await fileExists(path.join(absTargetPath, 'package.json'))) {
-      createArgs.push('-v', `shadow-node-modules-${projectHash}:/app/node_modules`);
-    } else if (
-      await fileExists(path.join(absTargetPath, 'pyproject.toml')) ||
-      await fileExists(path.join(absTargetPath, 'setup.py')) ||
-      await fileExists(path.join(absTargetPath, 'pytest.ini')) ||
-      await fileExists(path.join(absTargetPath, 'requirements.txt'))
-    ) {
-      createArgs.push('-v', `shadow-python-venv-${projectHash}:/app/.venv`);
-    } else if (await fileExists(path.join(absTargetPath, 'go.mod'))) {
-      createArgs.push('-v', `shadow-go-cache-${projectHash}:/go/pkg/mod`);
-    } else if (await fileExists(path.join(absTargetPath, 'Cargo.toml'))) {
-      createArgs.push('-v', `shadow-cargo-target-${projectHash}:/app/target`);
+      // 1. Create the internal Docker network
+      const networkResult = await this.dockerExec(
+        ['network', 'create', '--internal', this.networkName],
+        signal,
+      );
+      if (networkResult.exitCode !== 0) {
+        throw new Error(`Failed to create sandbox network: ${networkResult.stderr}`);
+      }
+
+      // 2. Start the Mirage OAST sidecar
+      await this.mirage.start(signal);
+      signal?.throwIfAborted();
+
+      // 3. Create the target container (not started yet)
+      const mirageContainer = this.mirage.getContainerName();
+
+      // Build args array — all values are individually passed, no shell parsing.
+      const createArgs: string[] = [
+        'create',
+        '--name', this.containerName,
+        '--network', this.networkName,
+        '--env', `HTTP_PROXY=http://${mirageContainer}:8080`,
+        '--env', `HTTPS_PROXY=http://${mirageContainer}:8080`,
+        '--env', `http_proxy=http://${mirageContainer}:8080`,
+        '--env', `https_proxy=http://${mirageContainer}:8080`,
+        '--env', 'CI=true',
+        '--memory', this.options.memoryLimit,
+        '--cpus', this.options.cpuLimit,
+        '-v', `${workspacePath}:/app:rw`,
+      ];
+      for (const dependencyMount of await discoverDependencyMounts(absTargetPath)) {
+        createArgs.push('-v', `${dependencyMount.hostPath}:${dependencyMount.containerPath}:ro`);
+      }
+
+      createArgs.push(
+        '-w', '/app',
+        this.options.baseImage,
+        'sleep', 'infinity',
+      );
+
+      const result = await this.dockerExec(createArgs, signal);
+      if (result.exitCode !== 0) {
+        throw new Error(`Failed to create sandbox container: ${result.stderr}`);
+      }
+
+      // Start the container
+      const startResult = await this.dockerExec(['start', this.containerName], signal);
+      if (startResult.exitCode !== 0) {
+        throw new Error(`Failed to start sandbox container: ${startResult.stderr}`);
+      }
+
+      const inspectResult = await this.dockerExec(
+        ['inspect', '--format', '{{.State.Running}}', this.containerName],
+        signal,
+      );
+      if (inspectResult.exitCode !== 0 || inspectResult.stdout.trim() !== 'true') {
+        throw new Error(`Sandbox container exited during startup: ${inspectResult.stderr || inspectResult.stdout}`);
+      }
+
+      this.running = true;
+    } catch (error) {
+      await this.destroy();
+      throw error;
     }
-
-    createArgs.push(
-      '-w', '/app',
-      this.options.baseImage,
-      'sleep', 'infinity',
-    );
-
-    const result = await this.dockerExec(createArgs);
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to create sandbox container: ${result.stderr}`);
-    }
-
-    // Start the container
-    await this.dockerExec(['start', this.containerName]);
-    this.running = true;
   }
 
   /**
    * Deploy the target application inside the sandbox.
    */
-  async deploy(): Promise<string> {
+  async deploy(signal?: AbortSignal, startCommand?: string): Promise<string> {
+    signal?.throwIfAborted();
     if (!this.running) {
       throw new Error('Sandbox not created. Call create() first.');
     }
 
-    if (!this.options.startCommand) {
+    const command = startCommand?.trim() || this.options.startCommand;
+    if (!command) {
       return 'No start command configured';
-    }
-
-    let deployCmd = this.options.startCommand;
-    const absTargetPath = path.resolve(this.options.targetPath);
-
-    if (await fileExists(path.join(absTargetPath, 'package.json'))) {
-      deployCmd = `npm install && ${this.options.startCommand}`;
-    } else if (
-      await fileExists(path.join(absTargetPath, 'pyproject.toml')) ||
-      await fileExists(path.join(absTargetPath, 'setup.py')) ||
-      await fileExists(path.join(absTargetPath, 'requirements.txt'))
-    ) {
-      deployCmd = `(if [ -f requirements.txt ]; then pip install -r requirements.txt; fi) && ${this.options.startCommand}`;
     }
 
     // The deploy command runs via `docker exec ... sh -c <cmd>`, which does
     // invoke a shell inside the container — but the command is already
     // constrained to the disposable sandbox container, not the host.
-    const result = await this.exec(deployCmd);
+    const result = await this.exec(command, signal);
+    if (result.exitCode !== 0) {
+      throw new Error(`Target deploy command failed with exit code ${result.exitCode}: ${result.stderr}`);
+    }
 
     // If health check URL is configured, wait for it
     if (this.options.healthCheckUrl) {
@@ -230,16 +242,23 @@ export class SandboxManager {
       for (let i = 0; i < maxAttempts; i++) {
         const healthCheck = await this.exec(
           `wget -qO- --timeout=5 ${this.options.healthCheckUrl} 2>/dev/null || true`,
+          signal,
         );
         if (healthCheck.exitCode === 0 && healthCheck.stdout.trim()) {
           return `Target deployed and healthy at ${this.options.healthCheckUrl}`;
         }
 
         // Wait 2 seconds between attempts
-        await new Promise<void>((resolve) => { setTimeout(resolve, 2000); });
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(resolve, 2000);
+          signal?.addEventListener('abort', () => {
+            clearTimeout(timeout);
+            reject(signal.reason ?? new Error('Sandbox deployment aborted.'));
+          }, { once: true });
+        });
       }
 
-      return 'Target deployed but health check did not pass';
+      throw new Error(`Target deploy command completed but health check did not pass: ${this.options.healthCheckUrl}`);
     }
 
     return `Target deploy command executed: ${result.stdout.slice(0, 500)}`;
@@ -261,6 +280,10 @@ export class SandboxManager {
     await this.dockerExec(['network', 'rm', this.networkName]).catch(() => {});
 
     this.running = false;
+    if (this.workspaceRoot) {
+      await fs.rm(this.workspaceRoot, { force: true, recursive: true });
+      this.workspaceRoot = null;
+    }
   }
 
   /**
@@ -271,7 +294,8 @@ export class SandboxManager {
    * filesystem (only the mounted target directory). While sh -c does invoke
    * a shell, the blast radius is limited to the container.
    */
-  async exec(command: string): Promise<SandboxExecResult> {
+  async exec(command: string, signal?: AbortSignal): Promise<SandboxExecResult> {
+    signal?.throwIfAborted();
     if (!this.running) {
       throw new Error('Sandbox not running. Call create() first.');
     }
@@ -279,7 +303,7 @@ export class SandboxManager {
     const startTime = Date.now();
     const result = await this.dockerExec([
       'exec', this.containerName, 'sh', '-c', command,
-    ]);
+    ], signal);
 
     const execResult: SandboxExecResult = {
       command,
@@ -318,15 +342,16 @@ export class SandboxManager {
   /**
    * Get sandbox status.
    */
-  async status(): Promise<{
+  async status(signal?: AbortSignal): Promise<{
     containerRunning: boolean;
     mirageRunning: boolean;
     networkName: string;
     oastCallbackCount: number;
   }> {
+    signal?.throwIfAborted();
     // Sync OAST logs
     if (this.mirage.isRunning()) {
-      await this.mirage.syncLog();
+      await this.mirage.syncLog(signal);
     }
 
     return {
@@ -355,16 +380,23 @@ export class SandboxManager {
    */
   private dockerExec(
     args: string[],
+    signal?: AbortSignal,
   ): Promise<{ exitCode: number; stderr: string; stdout: string }> {
-    return new Promise((resolve) => {
-      execFile(
+    return new Promise((resolve, reject) => {
+      this.dockerExecutor(
         'docker',
         args,
         {
           maxBuffer: 10 * 1024 * 1024,
+          signal,
           timeout: this.options.timeoutMs,
         },
         (error, stdout, stderr) => {
+          if (signal?.aborted) {
+            reject(signal.reason ?? error ?? new Error('Docker operation aborted.'));
+            return;
+          }
+
           resolve({
             exitCode: typeof error?.code === 'number' ? error.code : (error ? 1 : 0),
             stderr: typeof stderr === 'string' ? stderr : '',
@@ -374,4 +406,33 @@ export class SandboxManager {
       );
     });
   }
+}
+
+async function discoverDependencyMounts(
+  targetPath: string,
+): Promise<Array<{ containerPath: string; hostPath: string }>> {
+  const candidates = [
+    { containerPath: '/app/node_modules', relativePath: 'node_modules' },
+    { containerPath: '/app/.venv', relativePath: '.venv' },
+    { containerPath: '/app/venv', relativePath: 'venv' },
+    { containerPath: '/app/vendor/bundle', relativePath: path.join('vendor', 'bundle') },
+  ];
+  const mounts: Array<{ containerPath: string; hostPath: string }> = [];
+  const root = await fs.realpath(targetPath);
+
+  for (const candidate of candidates) {
+    const hostPath = path.join(root, candidate.relativePath);
+    try {
+      const stats = await fs.lstat(hostPath);
+      if (!stats.isDirectory() || stats.isSymbolicLink()) continue;
+      const realPath = await fs.realpath(hostPath);
+      const relative = path.relative(root, realPath);
+      if (relative.startsWith('..') || path.isAbsolute(relative)) continue;
+      mounts.push({ containerPath: candidate.containerPath, hostPath: realPath });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+
+  return mounts;
 }

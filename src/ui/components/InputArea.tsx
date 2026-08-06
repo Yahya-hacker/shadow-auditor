@@ -1,20 +1,18 @@
-import { Box, Text, Input } from "../../opentui/components.js";
+import React, { memo, useMemo } from 'react';
 /**
- * InputArea — OpenTUI query input with focus-aware border.
+ * InputArea — OpenTUI query input with focus-aware border and slash command
+ * suggestions.
  *
  * Architecture:
  *   InputArea (outer) — subscribes to focus, streaming, searchActive.
  *     Does NOT subscribe to `input` or `searchQuery`.
  *   InputBorder — memoized wrapper for border (stable across keystrokes).
  *   InputContent — subscribes to `input`/`searchQuery` from store.
- *
- * Strict Focus Isolation: when the <Input> is focused and has text,
- * ALL keystrokes stay in the input. Navigation shortcuts only activate
- * when the input is empty (handled in ShellScreen's useHandleSubmit).
+ *   CommandSuggestions — shows available slash commands when input starts with `/`.
  */
 
-import React, { memo } from 'react';
-
+import { getCommandSuggestions } from '../commands.js';
+import { Box, Input, Text } from "../primitives.js";
 import { useAppStore } from '../store/appStore.js';
 import { colors, getPanelStyle } from '../theme/chalkTheme.js';
 
@@ -38,7 +36,7 @@ const InputBorder = memo<{
       flexDirection="column"
       paddingX={1}
     >
-      <Text color={panelStyle.borderColor} bold>Query</Text>
+      <Text bold color={panelStyle.borderColor}>Query</Text>
       {children}
     </Box>
   );
@@ -65,8 +63,8 @@ const InputContent = memo<{
   if (streaming) {
     return (
       <Box>
-        <Text color={colors.brand} bold>❯ </Text>
-        <Text color={colors.agent} animate="pulse">
+        <Text bold color={colors.brand}>❯ </Text>
+        <Text animate="pulse" color={colors.agent}>
           ● Agent is thinking...
         </Text>
       </Box>
@@ -78,14 +76,15 @@ const InputContent = memo<{
       // Enter in search mode: exit search and return focus to input.
       setSearchActive(false);
     };
+
     return (
       <Box>
-        <Text color={colors.pending} bold>filter ❯ </Text>
+        <Text bold color={colors.pending}>filter ❯ </Text>
         <Input
-          value={searchQuery}
           onChange={(val: string) => setSearchQuery(val)}
           onSubmit={handleSubmit}
           placeholder="filter messages… (Esc to clear)"
+          value={searchQuery}
         />
       </Box>
     );
@@ -94,12 +93,12 @@ const InputContent = memo<{
   if (isFocused) {
     return (
       <Box>
-        <Text color={colors.brand} bold>❯ </Text>
+        <Text bold color={colors.brand}>❯ </Text>
         <Input
-          value={input}
           onChange={(val: string) => setInput(val)}
           onSubmit={onSubmit}
           placeholder={placeholder}
+          value={input}
         />
       </Box>
     );
@@ -112,6 +111,35 @@ const InputContent = memo<{
   );
 });
 InputContent.displayName = 'InputContent';
+
+/**
+ * Shows matching slash commands when input starts with `/`.
+ * Subscribes to `input` directly so only this leaf re-renders.
+ */
+const CommandSuggestions: React.FC = memo(() => {
+  const input = useAppStore((s) => s.input);
+
+  const suggestions = useMemo(() => {
+    if (!input.startsWith('/')) return [];
+    // Don't show suggestions after a space (user has typed args)
+    if (input.includes(' ')) return [];
+    return getCommandSuggestions(input);
+  }, [input]);
+
+  if (suggestions.length === 0) return null;
+
+  return (
+    <Box flexDirection="column">
+      {suggestions.map((cmd) => (
+        <Text key={cmd.name}>
+          <Text bold color={colors.brand}>{cmd.name}</Text>
+          <Text color={colors.muted}> — {cmd.description}</Text>
+        </Text>
+      ))}
+    </Box>
+  );
+});
+CommandSuggestions.displayName = 'CommandSuggestions';
 
 export const InputArea: React.FC<InputAreaProps> = memo(({ onSubmit }) => {
   const focus = useAppStore((s) => s.focus);
@@ -129,6 +157,7 @@ export const InputArea: React.FC<InputAreaProps> = memo(({ onSubmit }) => {
 
   return (
     <Box flexDirection="column">
+      <CommandSuggestions />
       <InputBorder isFocused={isFocused} searchActive={searchActive}>
         <InputContent
           isFocused={isFocused}

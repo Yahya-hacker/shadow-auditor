@@ -1,11 +1,7 @@
 import type {
-  ArtifactChange,
-  Invocation,
-  ReportingConfiguration,
   ReportingDescriptor,
   Log as SarifLog,
   Result as SarifResult,
-  VersionControlDetails,
 } from 'sarif';
 
 import type { EnhancedFinding, EnhancedReport } from './finding-schema.js';
@@ -246,57 +242,6 @@ export function generateEnhancedSarifReport(report: EnhancedReport): SarifLog {
         }));
     }
 
-    // Add fixes if code example provided and we have enough info
-    // to produce a valid SARIF artifactChange. The `replacements`
-    // array MUST be non-empty per SARIF spec §3.55.3 — an empty
-    // array is semantically meaningless and rejected by SARIF
-    // consumers. We construct a single `replacement` from the
-    // code example as a best-effort deletion region covering the
-    // primary finding location's line range, then insert the
-    // remediated code.
-    if (finding.remediation.codeExample && finding.locations[0]?.filePath) {
-      const primaryLoc = finding.locations[0];
-      const primaryFile = primaryLoc.filePath;
-      const replacementRegion = primaryLoc.startLine ? {
-        byteLength: 0,
-        byteOffset: 0,
-        charLength: 0,
-        charOffset: 0,
-        endColumn: primaryLoc.endColumn ?? 0,
-        endLine: primaryLoc.endLine ?? primaryLoc.startLine,
-        startColumn: primaryLoc.startColumn ?? 1,
-        startLine: primaryLoc.startLine,
-      } : undefined;
-
-      const replacement = {
-        deletedRegion: replacementRegion ?? {
-          byteLength: 0,
-          byteOffset: 0,
-          charLength: 0,
-          charOffset: 0,
-          endColumn: 0,
-          endLine: 0,
-          startColumn: 1,
-          startLine: 1,
-        },
-        insertedContent: {
-          text: finding.remediation.codeExample,
-        },
-      };
-
-      result.fixes = [{
-        artifactChanges: [{
-          artifactLocation: {
-            uri: toPosixPath(primaryFile),
-          },
-          replacements: [replacement],
-        }],
-        description: {
-          text: finding.remediation.summary,
-        },
-      }];
-    }
-
     return result;
   });
 
@@ -365,14 +310,17 @@ function computeSafeStartTime(
     const now = Date.now();
     return new Date(now - 1000).toISOString();
   }
-  if (durationMs != null && durationMs > 0) {
+
+  if (durationMs != null && durationMs > 0) { // eslint-disable-line no-eq-null, eqeqeq
     const startMs = Math.max(0, endMs - durationMs);
     // Ensure startTime is strictly before endTime (minimum 1ms gap)
     if (startMs >= endMs) {
       return new Date(endMs - 1000).toISOString();
     }
+
     return new Date(startMs).toISOString();
   }
+
   // Fallback: assume at least 1 second before endTime
   return new Date(Math.max(0, endMs - 1000)).toISOString();
 }

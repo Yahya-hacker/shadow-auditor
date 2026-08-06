@@ -21,10 +21,10 @@ import {
 import { parseUnifiedDiff } from './patch-conflict-detector.js';
 
 interface VerificationOptions {
+  /** Known interface bridges (cross-language API boundaries) */
+  interfaceBridges?: Array<{ exports: string[]; file: string; }>;
   /** Known language idioms to check against */
   languageIdioms?: Record<string, string[]>;
-  /** Known interface bridges (cross-language API boundaries) */
-  interfaceBridges?: Array<{ file: string; exports: string[] }>;
   /** Whether to run strict type checking */
   strictMode?: boolean;
 }
@@ -48,13 +48,13 @@ export function verifySynthesizedPatch(
       checks: [{
         checkId: `check_${crypto.randomBytes(4).toString('hex')}`,
         checkType: 'syntax_validity',
-        status: 'pass',
-        description: 'Empty diff — nothing to verify.',
+        description: 'Empty diff cannot be verified or applied.',
+        status: 'fail',
       }],
-      overallVerdict: 'approved',
-      warnings: [],
-      errors: [],
+      errors: ['Diff is empty.'],
+      overallVerdict: 'rejected',
       timestamp: new Date().toISOString(),
+      warnings: [],
     };
   }
 
@@ -67,21 +67,34 @@ export function verifySynthesizedPatch(
       checks: [{
         checkId: `check_${crypto.randomBytes(4).toString('hex')}`,
         checkType: 'syntax_validity',
-        status: 'fail',
         description: 'Failed to parse the unified diff — malformed format.',
+        status: 'fail',
       }],
-      overallVerdict: 'rejected',
-      warnings: [],
       errors: ['Diff parsing failed: invalid unified diff format.'],
+      overallVerdict: 'rejected',
       timestamp: new Date().toISOString(),
+      warnings: [],
+    };
+  }
+
+  if (parsed.length === 0) {
+    return {
+      checks: [{
+        checkId: `check_${crypto.randomBytes(4).toString('hex')}`,
+        checkType: 'syntax_validity',
+        description: 'Input contains no unified-diff file headers or hunks.',
+        status: 'fail',
+      }],
+      errors: ['No applicable file changes were found in the supplied text.'],
+      overallVerdict: 'rejected',
+      timestamp: new Date().toISOString(),
+      warnings: [],
     };
   }
 
   // ── Check 1: Syntax Validity ──────────────────────────────────────
-  checks.push(...verifySyntaxValidity(parsed, unifiedDiff));
-
   // ── Check 2: Import Completeness ──────────────────────────────────
-  checks.push(...verifyImportCompleteness(parsed));
+  checks.push(...verifySyntaxValidity(parsed, unifiedDiff), ...verifyImportCompleteness(parsed));
 
   // ── Check 3: Type Consistency ─────────────────────────────────────
   if (options.strictMode) {
@@ -118,10 +131,10 @@ export function verifySynthesizedPatch(
 
   return {
     checks,
-    overallVerdict: hasFailures ? 'rejected' : hasWarnings ? 'warning' : 'approved',
-    warnings,
     errors,
+    overallVerdict: hasFailures ? 'rejected' : hasWarnings ? 'warning' : 'approved',
     timestamp: new Date().toISOString(),
+    warnings,
   };
 }
 
@@ -139,9 +152,9 @@ function makeCheck(
   return {
     checkId: `check_${crypto.randomBytes(4).toString('hex')}`,
     checkType: type,
-    status,
     description,
     filePath,
+    status,
     suggestion,
   };
 }
@@ -155,7 +168,7 @@ function verifySyntaxValidity(
   for (const file of parsed) {
     if (file.hunks.length === 0) {
       checks.push(makeCheck(
-        'syntax_validity', 'warning',
+        'syntax_validity', 'fail',
         `File ${file.filePath} has no hunks — no changes applied.`,
         file.filePath,
       ));
@@ -218,11 +231,10 @@ function verifyImportCompleteness(
   parsed: ReturnType<typeof parseUnifiedDiff>,
 ): VerificationCheck[] {
   const checks: VerificationCheck[] = [];
-  let hasWarnings = false;
 
   for (const file of parsed) {
     const ext = file.filePath.split('.').pop()?.toLowerCase();
-    if (!ext || !['ts', 'tsx', 'js', 'jsx', 'py', 'go', 'rs'].includes(ext)) continue;
+    if (!ext || !['go', 'js', 'jsx', 'py', 'rs', 'ts', 'tsx'].includes(ext)) continue;
 
     const allLines = file.hunks.flatMap((h) => h.lines);
 
@@ -247,8 +259,21 @@ function verifyImportCompleteness(
 
       for (const pattern of apiPatterns) {
         if (pattern.test(line.content)) {
-          // This is a heuristic — it would require full AST analysis
-          // to be precise. Flag as info-level.
+          // API usage detected — verify a corresponding import exists
+          // in the file's diff context (added or context lines).
+          const apiName = line.content.match(pattern)?.[0] ?? '';
+          const hasImport = imports.some((imp) =>
+            imp.content.includes(apiName.replace(/[.(]$/, '')),
+          );
+          if (!hasImport) {
+            checks.push(makeCheck(
+              'import_completeness', 'warning',
+              `File ${file.filePath}: API usage "${apiName}" detected but no corresponding import found in diff.`,
+              file.filePath,
+              `Verify that "${apiName}" is imported or available in scope.`,
+            ));
+          }
+
           break;
         }
       }
@@ -367,9 +392,19 @@ function verifyIdiomPreservation(
 
     // Check if added code uses non-idiomatic patterns
     for (const idiom of langIdioms) {
-      // Idioms are regex patterns that SHOULD be present
+      // Idioms are regex patterns that SHOULD be present in well-written code.
+      // Test each idiom against the added lines; warn when no match is found.
       const idiomRegex = new RegExp(idiom, 'i');
-      // This is a heuristic — in practice you'd check for anti-patterns
+      const matchesIdiom = addedLines.some((line) => idiomRegex.test(line));
+
+      if (addedLines.length > 0 && !matchesIdiom) {
+        checks.push(makeCheck(
+          'idiom_preservation', 'warning',
+          `File ${file.filePath}: added code does not match idiom pattern "${idiom}". Code may not follow language conventions.`,
+          file.filePath,
+          'Review added code to ensure it follows idiomatic patterns for the language.',
+        ));
+      }
     }
   }
 
@@ -385,7 +420,7 @@ function verifyIdiomPreservation(
 
 function verifyInterfaceBridges(
   parsed: ReturnType<typeof parseUnifiedDiff>,
-  bridges: Array<{ file: string; exports: string[] }>,
+  bridges: Array<{ exports: string[]; file: string; }>,
 ): VerificationCheck[] {
   const checks: VerificationCheck[] = [];
 

@@ -1,12 +1,10 @@
-import { Box, Text, Input } from "../../opentui/components.js";
+import React, { memo } from 'react';
 /**
  * Footer — contextual keybinding bar.
  *
  * Shows keybinds appropriate for the current focus target.
  * Memoized to prevent re-rendering on every keystroke.
  */
-
-import React, { memo } from 'react';
 
 import {
   filterKeybinds,
@@ -15,12 +13,13 @@ import {
   primaryKeybinds,
   searchKeybinds,
 } from '../keybinds.js';
+import { Box, Text } from "../primitives.js";
 import { useAppStore } from '../store/appStore.js';
 import { colors } from '../theme/chalkTheme.js';
 
 const KeybindTag: React.FC<Keybind> = memo(({ desc, keys }) => (
   <>
-    <Text color={colors.dim} bold>[{keys}]</Text>
+    <Text bold color={colors.dim}>[{keys}]</Text>
     <Text color={colors.muted} italic> {desc} · </Text>
   </>
 ));
@@ -35,10 +34,17 @@ export const Footer: React.FC = memo(() => {
     keybinds = searchKeybinds;
   } else {
     switch (focus) {
-      case 'filters': keybinds = filterKeybinds; break;
-      case 'output': keybinds = outputKeybinds; break;
-      case 'panel': keybinds = outputKeybinds; break;
-      default: keybinds = primaryKeybinds; break;
+      case 'filters': { keybinds = filterKeybinds; break;
+      }
+
+      case 'output': { keybinds = outputKeybinds; break;
+      }
+
+      case 'panel': { keybinds = outputKeybinds; break;
+      }
+
+      default: { keybinds = primaryKeybinds; break;
+      }
     }
   }
 

@@ -13,7 +13,9 @@
  */
 
 import type { BaseEntity } from './memory-schema.js';
-import type { CodeChunk, SemanticIndex, SemanticSearchResult } from './semantic-index.js';
+import type { CodeChunk, SemanticIndex } from './semantic-index.js';
+
+import { logToStderr } from '../../utils/stderr-logger.js';
 
 // ============================================================================
 // Types
@@ -65,6 +67,8 @@ export interface HybridSearchOptions {
   fileFilter?: string;
   /** Maximum results */
   maxResults?: number;
+  /** Cancel in-flight semantic retrieval */
+  signal?: AbortSignal;
   /** Only include results from specific strategies */
   strategies?: RetrievalStrategy[];
 }
@@ -256,6 +260,7 @@ export class HybridRetriever {
     query: string,
     options: HybridSearchOptions = {},
   ): Promise<HybridResult[]> {
+    options.signal?.throwIfAborted();
     const strategies = options.strategies ?? ['semantic', 'lexical', 'graph', 'community'];
     const maxResults = options.maxResults ?? this.maxResults;
     const perStrategyLimit = maxResults * 3; // Fetch more per strategy for better fusion
@@ -263,10 +268,10 @@ export class HybridRetriever {
     // Execute enabled strategies in parallel
     const strategyResults: StrategyResult[] = [];
 
-    const promises: Array<Promise<StrategyResult[]>> = [];
+    const promises: Array<Promise<StrategyResult[]> | StrategyResult[]> = [];
 
-    if (strategies.includes('semantic')) {
-      promises.push(this.executeSemanticStrategy(query, perStrategyLimit, options.fileFilter));
+    if (strategies.includes('semantic') && this.semanticIndex.semanticSearchAvailable) {
+      promises.push(this.executeSemanticStrategy(query, perStrategyLimit, options.fileFilter, options.signal));
     }
 
     if (strategies.includes('lexical')) {
@@ -282,6 +287,7 @@ export class HybridRetriever {
     }
 
     const results = await Promise.allSettled(promises);
+    options.signal?.throwIfAborted();
 
     for (const result of results) {
       if (result.status === 'fulfilled') {
@@ -323,15 +329,15 @@ export class HybridRetriever {
 
       return scored.slice(0, limit);
     } catch (error) {
-      console.warn(`[HybridRetriever] Community search failed: ${(error as Error).message}`);
+      logToStderr(`[HybridRetriever] Community search failed: ${(error as Error).message}`);
       return [];
     }
   }
 
-  private async executeGraphStrategy(
+  private executeGraphStrategy(
     query: string,
     limit: number,
-  ): Promise<StrategyResult[]> {
+  ): StrategyResult[] {
     try {
       // Search the knowledge graph for entities matching the query
       const searchResults = this.retrieval.searchByLabel(query, { limit });
@@ -353,16 +359,16 @@ export class HybridRetriever {
         };
       });
     } catch (error) {
-      console.warn(`[HybridRetriever] Graph search failed: ${(error as Error).message}`);
+      logToStderr(`[HybridRetriever] Graph search failed: ${(error as Error).message}`);
       return [];
     }
   }
 
-  private async executeLexicalStrategy(
+  private executeLexicalStrategy(
     query: string,
     limit: number,
     fileFilter?: string,
-  ): Promise<StrategyResult[]> {
+  ): StrategyResult[] {
     try {
       const allChunks = this.getAllChunks();
       const results = lexicalSearch(query, allChunks, { fileFilter, maxResults: limit });
@@ -379,7 +385,7 @@ export class HybridRetriever {
         text: r.chunk.rawContent,
       }));
     } catch (error) {
-      console.warn(`[HybridRetriever] Lexical search failed: ${(error as Error).message}`);
+      logToStderr(`[HybridRetriever] Lexical search failed: ${(error as Error).message}`);
       return [];
     }
   }
@@ -388,10 +394,12 @@ export class HybridRetriever {
     query: string,
     limit: number,
     fileFilter?: string,
+    signal?: AbortSignal,
   ): Promise<StrategyResult[]> {
     try {
       const results = await this.semanticIndex.search(query, {
         fileFilter,
+        signal,
         topK: limit,
       });
 
@@ -409,7 +417,8 @@ export class HybridRetriever {
           : r.chunk.rawContent,
       }));
     } catch (error) {
-      console.warn(`[HybridRetriever] Semantic search failed: ${(error as Error).message}`);
+      if (signal?.aborted) throw error;
+      logToStderr(`[HybridRetriever] Semantic search failed: ${(error as Error).message}`);
       return [];
     }
   }
@@ -437,7 +446,7 @@ export class HybridRetriever {
     // Compute RRF score for each unique result
     const fused: HybridResult[] = [];
 
-    for (const [dedupKey, results] of grouped) {
+    for (const [_dedupKey, results] of grouped) {
       const ranks = results.map((r) => ({
         rank: r.rank,
         weight: this.weights[r.strategy],

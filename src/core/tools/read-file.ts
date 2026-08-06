@@ -16,13 +16,13 @@ export function createReadFileTool(pathGuard: PathGuard) {
       'BEFORE: Always use context_retrieval or search_codebase first to identify which files AND which line ranges to read.\n' +
       'AVOID: Don\'t read entire large files. Don\'t read files you haven\'t first identified as relevant through search.',
     async execute({
+      endLine,
       filePath,
       startLine,
-      endLine,
     }: {
+      endLine?: number;
       filePath: string;
       startLine?: number;
-      endLine?: number;
     }) {
       try {
         const absolutePath = await pathGuard.resolveExistingPath(filePath);
@@ -47,6 +47,7 @@ export function createReadFileTool(pathGuard: PathGuard) {
           if (omittedBefore > 0) {
             parts.push(`... ${omittedBefore} lines above omitted (use startLine to see them) ...`);
           }
+
           parts.push(selected.join('\n'));
           if (omittedAfter > 0) {
             parts.push(`... ${omittedAfter} lines below omitted (use endLine to see them) ...`);
@@ -83,6 +84,12 @@ export function createReadFileTool(pathGuard: PathGuard) {
       }
     },
     inputSchema: z.object({
+      endLine: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe('Last line number to read (1-based). Defaults to startLine+50 if startLine is set.'),
       filePath: z.string().describe('Relative file path from the repository root.'),
       startLine: z
         .number()
@@ -90,12 +97,6 @@ export function createReadFileTool(pathGuard: PathGuard) {
         .min(1)
         .optional()
         .describe('First line number to read (1-based). Always specify this for large files.'),
-      endLine: z
-        .number()
-        .int()
-        .min(1)
-        .optional()
-        .describe('Last line number to read (1-based). Defaults to startLine+50 if startLine is set.'),
     }),
   };
 }
@@ -107,8 +108,8 @@ export function createReadFileTool(pathGuard: PathGuard) {
  */
 function buildQuickOverview(lines: string[]): string[] {
   const signatures: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]?.trim() ?? '';
+  for (const [i, line_] of lines.entries()) {
+    const line = line_?.trim() ?? '';
     // Capture function/class/import declarations
     if (
       /^(export\s+)?(async\s+)?function\s+\w/.test(line) ||

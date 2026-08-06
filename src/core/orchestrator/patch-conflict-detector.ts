@@ -19,6 +19,10 @@ import {
   type PatchProposal,
 } from './patch-competition-schema.js';
 
+function parseHeaderPath(line: string): string {
+  return line.slice(4).trim().split('\t', 1)[0]!.replace(/^[ab]\//, '');
+}
+
 /**
  * Parse a unified git diff string into structured hunks per file.
  *
@@ -34,35 +38,46 @@ export function parseUnifiedDiff(diff: string): ParsedFileDiff[] {
   const files: ParsedFileDiff[] = [];
   const lines = diff.split('\n');
 
-  let currentFile: ParsedFileDiff | null = null;
+  let currentFile: null | ParsedFileDiff = null;
   let currentHunk: DiffHunk | null = null;
   let oldLineNum = 0;
   let newLineNum = 0;
 
-  for (const line of lines) {
-    // File header: --- a/path or +++ b/path
-    if (line.startsWith('--- ')) {
-      const filePath = line.slice(6).trim().replace(/^[ab]\//, '');
-      if (!currentFile) {
-        currentFile = {
-          filePath,
-          hunks: [],
-          linesAdded: 0,
-          linesRemoved: 0,
-        };
-      } else {
-        currentFile.oldFile = filePath;
-      }
+  const flushFile = (): void => {
+    if (!currentFile) return;
+    if (currentHunk) currentFile.hunks.push(currentHunk);
+    files.push(currentFile);
+    currentFile = null;
+    currentHunk = null;
+  };
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]!;
+    // A real file header is a paired ---/+++ sequence. Requiring the pair
+    // prevents removed hunk content beginning with "--- " from starting a file.
+    if (line.startsWith('--- ') && lines[index + 1]?.startsWith('+++ ')) {
+      flushFile();
+      const oldFile = parseHeaderPath(line);
+      currentFile = {
+        filePath: oldFile,
+        hunks: [],
+        linesAdded: 0,
+        linesRemoved: 0,
+        oldFile,
+      };
+
       continue;
     }
 
     if (line.startsWith('+++ ')) {
-      const filePath = line.slice(6).trim().replace(/^[ab]\//, '');
+      const filePath = parseHeaderPath(line);
       if (currentFile) {
         currentFile.newFile = filePath;
-        // Use the new file path as the canonical path
-        currentFile.filePath = filePath;
+        currentFile.filePath = filePath === '/dev/null'
+          ? currentFile.oldFile ?? filePath
+          : filePath;
       }
+
       continue;
     }
 
@@ -74,22 +89,22 @@ export function parseUnifiedDiff(diff: string): ParsedFileDiff[] {
         currentFile.hunks.push(currentHunk);
       }
 
-      const oldStart = parseInt(hunkMatch[1]!, 10);
-      const oldCount = parseInt(hunkMatch[2] ?? '1', 10);
-      const newStart = parseInt(hunkMatch[3]!, 10);
-      const newCount = parseInt(hunkMatch[4] ?? '1', 10);
+      const oldStart = Number.parseInt(hunkMatch[1]!, 10);
+      const oldCount = Number.parseInt(hunkMatch[2] ?? '1', 10);
+      const newStart = Number.parseInt(hunkMatch[3]!, 10);
+      const newCount = Number.parseInt(hunkMatch[4] ?? '1', 10);
       const header = hunkMatch[5]?.trim() ?? '';
 
       oldLineNum = oldStart;
       newLineNum = newStart;
 
       currentHunk = {
-        oldStart,
-        oldCount,
-        newStart,
-        newCount,
         header,
         lines: [],
+        newCount,
+        newStart,
+        oldCount,
+        oldStart,
       };
       continue;
     }
@@ -98,26 +113,26 @@ export function parseUnifiedDiff(diff: string): ParsedFileDiff[] {
     if (currentHunk && currentFile) {
       if (line.startsWith('-')) {
         currentHunk.lines.push({
-          kind: 'removed',
           content: line.slice(1),
+          kind: 'removed',
           oldLineNumber: oldLineNum,
         });
         currentFile.linesRemoved++;
         oldLineNum++;
       } else if (line.startsWith('+')) {
         currentHunk.lines.push({
-          kind: 'added',
           content: line.slice(1),
+          kind: 'added',
           newLineNumber: newLineNum,
         });
         currentFile.linesAdded++;
         newLineNum++;
       } else if (line.startsWith(' ') || line === '') {
         currentHunk.lines.push({
-          kind: 'context',
           content: line.startsWith(' ') ? line.slice(1) : line,
-          oldLineNumber: oldLineNum,
+          kind: 'context',
           newLineNumber: newLineNum,
+          oldLineNumber: oldLineNum,
         });
         oldLineNum++;
         newLineNum++;
@@ -126,13 +141,7 @@ export function parseUnifiedDiff(diff: string): ParsedFileDiff[] {
     }
   }
 
-  // Save last hunk and file
-  if (currentHunk && currentFile) {
-    currentFile.hunks.push(currentHunk);
-  }
-  if (currentFile) {
-    files.push(currentFile);
-  }
+  flushFile();
 
   return files;
 }
@@ -141,7 +150,7 @@ export function parseUnifiedDiff(diff: string): ParsedFileDiff[] {
  * Get the effective line range affected by a hunk in the ORIGINAL file.
  * Returns { start, end } where start is the first modified line and end is the last.
  */
-function hunkOriginalRange(hunk: DiffHunk): { start: number; end: number } {
+function hunkOriginalRange(hunk: DiffHunk): { end: number; start: number; } {
   let start = Infinity;
   let end = -Infinity;
 
@@ -153,8 +162,8 @@ function hunkOriginalRange(hunk: DiffHunk): { start: number; end: number } {
   }
 
   return {
-    start: start === Infinity ? hunk.oldStart : start,
     end: end === -Infinity ? hunk.oldStart + hunk.oldCount - 1 : end,
+    start: start === Infinity ? hunk.oldStart : start,
   };
 }
 
@@ -164,16 +173,16 @@ function hunkOriginalRange(hunk: DiffHunk): { start: number; end: number } {
  * Adjacent = within 3 lines of each other (order sensitivity).
  */
 function rangesOverlap(
-  a: { start: number; end: number },
-  b: { start: number; end: number },
-): { start: number; end: number } | 'adjacent' | null {
+  a: { end: number; start: number; },
+  b: { end: number; start: number; },
+): 'adjacent' | null | { end: number; start: number; } {
   const gap = Math.max(a.start, b.start) - Math.min(a.end, b.end);
 
   if (gap <= 0) {
     // Overlapping: actual overlap
     return {
-      start: Math.max(a.start, b.start),
       end: Math.min(a.end, b.end),
+      start: Math.max(a.start, b.start),
     };
   }
 
@@ -238,22 +247,32 @@ function determineResolutionStrategy(
       proposalB.agentRole !== 'security_boundaries') {
     return 'prefer_security';
   }
+
   if (proposalB.agentRole === 'security_boundaries' &&
       proposalA.agentRole !== 'security_boundaries') {
     return 'prefer_security';
   }
 
   switch (conflictType) {
-    case 'import_header_conflict':
-      return 'merge_both'; // Can usually combine imports
-    case 'adjacent_edit':
-      return 'combine_alternating'; // Can interleave if non-overlapping
-    case 'same_line_edit':
-      return 'manual_required'; // Must have human decision
-    case 'test_conflict':
-      return 'merge_both'; // Combine test changes
-    default:
+    case 'adjacent_edit': {
+      return 'combine_alternating';
+    } // Can interleave if non-overlapping
+
+    case 'import_header_conflict': {
+      return 'merge_both';
+    } // Can usually combine imports
+
+    case 'same_line_edit': {
       return 'manual_required';
+    } // Must have human decision
+
+    case 'test_conflict': {
+      return 'merge_both';
+    } // Combine test changes
+
+    default: {
+      return 'manual_required';
+    }
   }
 }
 
@@ -269,16 +288,16 @@ export function detectConflicts(proposals: PatchProposal[]): PatchConflict[] {
 
   // Parse all proposals into structured diffs
   const parsed = proposals.map((p) => ({
-    proposal: p,
     files: parseUnifiedDiff(p.patchDiff),
+    proposal: p,
   }));
 
   // Group by file path
-  const fileProposals = new Map<string, Array<{ proposal: PatchProposal; files: ParsedFileDiff[] }>>();
-  for (const { proposal, files } of parsed) {
+  const fileProposals = new Map<string, Array<{ files: ParsedFileDiff[]; proposal: PatchProposal; }>>();
+  for (const { files, proposal } of parsed) {
     for (const file of files) {
       const existing = fileProposals.get(file.filePath) ?? [];
-      existing.push({ proposal, files: [file] });
+      existing.push({ files: [file], proposal });
       fileProposals.set(file.filePath, existing);
     }
   }
@@ -313,17 +332,17 @@ export function detectConflicts(proposals: PatchProposal[]): PatchConflict[] {
 
             conflicts.push({
               conflictId: `conflict_${crypto.randomBytes(6).toString('hex')}`,
-              filePath,
-              proposalAId: entryA.proposal.proposalId,
-              proposalBId: entryB.proposal.proposalId,
-              overlappingRangeA: rangeA,
-              overlappingRangeB: rangeB,
-              hunkA: hunkA.lines.map((l) => `${l.kind === 'removed' ? '-' : l.kind === 'added' ? '+' : ' '}${l.content}`).join('\n'),
-              hunkB: hunkB.lines.map((l) => `${l.kind === 'removed' ? '-' : l.kind === 'added' ? '+' : ' '}${l.content}`).join('\n'),
-              severity,
               conflictType,
               description: buildConflictDescription(conflictType, filePath, entryA.proposal, entryB.proposal),
+              filePath,
+              hunkA: hunkA.lines.map((l) => `${l.kind === 'removed' ? '-' : l.kind === 'added' ? '+' : ' '}${l.content}`).join('\n'),
+              hunkB: hunkB.lines.map((l) => `${l.kind === 'removed' ? '-' : l.kind === 'added' ? '+' : ' '}${l.content}`).join('\n'),
+              overlappingRangeA: rangeA,
+              overlappingRangeB: rangeB,
+              proposalAId: entryA.proposal.proposalId,
+              proposalBId: entryB.proposal.proposalId,
               resolutionStrategy: determineResolutionStrategy(conflictType, entryA.proposal, entryB.proposal),
+              severity,
             });
           }
         }
@@ -344,23 +363,34 @@ function buildConflictDescription(
   proposalB: PatchProposal,
 ): string {
   switch (conflictType) {
-    case 'same_line_edit':
-      return `Both ${proposalA.agentRole} and ${proposalB.agentRole} modified the same lines in ${filePath}. ` +
-        `Manual resolution required: decide which edit to keep, or merge the changes.`;
-    case 'adjacent_edit':
+    case 'adjacent_edit': {
       return `${proposalA.agentRole} and ${proposalB.agentRole} edited adjacent lines in ${filePath}. ` +
         `Changes can likely be combined but verify ordering.`;
-    case 'semantic_conflict':
-      return `${proposalA.agentRole} and ${proposalB.agentRole} made semantically conflicting changes to ${filePath}. ` +
-        `While the text diffs don't overlap, the logic may be incompatible.`;
-    case 'import_header_conflict':
+    }
+
+    case 'import_header_conflict': {
       return `Both proposals modified imports in ${filePath}. ` +
         `These can usually be merged by combining both import sets.`;
-    case 'test_conflict':
+    }
+
+    case 'same_line_edit': {
+      return `Both ${proposalA.agentRole} and ${proposalB.agentRole} modified the same lines in ${filePath}. ` +
+        `Manual resolution required: decide which edit to keep, or merge the changes.`;
+    }
+
+    case 'semantic_conflict': {
+      return `${proposalA.agentRole} and ${proposalB.agentRole} made semantically conflicting changes to ${filePath}. ` +
+        `While the text diffs don't overlap, the logic may be incompatible.`;
+    }
+
+    case 'test_conflict': {
       return `Both proposals modified the same test in ${filePath}. ` +
         `Combine test cases to cover both scenarios.`;
-    default:
+    }
+
+    default: {
       return `Conflict detected between ${proposalA.agentRole} and ${proposalB.agentRole} in ${filePath}.`;
+    }
   }
 }
 

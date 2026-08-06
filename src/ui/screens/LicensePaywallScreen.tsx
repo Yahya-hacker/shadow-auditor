@@ -1,10 +1,9 @@
-import { Box, Text, Input } from "../../opentui/components.js";
+import React from 'react';
 /**
  * LicensePaywallScreen — PRO feature gate.
  */
 
-import React from 'react';
-
+import { Box, Text } from "../primitives.js";
 import { useAppStore } from '../store/appStore.js';
 import { colors, spacing } from '../theme/chalkTheme.js';
 
@@ -27,17 +26,17 @@ export const LicensePaywallScreen: React.FC = () => {
         paddingX={spacing.panelPadX}
         paddingY={spacing.panelPadY}
       >
-        <Text color={colors.warning} bold>
+        <Text bold color={colors.warning}>
           ⚡ PRO FEATURE REQUIRED
         </Text>
         <Box marginTop={1}>
           <Text>
             The feature{' '}
-            <Text color={colors.agent} bold>
+            <Text bold color={colors.agent}>
               {gateResult.feature}
             </Text>{' '}
             requires a{' '}
-            <Text color={colors.brand} bold>
+            <Text bold color={colors.brand}>
               {gateResult.requiredTier?.toUpperCase()}
             </Text>{' '}
             license.
@@ -51,14 +50,19 @@ export const LicensePaywallScreen: React.FC = () => {
             </Text>
           </Text>
         </Box>
+        {gateResult.validationError && (
+          <Box marginTop={1}>
+            <Text color={colors.error}>{gateResult.validationError}</Text>
+          </Box>
+        )}
       </Box>
 
       <Box flexDirection="column" marginTop={1} paddingX={spacing.inputPadX}>
-        <Text color={colors.success} bold>
+        <Text bold color={colors.success}>
           🔑 Upgrade to unlock:
         </Text>
         <Text color={colors.muted}>  • Deep SAST analysis with full taint tracing</Text>
-        <Text color={colors.muted}>  • Comprehensive PDF/Markdown security reports</Text>
+        <Text color={colors.muted}>  • Comprehensive Markdown, JSON, and SARIF security reports</Text>
         <Text color={colors.muted}>  • CI/CD integration with exit codes</Text>
         <Text color={colors.muted}>  • Priority support</Text>
       </Box>
@@ -66,7 +70,7 @@ export const LicensePaywallScreen: React.FC = () => {
       <Box marginTop={1} paddingX={spacing.inputPadX}>
         <Text>
           👉{' '}
-          <Text color={colors.agent} bold underline>
+          <Text bold color={colors.agent} underline>
             {gateResult.upgradeUrl}
           </Text>
         </Text>

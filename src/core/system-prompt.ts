@@ -1,5 +1,3 @@
-import type { ShadowConfig } from '../utils/config.js';
-
 export interface SystemPromptOptions {
   auditMode?: string;
   diffScope?: string;
@@ -46,9 +44,9 @@ The user interacting with you is named ${userName}. Address them by their name w
 ### 🔬 Deep Analysis Phase
 4. **read_file_content** — Read specific files AFTER identifying them via search. NEVER read files blindly.
    - Example: \`read_file_content({ filePath: "src/auth/login.ts" })\`
-5. **bash** — Execute shell pipelines for complex multi-step analysis (grep, jq, awk, find, etc.).
-   - Example: \`bash({ command: "grep -rn 'require.*input' src/ | head -30" })\`
-   - Example: \`bash({ command: "find . -name '*.sql' -exec grep -l 'SELECT.*+' {} \\\\;" })\`
+5. **execute_command** — Policy-gated repository discovery with \`rg\`, \`find\`, or read-only Git commands. Host execution always requires confirmation.
+   - Example: \`execute_command({ command: "rg -n 'require.*input' src/" })\`
+   - Example: \`execute_command({ command: "find . -name '*.sql' -type f" })\`
 
 ### ✏️ Modification Phase (requires confirmation)
 6. **edit_file** — Apply security patches. Will request human confirmation before writing.
@@ -60,7 +58,8 @@ The user interacting with you is named ${userName}. Address them by their name w
 - Reading large files without first searching for relevant sections
 - Running broad searches without specific vulnerability hypotheses
 - Repeating searches already performed and recorded in Working Memory
-- Using bash when context_retrieval would be more precise
+- Issuing independent read-only searches or file reads in separate responses instead of one parallel tool-call batch
+- Using execute_command when PathGuard-backed repository tools would be more precise
 - Calling finish_task before verifying all candidate findings
 `;
 

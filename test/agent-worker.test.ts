@@ -28,10 +28,13 @@ describe('AgentWorker', () => {
 
   it('filters tools correctly by role', () => {
     const allTools = {
+      apply_and_test_patch: {} as any,
       bash: {} as any,
       context_retrieval: {} as any,
+      detect_test_framework: {} as any,
       edit_file: {} as any,
       finish_task: {} as any,
+      get_baseline_status: {} as any,
       list_directory: {} as any,
       read_file_content: {} as any,
       search_codebase: {} as any,
@@ -48,7 +51,9 @@ describe('AgentWorker', () => {
     expect(taintTools.edit_file).to.not.exist;
 
     const patchTools = createRoleToolSet('patch-engineer', allTools);
-    expect(patchTools.edit_file).to.exist;
+    expect(patchTools.edit_file).to.not.exist;
+    expect(patchTools.apply_and_test_patch).to.exist;
+    expect(patchTools.get_baseline_status).to.exist;
     expect(patchTools.list_directory).to.not.exist;
   });
 

@@ -9,7 +9,7 @@
 
 import { z } from 'zod';
 
-import { canonicalIdSchema, confidenceSchema, shortIdSchema, timestampSchema } from '../schema/base.js';
+import { confidenceSchema, shortIdSchema, timestampSchema } from '../schema/base.js';
 
 // ============================================================================
 // Patch Proposal — Individual agent submission
@@ -27,20 +27,20 @@ export type PatchProposalAgentRole = z.infer<typeof patchProposalAgentRoleSchema
  * Follows the polyglot JSON format specified in the architecture.
  */
 export const patchProposalSchema = z.object({
-  proposalId: shortIdSchema,
   agentRole: patchProposalAgentRoleSchema,
-  targetLanguage: z.string().min(1).describe('Target language (typescript, python, rust, go, etc.)'),
-  vulnerabilityType: z.string().min(1).describe('CWE or vulnerability classification'),
-  severity: z.enum(['critical', 'high', 'medium', 'low', 'info']).default('medium'),
-  rationale: z.string().min(1).describe('Detailed explanation of the issue and the architectural fix'),
-  filesAffected: z.array(z.string().min(1)).min(1).describe('List of file paths this patch modifies'),
-  patchDiff: z.string().min(1).describe('Standard Unified Git Diff format string'),
-  confidence: confidenceSchema,
-  createdAt: timestampSchema,
   /** Hash of the base code state this patch was generated against — used for idempotency */
   baseStateHash: z.string().min(1).optional(),
+  confidence: confidenceSchema,
+  createdAt: timestampSchema,
+  filesAffected: z.array(z.string().min(1)).min(1).describe('List of file paths this patch modifies'),
   /** Agent-specific metadata for traceability */
   metadata: z.record(z.unknown()).default({}),
+  patchDiff: z.string().min(1).describe('Standard Unified Git Diff format string'),
+  proposalId: shortIdSchema,
+  rationale: z.string().min(1).describe('Detailed explanation of the issue and the architectural fix'),
+  severity: z.enum(['critical', 'high', 'medium', 'low', 'info']).default('medium'),
+  targetLanguage: z.string().min(1).describe('Target language (typescript, python, rust, go, etc.)'),
+  vulnerabilityType: z.string().min(1).describe('CWE or vulnerability classification'),
 });
 export type PatchProposal = z.infer<typeof patchProposalSchema>;
 
@@ -60,18 +60,6 @@ export type ConflictSeverity = z.infer<typeof conflictSeveritySchema>;
  */
 export const patchConflictSchema = z.object({
   conflictId: shortIdSchema,
-  /** File where the conflict occurs */
-  filePath: z.string().min(1),
-  /** The two proposals that conflict */
-  proposalAId: shortIdSchema,
-  proposalBId: shortIdSchema,
-  /** Line ranges in the original file that both patches touch */
-  overlappingRangeA: z.object({ start: z.number(), end: z.number() }),
-  overlappingRangeB: z.object({ start: z.number(), end: z.number() }),
-  /** The conflicting hunk content from each proposal */
-  hunkA: z.string(),
-  hunkB: z.string(),
-  severity: conflictSeveritySchema,
   /** Classification of the conflict type */
   conflictType: z.enum([
     'same_line_edit',        // Both patches edit the exact same lines differently
@@ -81,6 +69,17 @@ export const patchConflictSchema = z.object({
     'test_conflict',         // Both modify the same test
   ]),
   description: z.string().min(1),
+  /** File where the conflict occurs */
+  filePath: z.string().min(1),
+  /** The conflicting hunk content from each proposal */
+  hunkA: z.string(),
+  hunkB: z.string(),
+  /** Line ranges in the original file that both patches touch */
+  overlappingRangeA: z.object({ end: z.number(), start: z.number() }),
+  overlappingRangeB: z.object({ end: z.number(), start: z.number() }),
+  /** The two proposals that conflict */
+  proposalAId: shortIdSchema,
+  proposalBId: shortIdSchema,
   /** If resolvable automatically, the resolution strategy */
   resolutionStrategy: z.enum([
     'merge_both',        // Both changes can be combined (non-overlapping hunks)
@@ -89,6 +88,7 @@ export const patchConflictSchema = z.object({
     'manual_required',   // Needs human decision
     'combine_alternating',// Interleave both changes
   ]).default('manual_required'),
+  severity: conflictSeveritySchema,
 });
 export type PatchConflict = z.infer<typeof patchConflictSchema>;
 
@@ -105,21 +105,21 @@ export type PatchConflict = z.infer<typeof patchConflictSchema>;
  *    const result = db.execute(query);
  */
 export const diffHunkSchema = z.object({
-  /** Original file line range (start, count) */
-  oldStart: z.number().int(),
-  oldCount: z.number().int(),
-  /** New file line range (start, count) */
-  newStart: z.number().int(),
-  newCount: z.number().int(),
   /** Context header from the diff */
   header: z.string(),
   /** Individual lines in the hunk */
   lines: z.array(z.object({
-    kind: z.enum(['context', 'removed', 'added']),
     content: z.string(),
-    oldLineNumber: z.number().int().optional(),
+    kind: z.enum(['context', 'removed', 'added']),
     newLineNumber: z.number().int().optional(),
+    oldLineNumber: z.number().int().optional(),
   })),
+  newCount: z.number().int(),
+  /** New file line range (start, count) */
+  newStart: z.number().int(),
+  oldCount: z.number().int(),
+  /** Original file line range (start, count) */
+  oldStart: z.number().int(),
 });
 export type DiffHunk = z.infer<typeof diffHunkSchema>;
 
@@ -128,12 +128,12 @@ export type DiffHunk = z.infer<typeof diffHunkSchema>;
  */
 export const parsedFileDiffSchema = z.object({
   filePath: z.string(),
-  oldFile: z.string().optional(),
-  newFile: z.string().optional(),
   hunks: z.array(diffHunkSchema),
   /** Added/removed line counts */
   linesAdded: z.number().int(),
   linesRemoved: z.number().int(),
+  newFile: z.string().optional(),
+  oldFile: z.string().optional(),
 });
 export type ParsedFileDiff = z.infer<typeof parsedFileDiffSchema>;
 
@@ -153,42 +153,42 @@ export type SynthesisStatus = z.infer<typeof synthesisStatusSchema>;
  * Result of the orchestration engine's synthesis pass.
  */
 export const synthesisResultSchema = z.object({
-  synthesisId: shortIdSchema,
-  status: synthesisStatusSchema,
-  /** The unified Super Patch diff */
-  unifiedDiff: z.string(),
   /** List of accepted proposal IDs */
   acceptedProposals: z.array(shortIdSchema),
+  /** All detected conflicts */
+  conflicts: z.array(patchConflictSchema),
+  createdAt: timestampSchema,
+  /** Files modified in the unified diff */
+  filesModified: z.array(z.string()),
   /** List of partially accepted (merged) proposal IDs */
   mergedProposals: z.array(shortIdSchema),
   /** List of rejected proposal IDs */
   rejectedProposals: z.array(shortIdSchema),
-  /** All detected conflicts */
-  conflicts: z.array(patchConflictSchema),
   /** Conflicts that were auto-resolved */
   resolvedConflicts: z.array(patchConflictSchema),
-  /** Conflicts that require manual review */
-  unresolvedConflicts: z.array(patchConflictSchema),
-  /** Files modified in the unified diff */
-  filesModified: z.array(z.string()),
+  status: synthesisStatusSchema,
   /** Summary of the synthesis process */
   summary: z.string(),
+  synthesisId: shortIdSchema,
+  /** The unified Super Patch diff */
+  unifiedDiff: z.string(),
+  /** Conflicts that require manual review */
+  unresolvedConflicts: z.array(patchConflictSchema),
   /** Verification results */
   verification: z.object({
-    passed: z.boolean(),
-    overallVerdict: z.enum(['approved', 'warning', 'rejected']).optional(),
     checks: z.array(z.object({
       checkId: z.string(),
       checkType: z.string(),
-      status: z.enum(['pass', 'warning', 'fail']),
-      filePath: z.string().optional(),
       description: z.string(),
+      filePath: z.string().optional(),
+      status: z.enum(['pass', 'warning', 'fail']),
       suggestion: z.string().optional(),
     })).optional(),
-    warnings: z.array(z.string()).default([]),
     errors: z.array(z.string()).default([]),
+    overallVerdict: z.enum(['approved', 'warning', 'rejected']).optional(),
+    passed: z.boolean(),
+    warnings: z.array(z.string()).default([]),
   }).optional(),
-  createdAt: timestampSchema,
 });
 export type SynthesisResult = z.infer<typeof synthesisResultSchema>;
 
@@ -207,18 +207,18 @@ export const verificationCheckSchema = z.object({
     'interface_bridge',      // Are multi-language bridges intact?
     'test_compatibility',    // Would existing tests still pass?
   ]),
-  status: z.enum(['pass', 'warning', 'fail']),
-  filePath: z.string().optional(),
   description: z.string(),
+  filePath: z.string().optional(),
+  status: z.enum(['pass', 'warning', 'fail']),
   suggestion: z.string().optional(),
 });
 export type VerificationCheck = z.infer<typeof verificationCheckSchema>;
 
 export const verificationReportSchema = z.object({
   checks: z.array(verificationCheckSchema),
-  overallVerdict: z.enum(['approved', 'warning', 'rejected']),
-  warnings: z.array(z.string()).default([]),
   errors: z.array(z.string()).default([]),
+  overallVerdict: z.enum(['approved', 'warning', 'rejected']),
   timestamp: timestampSchema,
+  warnings: z.array(z.string()).default([]),
 });
 export type VerificationReport = z.infer<typeof verificationReportSchema>;
