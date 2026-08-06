@@ -10,6 +10,7 @@ import {
   SystemMessage,
   ToolMessage,
 } from '@langchain/core/messages';
+import {Command} from '@langchain/langgraph';
 
 import { wrapTool } from '../graph/tools/langchain-wrapper.js';
 import { normalizeModelHistory } from '../providers/message-normalizer.js';
@@ -358,6 +359,10 @@ export async function executeLangChainToolLoop(
         options.signal?.throwIfAborted();
         result = await selectedTool.invoke(toolCall.args, { signal: options.signal });
         options.signal?.throwIfAborted();
+        if (result instanceof Command) {
+          result = '[DENIED] This tool requires human confirmation and cannot run inside a swarm worker.';
+        }
+
         succeeded = !(
           typeof result === 'string' &&
           /^\s*\[(?:ERROR|DENIED)\]/i.test(result)

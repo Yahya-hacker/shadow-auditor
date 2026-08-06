@@ -1,4 +1,5 @@
 import {AIMessage, AIMessageChunk} from '@langchain/core/messages';
+import {Command} from '@langchain/langgraph';
 import {expect} from 'chai';
 import {z} from 'zod';
 
@@ -116,6 +117,55 @@ describe('executeLangChainToolLoop', () => {
 
     expect(result.toolCalls).to.have.length(2);
     expect(executions).to.equal(2);
+  });
+
+  it('fails closed when a swarm tool requests human confirmation', async () => {
+    let streamCount = 0;
+    const activities: Array<{kind: string; succeeded?: boolean}> = [];
+    const model = {
+      bindTools() {
+        return {
+          async *stream() {
+            streamCount++;
+            yield streamCount === 1
+              ? new AIMessageChunk({
+                content: '',
+                tool_calls: [{
+                  args: {command: 'git status'},
+                  id: 'confirm-command',
+                  name: 'execute_command',
+                  type: 'tool_call' as const,
+                }],
+              })
+              : new AIMessageChunk({content: 'Command was not executed.'});
+          },
+        };
+      },
+    };
+    const result = await executeLangChainToolLoop({
+      maxToolSteps: 2,
+      model: model as never,
+      onActivity: (activity) => activities.push(activity),
+      prompt: 'Inspect safely.',
+      systemPrompt: 'Use tools.',
+      tools: {
+        execute_command: {
+          description: 'Run a host command.',
+          async execute() {
+            return new Command({
+              goto: 'HumanIntervention',
+              update: {pendingHumanInput: {question: 'Approve?'}},
+            });
+          },
+          inputSchema: z.object({command: z.string()}),
+        },
+      },
+    });
+
+    expect(result.toolCalls[0]?.result).to.match(/^\[DENIED\]/);
+    expect(
+      activities.find((activity) => activity.kind === 'tool_result')?.succeeded,
+    ).to.equal(false);
   });
 
   it('removes Gemini-incompatible exclusive bounds at every schema depth', () => {

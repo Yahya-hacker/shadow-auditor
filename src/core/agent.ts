@@ -498,6 +498,12 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       );
     }
 
+    if (this.config.swarm?.enabled) {
+      throw new Error(
+        'Reasoning level cannot change during a swarm session. Reconfigure the session so every worker uses the same model settings.',
+      );
+    }
+
     this.config = {...this.config, reasoningEffort: effort};
     await saveConfig(this.config);
     this.langchainModel = getLangchainModel(this.resolvedModelConfig());

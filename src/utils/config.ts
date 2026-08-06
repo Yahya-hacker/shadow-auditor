@@ -274,7 +274,7 @@ export interface SecretStoreAdapter {
 
 let secretStoreAdapter: null | SecretStoreAdapter = null;
 
-export function registerSecretStoreAdapter(adapter: SecretStoreAdapter): void {
+export function registerSecretStoreAdapter(adapter: null | SecretStoreAdapter): void {
   secretStoreAdapter = adapter;
 }
 
@@ -322,7 +322,7 @@ export async function loadConfig(): Promise<null | ShadowConfig> {
       parsed.provider !== 'ollama' &&
       !(parsed.provider === 'azure' && parsed.azure?.authMode === 'entra-id');
 
-    if (requiresApiKey && !parsed.apiKey && secretStoreAdapter) {
+    if (!parsed.apiKey && secretStoreAdapter) {
       const secureApiKey = await secretStoreAdapter.getApiKey(parsed.provider);
       if (secureApiKey) {
         parsed.apiKey = secureApiKey;

@@ -57,6 +57,15 @@ describe('command policy', () => {
     ).to.equal(false);
   });
 
+  it('denies ripgrep options that execute host subprocesses', () => {
+    for (const command of [
+      'rg --hostname-bin ./payload pattern .',
+      'rg --hostname-bin=./payload pattern .',
+    ]) {
+      expect(evaluateCommandPolicy(command).allowed, command).to.equal(false);
+    }
+  });
+
   it('allows broader command surface in expert mode with warning', () => {
     // Use a custom script (not covered by any standard allowlist entry) to verify expert-unsafe broadening
     const decision = evaluateCommandPolicy('./scripts/custom-audit.sh --all', { expertUnsafe: true });

@@ -147,6 +147,7 @@ describe('AgentSession guards', () => {
       config,
       runtime: {maxOutputTokens: 32_000},
     });
+
     const resolvedModelConfig = Reflect.get(
       AgentSession.prototype,
       'resolvedModelConfig',
@@ -157,6 +158,28 @@ describe('AgentSession guards', () => {
       model: config.model,
       provider: config.provider,
     });
+  });
+
+  it('rejects reasoning changes that would leave swarm workers stale', async () => {
+    const session = sessionWithoutInitialization({
+      config: {
+        apiKey: 'test-key',
+        model: 'gpt-5.6-sol',
+        provider: 'openai',
+        swarm: {enabled: true},
+      },
+      initialized: Promise.resolve(),
+    });
+
+    let failure: unknown;
+    try {
+      await session.setReasoningEffort('high');
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).to.be.instanceOf(Error);
+    expect((failure as Error).message).to.include('swarm session');
   });
 
   it('waits for an active operation before completing disposal', async () => {

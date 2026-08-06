@@ -32,7 +32,7 @@ const UNSAFE_FIND_ACTIONS =
 const HOST_PATH_ARGUMENT =
   /(?:^|[\s=])["']?(?:\/|~(?:\/|$)|[a-z]:[\\/]|\\\\|\.\.(?:[\\/]|$))/i;
 const UNSAFE_ANALYSIS_OPTIONS = [
-  /(?:^|\s)(?:--pre(?:-glob)?|-L|--follow)(?:\s|=|$)/i,
+  /(?:^|\s)(?:--pre(?:-glob)?|--hostname-bin|-L|--follow)(?:\s|=|$)/i,
   /(?:^|\s)find\s+(?:-H|-L|-P)(?:\s|$)/i,
   /(?:^|\s)tree\b[^\n]*(?:\s-l|\s--follow)(?:\s|$)/i,
 ];
@@ -171,7 +171,7 @@ export function evaluateCommandPolicy(command: string, config: CommandPolicyConf
   if (!config.expertUnsafe && UNSAFE_ANALYSIS_OPTIONS.some((pattern) => pattern.test(trimmed))) {
     return {
       allowed: false,
-      reason: '[POLICY_DENIED] Options that execute preprocessors or follow links are not allowed in safe mode.',
+      reason: '[POLICY_DENIED] Options that execute subprocesses or follow links are not allowed in safe mode.',
     };
   }
 

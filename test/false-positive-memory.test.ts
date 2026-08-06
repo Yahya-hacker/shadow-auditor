@@ -180,6 +180,64 @@ describe('false-positive memory', () => {
     expect(await isolated.match(candidate())).to.equal(null);
   });
 
+  it('preserves concurrent updates from independently opened stores', async () => {
+    const [firstStore, secondStore] = await Promise.all([
+      FalsePositiveStore.open(repositoryPath, {keyPath}),
+      FalsePositiveStore.open(repositoryPath, {keyPath}),
+    ]);
+    await Promise.all([
+      firstStore.approve({
+        cwe: 'CWE-22',
+        locations: [{filePath: 'src/handler.ts', startLine: 1}],
+        title: 'First process',
+        vulnId: 'SHADOW-022-FIRST-PROCESS',
+      }, 'Reviewer', 'First independent rationale.'),
+      secondStore.approve({
+        cwe: 'CWE-22',
+        locations: [{filePath: 'src/handler.ts', startLine: 1}],
+        title: 'Second process',
+        vulnId: 'SHADOW-022-SECOND-PROCESS',
+      }, 'Reviewer', 'Second independent rationale.'),
+    ]);
+
+    expect(await firstStore.list()).to.have.length(2);
+    const reopened = await FalsePositiveStore.open(repositoryPath, {keyPath});
+    expect(await reopened.list()).to.have.length(2);
+  });
+
+  it('atomically reclaims an abandoned ownerless lock under contention', async () => {
+    const [firstStore, secondStore] = await Promise.all([
+      FalsePositiveStore.open(repositoryPath, {keyPath}),
+      FalsePositiveStore.open(repositoryPath, {keyPath}),
+    ]);
+    const lockPath = path.join(
+      repositoryPath,
+      '.shadow-auditor',
+      'memory',
+      'false-positives.json.lock',
+    );
+    await fs.mkdir(lockPath);
+    const staleTime = new Date(Date.now() - 61_000);
+    await fs.utimes(lockPath, staleTime, staleTime);
+
+    await Promise.all([
+      firstStore.approve({
+        cwe: 'CWE-22',
+        locations: [{filePath: 'src/handler.ts', startLine: 1}],
+        title: 'First recovery',
+        vulnId: 'SHADOW-022-FIRST-RECOVERY',
+      }, 'Reviewer', 'First recovery rationale.'),
+      secondStore.approve({
+        cwe: 'CWE-22',
+        locations: [{filePath: 'src/handler.ts', startLine: 1}],
+        title: 'Second recovery',
+        vulnId: 'SHADOW-022-SECOND-RECOVERY',
+      }, 'Reviewer', 'Second recovery rationale.'),
+    ]);
+
+    expect(await firstStore.list()).to.have.length(2);
+  });
+
   it('treats malformed storage as inactive and read-only', async () => {
     const memoryPath = path.join(repositoryPath, '.shadow-auditor', 'memory');
     await fs.mkdir(memoryPath, {recursive: true});

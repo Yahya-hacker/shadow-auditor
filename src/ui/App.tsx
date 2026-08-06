@@ -22,7 +22,7 @@ import { ConfirmDialog } from './ConfirmDialog.js';
 import { buildEffectiveConfig } from './effective-config.js';
 import { useAgentSession } from './hooks/useAgentSession.js';
 import { useIncrementalWatch } from './hooks/useIncrementalWatch.js';
-import { Box } from "./primitives.js";
+import { Box, useKeyHandler } from "./primitives.js";
 import { resumeRestoredSession } from './resume-session.js';
 import { BootScreen } from './screens/BootScreen.js';
 import { HistoryScreen } from './screens/HistoryScreen.js';
@@ -31,6 +31,7 @@ import { LicensePaywallScreen } from './screens/LicensePaywallScreen.js';
 import { SetupScreen } from './screens/SetupScreen.js';
 import { ShellScreen } from './screens/ShellScreen.js';
 import { TargetSelectionScreen } from './screens/TargetSelectionScreen.js';
+import { requestShutdown } from './shutdown.js';
 import { useAppStore } from './store/appStore.js';
 
 export interface AppProps {
@@ -79,6 +80,13 @@ export const App: React.FC<AppProps> = ({
   // a confirmation or human-input request becomes active.
   const confirmationOpen = useAppStore((s) => s.confirmation.open);
   const humanInputRequest = useAppStore((s) => s.humanInputRequest);
+  useKeyHandler((event) => {
+    if (event.ctrlKey && event.key.toLowerCase() === 'c') {
+      requestShutdown(130).catch(() => {
+        process.exitCode = 130;
+      });
+    }
+  }, screen !== 'shell' || Boolean(confirmationOpen) || Boolean(humanInputRequest));
   const { agentSessionRef, initSession } = useAgentSession();
   useIncrementalWatch(Boolean(watchEnabled && screen === 'shell'), sessionTarget, agentSessionRef);
 

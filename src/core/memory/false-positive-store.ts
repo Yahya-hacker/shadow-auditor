@@ -13,6 +13,9 @@ import { createPathGuard, type PathGuard } from '../policy/path-guard.js';
 const STORE_VERSION = 1;
 const KEY_FILE_NAME = '.shadow-auditor-suppression-key';
 const STORE_RELATIVE_PATH = path.join('.shadow-auditor', 'memory', 'false-positives.json');
+const LOCK_RETRY_MS = 25;
+const LOCK_TIMEOUT_MS = 10_000;
+const STALE_LOCK_MS = 60_000;
 
 const locationFingerprintSchema = z.object({
   fileDigest: z.string().regex(/^[a-f0-9]{64}$/),
@@ -120,8 +123,115 @@ async function loadOrCreateKey(keyPath: string): Promise<Buffer> {
   }
 
   const key = crypto.randomBytes(32);
-  await writeFileAtomic(keyPath, `${key.toString('base64')}\n`);
-  return key;
+  await fs.mkdir(path.dirname(keyPath), {mode: 0o700, recursive: true});
+  try {
+    const file = await fs.open(keyPath, 'wx', 0o600);
+    try {
+      await file.writeFile(`${key.toString('base64')}\n`, 'utf8');
+      await file.sync();
+    } finally {
+      await file.close();
+    }
+
+    return key;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    const deadline = Date.now() + LOCK_TIMEOUT_MS;
+    while (true) {
+      const encoded = (await fs.readFile(keyPath, 'utf8')).trim();
+      const existing = Buffer.from(encoded, 'base64');
+      if (existing.length === 32) return existing;
+      if (Date.now() >= deadline) {
+        throw new Error('suppression signing key has an invalid length');
+      }
+
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, LOCK_RETRY_MS);
+      });
+    }
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
+async function reclaimAbandonedLock(lockPath: string): Promise<boolean> {
+  let canReclaimImmediately = false;
+  try {
+    const owner = JSON.parse(
+      await fs.readFile(path.join(lockPath, 'owner.json'), 'utf8'),
+    ) as {createdAt?: number; pid?: number};
+    if (
+      typeof owner.pid === 'number' &&
+      Number.isInteger(owner.pid) &&
+      owner.pid > 0 &&
+      processIsAlive(owner.pid)
+    ) {
+      return false;
+    }
+
+    canReclaimImmediately = typeof owner.pid === 'number' && Number.isInteger(owner.pid);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && !(error instanceof SyntaxError)) {
+      throw error;
+    }
+  }
+
+  if (!canReclaimImmediately) {
+    try {
+      const stats = await fs.stat(lockPath);
+      if (Date.now() - stats.mtimeMs <= STALE_LOCK_MS) return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
+      throw error;
+    }
+  }
+
+  const abandonedPath = `${lockPath}.abandoned-${crypto.randomUUID()}`;
+  try {
+    await fs.rename(lockPath, abandonedPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
+    throw error;
+  }
+
+  await fs.rm(abandonedPath, {force: true, recursive: true});
+  return true;
+}
+
+async function removeAbandonedLock(lockPath: string): Promise<boolean> {
+  const reclaimPath = `${lockPath}.reclaim`;
+  try {
+    await fs.mkdir(reclaimPath, {mode: 0o700});
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw error;
+  }
+
+  let reclaimed: boolean;
+  try {
+    reclaimed = await reclaimAbandonedLock(lockPath);
+  } catch (operationError) {
+    try {
+      await fs.rm(reclaimPath, {force: true, recursive: true});
+    } catch (releaseError) {
+      throw new AggregateError(
+        [operationError, releaseError],
+        'False-positive memory lock recovery and cleanup both failed.',
+      );
+    }
+
+    throw operationError;
+  }
+
+  await fs.rm(reclaimPath, {force: true, recursive: true});
+  return reclaimed;
 }
 
 export class FalsePositiveStore {
@@ -156,7 +266,7 @@ export class FalsePositiveStore {
       storePath,
       options.now ?? (() => new Date()),
     );
-    await store.load();
+    await store.withInterprocessLock(() => store.load());
     return store;
   }
 
@@ -219,50 +329,54 @@ export class FalsePositiveStore {
   }
 
   async list(): Promise<SuppressionListEntry[]> {
-    const now = this.now().getTime();
-    return Promise.all(this.records.map(async (record) => {
-      let stale = false;
-      try {
-        const current = await this.fingerprintLocations(record.locations);
-        stale = !this.locationsEqual(record.locations, current);
-      } catch {
-        stale = true;
-      }
+    return this.serialize(async () => {
+      const now = this.now().getTime();
+      return Promise.all(this.records.map(async (record) => {
+        let stale = false;
+        try {
+          const current = await this.fingerprintLocations(record.locations);
+          stale = !this.locationsEqual(record.locations, current);
+        } catch {
+          stale = true;
+        }
 
-      const state: SuppressionListEntry['state'] =
-        record.status === 'revoked' ? 'revoked'
-          : record.expiresAt && Date.parse(record.expiresAt) <= now ? 'expired'
-            : stale ? 'stale'
-              : 'active';
-      return {
-        ...this.toDecision(record),
-        cwe: record.cwe,
-        findingId: record.findingId,
-        state,
-        title: record.title,
-        updatedAt: record.updatedAt,
-      };
-    }));
+        const state: SuppressionListEntry['state'] =
+          record.status === 'revoked' ? 'revoked'
+            : record.expiresAt && Date.parse(record.expiresAt) <= now ? 'expired'
+              : stale ? 'stale'
+                : 'active';
+        return {
+          ...this.toDecision(record),
+          cwe: record.cwe,
+          findingId: record.findingId,
+          state,
+          title: record.title,
+          updatedAt: record.updatedAt,
+        };
+      }));
+    });
   }
 
   async match(candidate: SastCandidate): Promise<null | SuppressionDecision> {
-    if (this.storeError) return null;
-    let locations: LocationFingerprint[];
-    try {
-      locations = await this.fingerprintLocations(candidate.affectedLocations);
-    } catch {
-      return null;
-    }
+    return this.serialize(async () => {
+      if (this.storeError) return null;
+      let locations: LocationFingerprint[];
+      try {
+        locations = await this.fingerprintLocations(candidate.affectedLocations);
+      } catch {
+        return null;
+      }
 
-    const now = this.now().getTime();
-    const match = this.records.find((record) =>
-      record.status === 'approved' &&
-      record.repositoryId === this.repositoryId &&
-      (!record.expiresAt || Date.parse(record.expiresAt) > now) &&
-      record.cwe === candidate.cwe &&
-      this.locationsEqual(record.locations, locations),
-    );
-    return match ? this.toDecision(match) : null;
+      const now = this.now().getTime();
+      const match = this.records.find((record) =>
+        record.status === 'approved' &&
+        record.repositoryId === this.repositoryId &&
+        (!record.expiresAt || Date.parse(record.expiresAt) > now) &&
+        record.cwe === candidate.cwe &&
+        this.locationsEqual(record.locations, locations),
+      );
+      return match ? this.toDecision(match) : null;
+    });
   }
 
   async revoke(
@@ -327,6 +441,9 @@ export class FalsePositiveStore {
   }
 
   private async load(): Promise<void> {
+    this.invalidRecords = 0;
+    this.records = [];
+    this.storeError = undefined;
     await recoverAtomicWrite(this.storePath);
     let raw: string;
     try {
@@ -383,8 +500,29 @@ export class FalsePositiveStore {
     );
   }
 
+  private async releaseInterprocessLock(
+    lockPath: string,
+    ownerPath: string,
+    token: string,
+  ): Promise<void> {
+    try {
+      const owner = JSON.parse(await fs.readFile(ownerPath, 'utf8')) as {token?: string};
+      if (owner.token !== token) {
+        throw new Error('False-positive memory lock ownership changed unexpectedly.');
+      }
+
+      await fs.rm(lockPath, {force: true, recursive: true});
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.operationTail.then(operation, operation);
+    const execute = () => this.withInterprocessLock(async () => {
+      await this.load();
+      return operation();
+    });
+    const result = this.operationTail.then(execute, execute);
     this.operationTail = result.then(() => {}, () => {});
     return result;
   }
@@ -396,5 +534,86 @@ export class FalsePositiveStore {
       rationale: record.rationale,
       reviewer: record.reviewer,
     };
+  }
+
+  private async withInterprocessLock<T>(operation: () => Promise<T>): Promise<T> {
+    const lockPath = `${this.storePath}.lock`;
+    const ownerPath = path.join(lockPath, 'owner.json');
+    const token = crypto.randomUUID();
+    const deadline = Date.now() + LOCK_TIMEOUT_MS;
+    await fs.mkdir(path.dirname(this.storePath), {mode: 0o700, recursive: true});
+
+    while (true) {
+      const candidatePath = `${lockPath}.candidate-${token}`;
+      try {
+        await fs.mkdir(candidatePath, {mode: 0o700});
+        await fs.writeFile(
+          path.join(candidatePath, 'owner.json'),
+          JSON.stringify({createdAt: Date.now(), pid: process.pid, token}),
+          {encoding: 'utf8', flag: 'wx', mode: 0o600},
+        );
+      } catch (error) {
+        try {
+          await fs.rm(candidatePath, {force: true, recursive: true});
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            'Failed to initialize and clean up a false-positive memory lock candidate.',
+          );
+        }
+
+        throw error;
+      }
+
+      let acquisitionError: unknown;
+      try {
+        await fs.rename(candidatePath, lockPath);
+        break;
+      } catch (error) {
+        acquisitionError = error;
+      }
+
+      try {
+        await fs.rm(candidatePath, {force: true, recursive: true});
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [acquisitionError, cleanupError],
+          'Failed to acquire and clean up a false-positive memory lock candidate.',
+        );
+      }
+
+      const acquisitionCode = (acquisitionError as NodeJS.ErrnoException).code;
+      if (acquisitionCode !== 'EEXIST' && acquisitionCode !== 'ENOTEMPTY') {
+        throw acquisitionError;
+      }
+
+      if (await removeAbandonedLock(lockPath)) continue;
+      if (Date.now() >= deadline) {
+        throw new Error('Timed out waiting for the false-positive memory lock.');
+      }
+
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, LOCK_RETRY_MS);
+      });
+    }
+
+    let result: T;
+    try {
+      result = await operation();
+    } catch (operationError) {
+      try {
+        await this.releaseInterprocessLock(lockPath, ownerPath, token);
+      } catch (releaseError) {
+        throw new AggregateError(
+          [operationError, releaseError],
+          'False-positive memory operation and lock cleanup both failed.',
+        );
+      }
+
+      throw operationError;
+    }
+
+    await this.releaseInterprocessLock(lockPath, ownerPath, token);
+    return result;
   }
 }
