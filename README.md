@@ -78,14 +78,22 @@ permissions required by your global npm directory.
 
 ### Publish the prepared package
 
-After authenticating with npm and confirming the package name is still
-available:
+Production publication is performed only by
+`.github/workflows/release.yml`. A maintainer creates a protected GitHub
+release from protected `main` whose tag exactly matches
+`v<package.json version>` (for example, `v1.0.0`). The unprivileged verification
+job audits and tests the source, builds one tarball, and uploads it before any
+packaged code executes. A separate unprivileged job downloads and smoke-tests
+that immutable artifact in a clean consumer with the native parser allowlist.
+The publication job has no checkout, dependency install, or package lifecycle
+execution; it verifies the artifact digest, package identity, version, and
+registry, then publishes that same tarball to npmjs.org with npm provenance.
 
-```bash
-npm test
-npm pack --dry-run
-npm publish --access public
-```
+Configure npm trusted publishing for this repository, workflow, and the
+protected `npm` GitHub environment. For the first publication only, when npm
+cannot yet associate a trusted publisher with the unpublished package, place a
+granular publish-only `NPM_TOKEN` in that environment. Remove the token after
+trusted publishing is configured; subsequent releases use GitHub OIDC.
 
 ### First Run
 

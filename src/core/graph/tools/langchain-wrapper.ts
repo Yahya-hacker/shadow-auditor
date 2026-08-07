@@ -4,6 +4,8 @@ import { type ToolSet } from 'ai';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
+import { isRepositoryEvidenceTool, wrapRepositoryEvidence } from './trust-boundary.js';
+
 type AITool = ToolSet[string];
 const MAX_TOOL_RESULT_CHARS = 8000;
 
@@ -114,7 +116,7 @@ export function wrapTool(aiTool: AITool, name: string, options: WrapToolOptions 
         const lineCount = raw.split('\n').length;
         const truncatedLines = truncated.split('\n').length;
 
-        return [
+        raw = [
           truncated,
           '',
           `── ✂️ TRUNCATED (${omitted} chars, ~${lineCount - truncatedLines} lines omitted) ──`,
@@ -125,7 +127,9 @@ export function wrapTool(aiTool: AITool, name: string, options: WrapToolOptions 
         ].join('\n');
       }
 
-      return raw;
+      return isRepositoryEvidenceTool(name)
+        ? wrapRepositoryEvidence(name, raw)
+        : raw;
     },
     name: normalizeToolName(name, options.providerHint),
     schema,

@@ -1179,7 +1179,10 @@ describe('deterministic audit pipeline', () => {
     const counts = new Map<string, number>();
     let active = 0;
     let maxActive = 0;
-    let codebaseResults: string[] = [];
+    let codebaseResults: Array<{
+      content: string;
+      securityBoundary: {classification: string; sourceTool: string};
+    }> = [];
     const model = createModel((messages) => {
       const stage = stageFromSystem(String(messages[0]?.content ?? ''));
       const count = (counts.get(stage) ?? 0) + 1;
@@ -1201,7 +1204,10 @@ describe('deterministic audit pipeline', () => {
         codebaseResults = messages
           .filter((message) => ToolMessage.isInstance(message))
           .slice(-5)
-          .map((message) => String(message.content));
+          .map((message) => JSON.parse(String(message.content)) as {
+            content: string;
+            securityBoundary: {classification: string; sourceTool: string};
+          });
         return new AIMessage(
           '<repo_map>\n- src/: source files\n</repo_map>\n' +
           '<codebase_report>\n# Architecture\nFive files inspected.\n</codebase_report>',
@@ -1257,13 +1263,17 @@ describe('deterministic audit pipeline', () => {
     );
 
     expect(maxActive).to.equal(5);
-    expect(codebaseResults).to.deep.equal([
+    expect(codebaseResults.map((result) => result.content)).to.deep.equal([
       'source:src/1.ts',
       'source:src/2.ts',
       'source:src/3.ts',
       'source:src/4.ts',
       'source:src/5.ts',
     ]);
+    expect(codebaseResults.every((result) =>
+      result.securityBoundary.classification === 'untrusted_repository_evidence' &&
+      result.securityBoundary.sourceTool === 'read_file_content',
+    )).to.equal(true);
   });
 });
 
