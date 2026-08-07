@@ -38,6 +38,11 @@ jobs:
           set -euo pipefail
           npm install --global "npm@$NPM_VERSION" --ignore-scripts
           test "$(npm --version)" = "$NPM_VERSION"
+          node -e '
+            const [major, minor, patch] = process.argv[1].split(".").map(Number);
+            const supported = major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1)));
+            if (!supported) throw new Error(`npm ${process.argv[1]} is below the required 11.5.1`);
+          ' "$(npm --version)"
       - name: Verify release identity
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
@@ -101,6 +106,11 @@ jobs:
           set -euo pipefail
           npm install --global "npm@$NPM_VERSION" --ignore-scripts
           test "$(npm --version)" = "$NPM_VERSION"
+          node -e '
+            const [major, minor, patch] = process.argv[1].split(".").map(Number);
+            const supported = major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1)));
+            if (!supported) throw new Error(`npm ${process.argv[1]} is below the required 11.5.1`);
+          ' "$(npm --version)"
       - name: Download immutable artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -163,6 +173,11 @@ jobs:
           set -euo pipefail
           npm install --global "npm@$NPM_VERSION" --ignore-scripts
           test "$(npm --version)" = "$NPM_VERSION"
+          node -e '
+            const [major, minor, patch] = process.argv[1].split(".").map(Number);
+            const supported = major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1)));
+            if (!supported) throw new Error(`npm ${process.argv[1]} is below the required 11.5.1`);
+          ' "$(npm --version)"
       - name: Download verified artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
