@@ -6,10 +6,7 @@ import { z } from 'zod';
 
 import {
   canonicalIdSchema,
-  codeEvidenceSchema,
   confidenceSchema,
-  evidenceRefSchema,
-  fileLocationSchema,
   SCHEMA_VERSION,
   shortIdSchema,
   timestampSchema,
@@ -191,6 +188,9 @@ export const eventTypeSchema = z.enum([
   'edge_removed',
   'tool_call',
   'tool_result',
+  'model_usage',
+  'stage_started',
+  'stage_completed',
   'hypothesis_created',
   'hypothesis_verified',
   'hypothesis_rejected',
@@ -199,6 +199,7 @@ export const eventTypeSchema = z.enum([
   'state_transition',
   'mission_started',
   'mission_completed',
+  'mission_failed',
   'finding_created',
 ]);
 export type EventType = z.infer<typeof eventTypeSchema>;
@@ -220,7 +221,23 @@ export type Event = z.infer<typeof eventSchema>;
 // Knowledge Graph State - Serializable snapshot
 // ============================================================================
 
+export const communitySchema = z.object({
+  communityId: canonicalIdSchema,
+  entityIds: z.array(canonicalIdSchema),
+  summary: z.string().optional(),
+});
+export type Community = z.infer<typeof communitySchema>;
+
+export const communitySummarySchema = z.object({
+  communityId: canonicalIdSchema,
+  generatedAt: timestampSchema,
+  summary: z.string().min(1),
+});
+export type CommunitySummary = z.infer<typeof communitySummarySchema>;
+
 export const knowledgeGraphStateSchema = z.object({
+  communities: z.array(communitySchema).default([]),
+  communitySummaries: z.array(communitySummarySchema).default([]),
   edges: z.record(graphEdgeSchema),
   entities: z.record(baseEntitySchema),
   runId: shortIdSchema,

@@ -7,9 +7,10 @@
  * failures compared to the baseline.
  */
 
-import { exec } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 // =============================================================================
@@ -18,8 +19,10 @@ import * as path from 'node:path';
 
 export interface TestFingerprint {
   entries: Array<{ status: 'fail' | 'pass' | 'skip'; testName: string }>;
+  exitCode: number;
   framework: string;
   hash: string;
+  outputLineCount: number;
   timestamp: string;
 }
 
@@ -65,6 +68,24 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
+async function validatePythonRequirements(projectRoot: string): Promise<void> {
+  const requirementsPath = path.join(projectRoot, 'requirements.txt');
+  if (!(await fileExists(requirementsPath))) return;
+
+  const unsafeRequirement = /(?:^|[\s;])(?:-e|--editable|git\+|hg\+|svn\+|bzr\+|file:|https?:|ssh:)|\s@\s|^[./~]|^[A-Za-z]:[\\/]|(?:\.whl|\.zip|\.tar(?:\.gz|\.bz2|\.xz)?)\s*(?:#.*)?$/i;
+  const lines = (await fs.readFile(requirementsPath, 'utf8')).split(/\r?\n/);
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#') || line.startsWith('--hash=')) continue;
+    if (line.startsWith('-') || unsafeRequirement.test(line)) {
+      throw new Error(
+        `Unsafe Python requirement at requirements.txt:${index + 1}. ` +
+          'Remediation validation accepts registry package requirements and binary wheels only.',
+      );
+    }
+  }
+}
+
 /**
  * Detect the project's test framework from manifest files.
  */
@@ -80,12 +101,12 @@ async function detectFramework(projectRoot: string): Promise<DetectedFramework> 
     await fileExists(path.join(projectRoot, 'setup.py')) ||
     await fileExists(path.join(projectRoot, 'pytest.ini'))
   ) {
-    return { command: 'pytest', image: 'python:3.12-alpine', name: 'pytest' };
+    return { command: 'pytest -vv', image: 'python:3.12-alpine', name: 'pytest' };
   }
 
   // 3. Go
   if (await fileExists(path.join(projectRoot, 'go.mod'))) {
-    return { command: 'go test ./...', image: 'golang:1.22-alpine', name: 'go' };
+    return { command: 'go test -json ./...', image: 'golang:1.22-alpine', name: 'go' };
   }
 
   // 4. Rust / Cargo
@@ -101,22 +122,47 @@ async function detectFramework(projectRoot: string): Promise<DetectedFramework> 
 // Command Execution
 // =============================================================================
 
+interface BuiltCommand {
+  args: string[];
+  cmd: string;
+}
+
 function execAsync(
-  command: string,
-  options: { cwd?: string; timeoutMs?: number } = {},
+  built: BuiltCommand,
+  options: { cwd?: string; signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<{ exitCode: number; stderr: string; stdout: string }> {
-  return new Promise((resolve) => {
-    const proc = exec(
-      command,
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (result: { exitCode: number; stderr: string; stdout: string }) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
+    const proc = execFile(
+      built.cmd,
+      built.args,
       {
         cwd: options.cwd,
         env: { ...process.env, CI: 'true' },
         maxBuffer: 10 * 1024 * 1024,
+        signal: options.signal,
         timeout: options.timeoutMs ?? 120_000,
       },
       (error, stdout, stderr) => {
-        resolve({
-          exitCode: error?.code ?? (error ? 1 : 0),
+        if (options.signal?.aborted) {
+          fail(options.signal.reason ?? error ?? new Error('Test execution aborted.'));
+          return;
+        }
+
+        finish({
+          exitCode: typeof error?.code === 'number' ? error.code : (error ? 1 : 0),
           stderr: typeof stderr === 'string' ? stderr : '',
           stdout: typeof stdout === 'string' ? stdout : '',
         });
@@ -125,7 +171,11 @@ function execAsync(
 
     // Handle process-level errors (e.g., ENOENT)
     proc.on('error', () => {
-      resolve({ exitCode: 127, stderr: `Command not found: ${command}`, stdout: '' });
+      if (options.signal?.aborted) {
+        fail(options.signal.reason ?? new Error('Test execution aborted.'));
+      } else {
+        finish({ exitCode: 127, stderr: `Command not found: ${built.cmd}`, stdout: '' });
+      }
     });
   });
 }
@@ -142,10 +192,39 @@ function execAsync(
  * - pytest: PASSED/FAILED markers
  * - Go: --- PASS / --- FAIL
  */
-function parseTestOutput(stdout: string, framework: string): TestFingerprint['entries'] {
+function parseGoTestOutput(output: string): TestFingerprint['entries'] {
   const entries: TestFingerprint['entries'] = [];
 
-  const lines = stdout.split('\n');
+  for (const line of output.split('\n')) {
+    try {
+      const event = JSON.parse(line) as {
+        Action?: unknown;
+        Package?: unknown;
+        Test?: unknown;
+      };
+      if (
+        typeof event.Package === 'string' &&
+        (event.Action === 'pass' || event.Action === 'fail' || event.Action === 'skip')
+      ) {
+        entries.push({
+          status: event.Action,
+          testName: `${event.Package}/${typeof event.Test === 'string' ? event.Test : '<package>'}`,
+        });
+      }
+    } catch {
+      // Non-JSON diagnostics do not establish a stable Go test identity.
+    }
+  }
+
+  return entries;
+}
+
+function parseTestOutput(output: string, framework: string): TestFingerprint['entries'] {
+  if (framework === 'go') return parseGoTestOutput(output);
+
+  const entries: TestFingerprint['entries'] = [];
+
+  const lines = output.split('\n');
   for (const line of lines) {
     const trimmed = line.trim();
 
@@ -167,35 +246,30 @@ function parseTestOutput(stdout: string, framework: string): TestFingerprint['en
       continue;
     }
 
-    // pytest style: test_name PASSED
-    if (/PASSED\s*$/.test(trimmed)) {
+    // pytest verbose style: test_name PASSED [ 25%]
+    if (/\sPASSED(?:\s+\[[^\]]+\])?\s*$/.test(trimmed)) {
       entries.push({
         status: 'pass',
-        testName: trimmed.replace(/\s*PASSED\s*$/, '').trim(),
+        testName: trimmed.replace(/\s+PASSED(?:\s+\[[^\]]+\])?\s*$/, '').trim(),
       });
       continue;
     }
 
     // pytest style: test_name FAILED
-    if (/FAILED\s*$/.test(trimmed)) {
+    if (/\sFAILED(?:\s+\[[^\]]+\])?\s*$/.test(trimmed)) {
       entries.push({
         status: 'fail',
-        testName: trimmed.replace(/\s*FAILED\s*$/, '').trim(),
+        testName: trimmed.replace(/\s+FAILED(?:\s+\[[^\]]+\])?\s*$/, '').trim(),
       });
       continue;
     }
 
-    // Go style: --- PASS: TestName
-    const goPassMatch = trimmed.match(/^--- PASS:\s+(\S+)/);
-    if (goPassMatch) {
-      entries.push({ status: 'pass', testName: goPassMatch[1] });
-      continue;
-    }
-
-    // Go style: --- FAIL: TestName
-    const goFailMatch = trimmed.match(/^--- FAIL:\s+(\S+)/);
-    if (goFailMatch) {
-      entries.push({ status: 'fail', testName: goFailMatch[1] });
+    const cargoMatch = trimmed.match(/^test\s+(.+?)\s+\.\.\.\s+(ok|FAILED|ignored)$/);
+    if (cargoMatch) {
+      entries.push({
+        status: cargoMatch[2] === 'ok' ? 'pass' : cargoMatch[2] === 'FAILED' ? 'fail' : 'skip',
+        testName: cargoMatch[1],
+      });
       continue;
     }
 
@@ -218,6 +292,10 @@ function computeFingerprintHash(entries: TestFingerprint['entries']): string {
     .join('\n');
 
   return crypto.createHash('sha256').update(sorted).digest('hex').slice(0, 16);
+}
+
+function countOutputLines(stdout: string, stderr: string): number {
+  return `${stdout}\n${stderr}`.split(/\r?\n/).filter((line) => line.trim()).length;
 }
 
 // =============================================================================
@@ -267,11 +345,19 @@ export class TestRunner {
   async captureBaseline(): Promise<TestFingerprint> {
     const result = await this.executeTests();
 
-    const entries = parseTestOutput(result.stdout, this.framework.name);
+    const entries = parseTestOutput(`${result.stdout}\n${result.stderr}`, this.framework.name);
+    if (entries.length === 0) {
+      throw new Error(
+        'Remediation requires a test command with machine-readable test results; the baseline reported no tests.',
+      );
+    }
+
     this.baseline = {
       entries,
+      exitCode: result.exitCode,
       framework: this.framework.name,
       hash: computeFingerprintHash(entries),
+      outputLineCount: countOutputLines(result.stdout, result.stderr),
       timestamp: new Date().toISOString(),
     };
 
@@ -295,16 +381,257 @@ export class TestRunner {
   /**
    * Run the test suite and compare against baseline.
    */
-  async run(): Promise<TestResult> {
+  async run(signal?: AbortSignal): Promise<TestResult> {
+    return this.runInternal(undefined, signal);
+  }
+
+  /**
+   * Apply a proposed patch only inside the disposable validation workspace,
+   * then run the same baseline comparison used by normal remediation tests.
+   */
+  async runWithPatch(patchDiff: string, signal?: AbortSignal): Promise<TestResult> {
+    return this.runInternal(patchDiff, signal);
+  }
+
+  /**
+   * Set a previously captured baseline (for deserialization).
+   */
+  setBaseline(baseline: TestFingerprint): void {
+    if (baseline.entries.length === 0) {
+      throw new Error('Cannot use a remediation baseline that contains no parsed tests.');
+    }
+
+    this.baseline = baseline;
+  }
+
+  private buildCommand(executionRoot = this.projectRoot): BuiltCommand {
+    if (this.useDocker) {
+      // Twin-Container CI: run inside ephemeral Docker container
+      const absRoot = path.resolve(executionRoot);
+      const projectHash = this.projectCacheKey();
+
+      const dockerArgs = [
+        'run', '--rm',
+        '--network', 'none',
+        '-v', `${absRoot}:/app:rw`,
+      ];
+
+      let runCmd = this.testCommand;
+      const fw = this.framework.name;
+
+      switch (fw) {
+      case 'cargo': {
+        dockerArgs.push(
+          '-v', `shadow-cargo-target-${projectHash}:/app/target`,
+          '-v', `shadow-cargo-registry-${projectHash}:/cargo-home/registry:ro`,
+          '-v', `shadow-cargo-git-${projectHash}:/cargo-home/git:ro`,
+          '--env', 'CARGO_HOME=/cargo-home',
+          '--env', 'CARGO_NET_OFFLINE=true',
+        );
+
+      break;
+      }
+
+      case 'go': {
+        dockerArgs.push('-v', `shadow-go-cache-${projectHash}:/go/pkg/mod:ro`);
+
+      break;
+      }
+
+      case 'npm': {
+        dockerArgs.push('-v', `shadow-node-modules-${projectHash}:/app/node_modules:ro`);
+
+      break;
+      }
+
+      case 'pytest': {
+        dockerArgs.push('-v', `shadow-python-venv-${projectHash}:/venv:ro`);
+        runCmd = `export PATH=/venv/bin:$PATH; ${this.testCommand}`;
+
+      break;
+      }
+      // No default
+      }
+
+      dockerArgs.push(
+        '-w', '/app',
+        '--env', 'CI=true',
+        '--memory', '512m',
+        '--cpus', '1',
+        this.containerImage,
+        'sh', '-c', runCmd,
+      );
+
+      return { args: dockerArgs, cmd: 'docker' };
+    }
+
+    // Non-Docker: delegate to shell for test command execution (may contain
+    // shell features like pipes, conditionals). execFile('sh', ['-c', ...])
+    // avoids spawning an intermediate shell layer.
+    return { args: ['-c', this.testCommand], cmd: 'sh' };
+  }
+
+  private buildDependencyCommands(executionRoot: string): BuiltCommand[] {
+    if (!this.useDocker) return [];
+
+    const absRoot = path.resolve(executionRoot);
+    const projectHash = this.projectCacheKey();
+    const args = ['run', '--rm', '-v', `${absRoot}:/app:ro`];
+    let command: string;
+
+    switch (this.framework.name) {
+    case 'cargo': {
+      args.push(
+        '-v', `shadow-cargo-target-${projectHash}:/app/target`,
+        '-v', `shadow-cargo-registry-${projectHash}:/cargo-home/registry`,
+        '-v', `shadow-cargo-git-${projectHash}:/cargo-home/git`,
+        '--env', 'CARGO_HOME=/cargo-home',
+      );
+      command = 'cargo fetch --locked';
+      break;
+    }
+
+    case 'go': {
+      args.push('-v', `shadow-go-cache-${projectHash}:/go/pkg/mod`);
+      command = 'go mod download';
+      break;
+    }
+
+    case 'npm': {
+      args.push('-v', `shadow-node-modules-${projectHash}:/app/node_modules`);
+      command = [
+        'if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ];',
+        'then npm ci --ignore-scripts;',
+        'else npm install --ignore-scripts --package-lock=false;',
+        'fi',
+      ].join(' ');
+      args.push('--env', 'npm_config_ignore_scripts=true');
+      break;
+    }
+
+    case 'pytest': {
+      const wheelVolume = `shadow-python-wheels-${projectHash}`;
+      const venvVolume = `shadow-python-venv-${projectHash}`;
+      const downloadArgs = [
+        ...args,
+        '-v', `${wheelVolume}:/wheels`,
+        '-w', '/app',
+        '--env', 'CI=true',
+        '--memory', '512m',
+        '--cpus', '1',
+        this.containerImage,
+        'sh', '-c',
+        'rm -rf /wheels/*; if [ -f requirements.txt ]; ' +
+          'then python -m pip download --disable-pip-version-check ' +
+          '--only-binary=:all: --dest /wheels -r requirements.txt; fi',
+      ];
+      const installArgs = [
+        'run', '--rm', '--network', 'none',
+        '-v', `${absRoot}:/app:ro`,
+        '-v', `${wheelVolume}:/wheels:ro`,
+        '-v', `${venvVolume}:/venv`,
+        '-w', '/app',
+        '--env', 'CI=true',
+        '--memory', '512m',
+        '--cpus', '1',
+        this.containerImage,
+        'sh', '-c',
+        'rm -rf /venv/*; python -m venv /venv; ' +
+          'if [ -f requirements.txt ]; then /venv/bin/pip install ' +
+          '--disable-pip-version-check --no-index --only-binary=:all: ' +
+          '--find-links=/wheels -r requirements.txt; fi',
+      ];
+      return [
+        {args: downloadArgs, cmd: 'docker'},
+        {args: installArgs, cmd: 'docker'},
+      ];
+    }
+
+    default: {
+      return [];
+    }
+    }
+
+    args.push(
+      '-w', '/app',
+      '--env', 'CI=true',
+      '--memory', '512m',
+      '--cpus', '1',
+      this.containerImage,
+      'sh', '-c', command,
+    );
+    return [{args, cmd: 'docker'}];
+  }
+
+  private async executeTests(
+    signal?: AbortSignal,
+    patchDiff?: string,
+  ): Promise<{ exitCode: number; stderr: string; stdout: string }> {
+    const workspaceParent = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-remediation-test-'));
+    const executionRoot = path.join(workspaceParent, 'project');
+    try {
+      await fs.cp(this.projectRoot, executionRoot, {
+        filter: (source) => {
+          const relative = path.relative(this.projectRoot, source);
+          if (!relative) return true;
+          const firstSegment = relative.split(path.sep, 1)[0];
+          if (firstSegment === '.git' || firstSegment === '.shadow-auditor') return false;
+          return !this.useDocker || firstSegment !== 'node_modules';
+        },
+        recursive: true,
+      });
+      if (patchDiff) {
+        await applyPatchToWorkspace(executionRoot, patchDiff, signal);
+      }
+
+      if (this.framework.name === 'pytest') {
+        await validatePythonRequirements(executionRoot);
+      }
+
+      for (const dependencyCommand of this.buildDependencyCommands(executionRoot)) {
+        const preparation = await execAsync(dependencyCommand, {
+          cwd: executionRoot,
+          signal,
+          timeoutMs: this.timeoutMs,
+        });
+        if (preparation.exitCode !== 0) return preparation;
+      }
+
+      const built = this.buildCommand(executionRoot);
+      return await execAsync(built, {
+        cwd: executionRoot,
+        signal,
+        timeoutMs: this.timeoutMs,
+      });
+    } finally {
+      await fs.rm(workspaceParent, { force: true, recursive: true });
+    }
+  }
+
+  // ===========================================================================
+  // Private
+  // ===========================================================================
+
+  private projectCacheKey(): string {
+    return crypto.createHash('sha256')
+      .update(path.resolve(this.projectRoot))
+      .digest('hex')
+      .slice(0, 12);
+  }
+
+  private async runInternal(patchDiff?: string, signal?: AbortSignal): Promise<TestResult> {
     const startTime = Date.now();
-    const result = await this.executeTests();
+    const built = this.buildCommand();
+    const result = await this.executeTests(signal, patchDiff);
     const durationMs = Date.now() - startTime;
 
-    const entries = parseTestOutput(result.stdout, this.framework.name);
+    const entries = parseTestOutput(`${result.stdout}\n${result.stderr}`, this.framework.name);
     const fingerprint: TestFingerprint = {
       entries,
+      exitCode: result.exitCode,
       framework: this.framework.name,
       hash: computeFingerprintHash(entries),
+      outputLineCount: countOutputLines(result.stdout, result.stderr),
       timestamp: new Date().toISOString(),
     };
 
@@ -331,9 +658,19 @@ export class TestRunner {
 
       // Resolved failures = in baseline but NOT in current
       resolvedFailures = [...baselineFailures].filter((t) => !currentFailures.has(t));
+      const currentTestNames = new Set(entries.map((entry) => entry.testName));
+      const baselineTestMissing = this.baseline.entries.some(
+        (entry) => !currentTestNames.has(entry.testName),
+      );
 
-      // Degraded if there are new failures
-      degraded = newFailures.length > 0;
+      const runnerRegressed = result.exitCode !== 0 && this.baseline.exitCode === 0;
+      const outputDisappeared = this.baseline.outputLineCount > 0 &&
+        fingerprint.outputLineCount === 0;
+      const coverageRegressed =
+        baselineTestMissing ||
+        entries.length < this.baseline.entries.length ||
+        outputDisappeared;
+      degraded = newFailures.length > 0 || runnerRegressed || coverageRegressed;
     } else {
       // No baseline: traditional pass/fail based on exit code
       degraded = result.exitCode !== 0;
@@ -341,7 +678,7 @@ export class TestRunner {
 
     return {
       baseline: this.baseline,
-      command: this.buildCommand(),
+      command: `${built.cmd} ${built.args.join(' ')}`,
       degraded,
       durationMs,
       exitCode: result.exitCode,
@@ -354,85 +691,28 @@ export class TestRunner {
       stdout: result.stdout,
     };
   }
+}
 
-  /**
-   * Set a previously captured baseline (for deserialization).
-   */
-  setBaseline(baseline: TestFingerprint): void {
-    this.baseline = baseline;
-  }
-
-  // ===========================================================================
-  // Private
-  // ===========================================================================
-
-  private buildCommand(): string {
-    if (this.useDocker) {
-      // Twin-Container CI: run inside ephemeral Docker container
-      const absRoot = path.resolve(this.projectRoot);
-      const projectHash = crypto.createHash('sha256').update(absRoot).digest('hex').slice(0, 12);
-
-      const dockerArgs = [
-        'docker', 'run', '--rm',
-        '-v', `${absRoot}:/app:rw`,
-      ];
-
-      let runCmd = this.testCommand;
-      const fw = this.framework.name;
-
-      switch (fw) {
-      case 'cargo': {
-        dockerArgs.push('-v', `shadow-cargo-target-${projectHash}:/app/target`);
-
-      break;
-      }
-
-      case 'go': {
-        dockerArgs.push('-v', `shadow-go-cache-${projectHash}:/go/pkg/mod`);
-
-      break;
-      }
-
-      case 'npm': {
-        dockerArgs.push('-v', `shadow-node-modules-${projectHash}:/app/node_modules`);
-        // Install dependencies inside container to build correct native bindings
-        runCmd = `npm install && ${this.testCommand}`;
-
-      break;
-      }
-
-      case 'pytest': {
-        dockerArgs.push('-v', `shadow-python-venv-${projectHash}:/app/.venv`);
-        // Install requirements inside container if requirements.txt is present
-        runCmd = `(if [ -f requirements.txt ]; then pip install -r requirements.txt; fi) && ${this.testCommand}`;
-
-      break;
-      }
-      // No default
-      }
-
-      dockerArgs.push(
-        '-w', '/app',
-        '--env', 'CI=true',
-        '--memory', '512m',
-        '--cpus', '1',
-        this.containerImage,
-        'sh', '-c', runCmd,
-      );
-
-      return dockerArgs.join(' ');
-    }
-
-    return this.testCommand;
-  }
-
-  private async executeTests(): Promise<{ exitCode: number; stderr: string; stdout: string }> {
-    const command = this.buildCommand();
-    return execAsync(command, {
-      cwd: this.projectRoot,
-      timeoutMs: this.timeoutMs,
+function applyPatchToWorkspace(
+    workspace: string,
+    patchDiff: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn('git', ['apply', '--whitespace=nowarn', '-'], {
+        cwd: workspace,
+        signal,
+        stdio: ['pipe', 'ignore', 'pipe'],
+      });
+      let stderr = '';
+      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Patch validation workspace rejected the diff: ${stderr.trim()}`));
+      });
+      child.stdin.end(patchDiff);
     });
-  }
 }
 
 // Re-export for convenience

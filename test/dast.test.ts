@@ -1,9 +1,13 @@
+import type { execFile } from 'node:child_process';
+
 import { expect } from 'chai';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 import {
   type DastValidationResult,
   dastValidationResultSchema,
-  type ExploitProofOfConcept,
   exploitProofOfConceptSchema,
   type OastCallback,
   oastCallbackSchema,
@@ -12,6 +16,61 @@ import {
 } from '../src/core/dast/dast-schema.js';
 import { MirageOAST } from '../src/core/dast/mirage-oast.js';
 import { SandboxManager } from '../src/core/dast/sandbox-manager.js';
+
+function cancellableDockerExecutor(
+  _file: string,
+  _args: readonly string[],
+  options: { signal?: AbortSignal },
+  callback: (error: Error | null, stdout: string, stderr: string) => void,
+): object {
+  if (!options.signal) {
+    callback(null, '', '');
+    return {};
+  }
+
+  options.signal.addEventListener('abort', () => {
+    callback(new Error('aborted'), '', '');
+  }, { once: true });
+  return {};
+}
+
+function createRecordingDockerExecutor(calls: string[][]): typeof execFile {
+  const executor = (
+    _file: string,
+    args: readonly string[],
+    _options: object,
+    callback: (error: Error | null, stdout: string, stderr: string) => void,
+  ) => {
+    calls.push([...args]);
+    callback(null, args[0] === 'inspect' ? 'true\n' : '', '');
+    return {};
+  };
+
+  return executor as unknown as typeof execFile;
+}
+
+function immediatelyExitedDockerExecutor(
+  _file: string,
+  args: readonly string[],
+  _options: object,
+  callback: (error: Error | null, stdout: string, stderr: string) => void,
+): object {
+  callback(null, args[0] === 'inspect' ? 'false\n' : '', '');
+  return {};
+}
+
+function failedDeployDockerExecutor(
+  _file: string,
+  args: readonly string[],
+  _options: object,
+  callback: (error: Error | null, stdout: string, stderr: string) => void,
+): object {
+  const failedDeploy = args[0] === 'exec' && args.at(-1) === 'npm start';
+  const error = failedDeploy ? Object.assign(new Error('deploy failed'), { code: 7 }) : null;
+
+  callback(error, args[0] === 'inspect' ? 'true\n' : '', failedDeploy ? 'deploy failed' : '');
+  return {};
+}
 
 describe('DAST subsystem', () => {
   describe('dast-schema', () => {
@@ -150,6 +209,19 @@ describe('DAST subsystem', () => {
       const mirage = new MirageOAST({ networkName: 'shadow-net-test', runId: 'test-run' });
       expect(mirage.isRunning()).to.equal(false);
     });
+
+    it('removes a container even when startup never reached the running state', async () => {
+      const calls: string[][] = [];
+      const mirage = new MirageOAST({
+        dockerExecutor: createRecordingDockerExecutor(calls),
+        networkName: 'shadow-net-test',
+        runId: 'cancelled-start',
+      });
+
+      await mirage.destroy();
+
+      expect(calls).to.deep.equal([['rm', '-f', 'mirage-oast-cancelled-start']]);
+    });
   });
 
   describe('SandboxManager', () => {
@@ -191,5 +263,180 @@ describe('DAST subsystem', () => {
         expect((error as Error).message).to.include('not created');
       }
     });
+
+    it('cancels an in-flight Docker operation', async () => {
+      const dockerExecutor = cancellableDockerExecutor as unknown as typeof execFile;
+      const targetPath = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-dast-test-'));
+      try {
+        await fs.writeFile(path.join(targetPath, 'package.json'), '{}');
+        const manager = new SandboxManager({
+          dockerExecutor,
+          runId: 'test-cancel',
+          targetPath,
+        });
+        const controller = new AbortController();
+        const creation = manager.create(controller.signal);
+        setTimeout(() => controller.abort(new Error('cancelled')), 10);
+
+        let error: unknown;
+        try {
+          await creation;
+        } catch (error_) {
+          error = error_;
+        }
+
+        expect(error).to.be.instanceOf(Error);
+        expect((error as Error).message).to.equal('cancelled');
+      } finally {
+        await fs.rm(targetPath, { force: true, recursive: true });
+      }
+    });
+
+    it('uses an internal network and a disposable writable workspace', async () => {
+      const calls: string[][] = [];
+      const targetPath = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-dast-test-'));
+      try {
+        await fs.writeFile(path.join(targetPath, 'package.json'), '{}');
+        const manager = new SandboxManager({
+          dockerExecutor: createRecordingDockerExecutor(calls),
+          runId: 'test-isolation',
+          targetPath,
+        });
+
+        await manager.create();
+
+        expect(calls).to.deep.include([
+          'network', 'create', '--internal', 'shadow-net-test-isolation',
+        ]);
+        const createCall = calls.find((args) => args[0] === 'create');
+        const mount = createCall?.[createCall.indexOf('-v') + 1];
+        expect(mount).to.match(/shadow-dast-.*[\\/]project:\/app:rw$/);
+        expect(mount).not.to.equal(`${path.resolve(targetPath)}:/app:rw`);
+        await manager.destroy();
+      } finally {
+        await fs.rm(targetPath, { force: true, recursive: true });
+      }
+    });
+
+    it('mounts existing dependency directories read-only into the sandbox', async () => {
+      const calls: string[][] = [];
+      const targetPath = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-dast-deps-'));
+      await fs.mkdir(path.join(targetPath, 'node_modules'));
+      const manager = new SandboxManager({
+        dockerExecutor: createRecordingDockerExecutor(calls),
+        runId: 'test-dependencies',
+        targetPath,
+      });
+
+      try {
+        await manager.create();
+        const createCall = calls.find((args) => args[0] === 'create') ?? [];
+        expect(createCall).to.include(
+          `${path.join(targetPath, 'node_modules')}:/app/node_modules:ro`,
+        );
+      } finally {
+        await manager.destroy();
+        await fs.rm(targetPath, { force: true, recursive: true });
+      }
+    });
+
+    it('uses the deployment command supplied by the tool invocation', async () => {
+      const calls: string[][] = [];
+      const targetPath = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-dast-command-'));
+      const manager = new SandboxManager({
+        dockerExecutor: createRecordingDockerExecutor(calls),
+        runId: 'test-command',
+        startCommand: 'npm start',
+        targetPath,
+      });
+
+      try {
+        await manager.create();
+        await manager.deploy(undefined, 'npm run test-server');
+        expect(calls).to.deep.include([
+          'exec', 'shadow-target-test-command', 'sh', '-c', 'npm run test-server',
+        ]);
+      } finally {
+        await manager.destroy();
+        await fs.rm(targetPath, { force: true, recursive: true });
+      }
+    });
+
+    it('fails closed when Docker cannot create the internal network', async () => {
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dast-network-failure-'));
+      let calls = 0;
+      const executor = (
+        _file: string,
+        _args: readonly string[],
+        _options: object,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        calls++;
+        const error = calls === 1 ? Object.assign(new Error('network denied'), { code: 1 }) : null;
+        callback(error, '', error ? 'network denied' : '');
+        return {};
+      };
+
+      const sandbox = new SandboxManager({
+        dockerExecutor: executor as unknown as typeof execFile,
+        runId: 'network-failure',
+        targetPath: tmpDir,
+      });
+
+      try {
+        await expectRejected(sandbox.create(), 'Failed to create sandbox network');
+        expect(sandbox.isRunning()).to.equal(false);
+      } finally {
+        await sandbox.destroy();
+        await fs.rm(tmpDir, { force: true, recursive: true });
+      }
+    });
+
+    it('fails closed when the target container exits during startup', async () => {
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dast-start-failure-'));
+      const sandbox = new SandboxManager({
+        dockerExecutor: immediatelyExitedDockerExecutor as unknown as typeof execFile,
+        runId: 'start-failure',
+        targetPath: tmpDir,
+      });
+
+      try {
+        await expectRejected(sandbox.create(), 'exited during startup');
+        expect(sandbox.isRunning()).to.equal(false);
+      } finally {
+        await sandbox.destroy();
+        await fs.rm(tmpDir, { force: true, recursive: true });
+      }
+    });
+
+    it('rejects a failed target deployment command', async () => {
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dast-deploy-failure-'));
+      const sandbox = new SandboxManager({
+        dockerExecutor: failedDeployDockerExecutor as unknown as typeof execFile,
+        runId: 'deploy-failure',
+        startCommand: 'npm start',
+        targetPath: tmpDir,
+      });
+
+      try {
+        await sandbox.create();
+        await expectRejected(sandbox.deploy(), 'failed with exit code 7');
+      } finally {
+        await sandbox.destroy();
+        await fs.rm(tmpDir, { force: true, recursive: true });
+      }
+    });
   });
 });
+
+async function expectRejected(promise: Promise<unknown>, message: string): Promise<void> {
+  let error: unknown;
+  try {
+    await promise;
+  } catch (error_) {
+    error = error_;
+  }
+
+  expect(error).to.be.instanceOf(Error);
+  expect((error as Error).message).to.include(message);
+}

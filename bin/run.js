@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 
 import {execute} from '@oclif/core'
+import {realpathSync} from 'node:fs'
+import {pathToFileURL} from 'node:url'
 
-if (process.argv.length === 2 || (process.argv.length === 3 && process.argv[2] === '.')) {
-  process.argv.push('shell');
-}
+import {routeDefaultCommand} from '../dist/cli-argv.js'
 
-await execute({dir: import.meta.url})
+process.argv[1] = realpathSync(process.argv[1])
+process.argv = routeDefaultCommand(process.argv)
+
+const executableUrl = pathToFileURL(process.argv[1]).href
+await execute({args: process.argv.slice(2), dir: executableUrl})

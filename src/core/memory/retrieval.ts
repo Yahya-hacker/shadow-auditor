@@ -4,7 +4,9 @@
 
 import type { HybridResult, HybridRetriever, HybridSearchOptions } from './hybrid-retriever.js';
 import type { KnowledgeGraph, TraversalOptions } from './knowledge-graph.js';
-import type { BaseEntity, EntityType, GraphEdge } from './memory-schema.js';
+
+import { detectCommunities } from './community-detection.js';
+import { type BaseEntity, type EdgeType, type EntityType, type GraphEdge } from './memory-schema.js';
 
 export interface SearchResult {
   entity: BaseEntity;
@@ -25,6 +27,21 @@ export class Retrieval {
   private hybridRetriever: HybridRetriever | null = null;
 
   constructor(private readonly graph: KnowledgeGraph) {}
+
+  /**
+   * Detect communities in the knowledge graph using Louvain community detection.
+   * Async so the Louvain algorithm can yield the event loop between passes,
+   * preventing UI freezes during large-graph analysis.
+   */
+  async detectCommunities(): Promise<{ communities: Map<string, number>; modularity: number }> {
+    const edges: Array<[string, string]> = [];
+    for (const edge of this.graph.getEdges()) {
+      edges.push([edge.sourceEntityId, edge.targetEntityId]);
+    }
+
+    const nodes = this.graph.getEntities().map((e) => e.canonicalId);
+    return detectCommunities({ edges, nodes });
+  }
 
   /**
    * Find all sources that can reach a sink.
@@ -63,6 +80,24 @@ export class Retrieval {
     });
 
     return reachable.filter((e) => e.entityType === 'sink');
+  }
+
+  /**
+   * Find multi-hop paths matching a specific entity and edge type pattern.
+   * Example: find paths from any 'source' entity to any 'sink' entity via 'flows_to'.
+   */
+  findTypedPaths(
+    sourceType: EntityType,
+    edgeType: EdgeType,
+    targetType: EntityType,
+    maxDepth = 5,
+  ): Array<{ confidence: number; edges: GraphEdge[]; entities: BaseEntity[] }> {
+    const paths = this.graph.queryPaths(sourceType, edgeType, targetType, maxDepth);
+
+    return paths.map((path) => {
+      const confidence = path.edges.reduce((acc, edge) => acc * edge.confidence, 1);
+      return { ...path, confidence };
+    });
   }
 
   /**

@@ -55,13 +55,13 @@ export type Exploitability = z.infer<typeof exploitabilitySchema>;
 
 export const codeLocationSchema = z.object({
   className: z.string().optional(),
-  endColumn: z.number().int().nonnegative().optional(),
+  endColumn: z.number().int().positive().optional(),
   endLine: z.number().int().positive().optional(),
   filePath: z.string().min(1),
   functionName: z.string().optional(),
   snippet: z.string().optional(),
   snippetHash: z.string().optional(),
-  startColumn: z.number().int().nonnegative().optional(),
+  startColumn: z.number().int().positive().optional(),
   startLine: z.number().int().positive().optional(),
 });
 
@@ -223,6 +223,14 @@ export const reportMetadataSchema = z.object({
   
   /** Report generation timestamp */
   generatedAt: z.string().datetime(),
+
+  /** Runtime capabilities enabled for this audit */
+  modes: z.object({
+    ci: z.boolean(),
+    dast: z.boolean(),
+    remediation: z.boolean(),
+    swarm: z.boolean(),
+  }).optional(),
   
   /** Unique report ID */
   reportId: z.string().min(1),

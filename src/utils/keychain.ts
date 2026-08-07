@@ -22,10 +22,16 @@ const SERVICE_NAME = 'shadow-auditor';
 const ENV_VAR_MAP: Record<string, string> = {
   anthropic: 'SHADOW_ANTHROPIC_KEY',
   custom: 'SHADOW_CUSTOM_KEY',
+  deepseek: 'SHADOW_DEEPSEEK_KEY',
   google: 'SHADOW_GOOGLE_KEY',
   mistral: 'SHADOW_MISTRAL_KEY',
+  moonshot: 'SHADOW_MOONSHOT_KEY',
+  nvidia: 'SHADOW_NVIDIA_KEY',
   ollama: 'SHADOW_OLLAMA_KEY',
   openai: 'SHADOW_OPENAI_KEY',
+  openrouter: 'SHADOW_OPENROUTER_KEY',
+  perplexity: 'SHADOW_PERPLEXITY_KEY',
+  qwen: 'SHADOW_QWEN_KEY',
 };
 
 // =============================================================================
@@ -87,7 +93,8 @@ function getApiKeyFromEnv(provider: string): null | string {
  *   2. Environment variable (SHADOW_{PROVIDER}_KEY)
  *   3. Returns null → config.ts falls back to plaintext JSON
  *
- * setApiKey always tries the OS keychain first; silently skips on failure.
+ * setApiKey fails closed so callers never discard a credential that was not
+ * durably stored.
  */
 export class KeychainAdapter implements SecretStoreAdapter {
   /**
@@ -111,18 +118,35 @@ export class KeychainAdapter implements SecretStoreAdapter {
 
   /**
    * Store an API key in the OS keychain.
-   * Silently no-ops if the keychain is unavailable.
+   * Throws if the keychain is unavailable, rejects the write, or cannot read
+   * the credential back.
    */
   async setApiKey(provider: string, apiKey: string): Promise<void> {
     const keychain = await getKeychainModule();
-    if (!keychain) return;
+    if (!keychain) {
+      throw new Error('OS credential storage is unavailable');
+    }
 
-    try {
-      await keychain.setPassword(SERVICE_NAME, `apiKey-${provider}`, apiKey);
-    } catch {
-      // Cannot write to keychain — user will fall back to plaintext JSON
+    const account = `apiKey-${provider}`;
+    await keychain.setPassword(SERVICE_NAME, account, apiKey);
+    const persisted = await keychain.getPassword(SERVICE_NAME, account);
+    if (persisted !== apiKey) {
+      throw new Error('OS credential storage did not retain the API key');
     }
   }
+}
+
+// =============================================================================
+// Convenience Helpers
+// =============================================================================
+
+const adapterInstance = new KeychainAdapter();
+
+/**
+ * Convenience function to save an API key using the default KeychainAdapter.
+ */
+export async function saveApiKey(provider: string, apiKey: string): Promise<void> {
+  await adapterInstance.setApiKey(provider, apiKey);
 }
 
 // =============================================================================

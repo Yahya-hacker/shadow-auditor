@@ -28,6 +28,8 @@ export interface LicenseGateResult {
   requiredTier?: LicenseTier;
   /** Upgrade URL */
   upgradeUrl?: string;
+  /** Actionable validation failure, when the configured key could not be checked */
+  validationError?: string;
 }
 
 // =============================================================================
@@ -92,6 +94,7 @@ export async function enforceLicenseGate(config: ShadowConfig): Promise<LicenseG
     feature: gatedFeature,
     requiredTier: 'pro',
     upgradeUrl: UPGRADE_URL,
+    validationError: result.error,
   };
 }
 

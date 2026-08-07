@@ -14,6 +14,7 @@ import {
 export interface ConsensusManagerOptions {
   defaultQuorum?: number;  // Minimum votes required
   defaultTimeout?: number; // ms before timeout
+  trustThreshold?: number; // Minimum trust score for evidence-bearing votes
 }
 
 export type Vote = 'abstain' | 'approve' | 'reject';
@@ -25,10 +26,12 @@ export class ConsensusManager {
   private readonly defaultQuorum: number;
   private readonly defaultTimeout: number;
   private records: Map<string, ConsensusRecord> = new Map();
+  private readonly trustThreshold: number;
 
   constructor(options: ConsensusManagerOptions = {}) {
     this.defaultQuorum = options.defaultQuorum ?? 2;
     this.defaultTimeout = options.defaultTimeout ?? 60_000; // 1 minute
+    this.trustThreshold = options.trustThreshold ?? 0.7;
   }
 
   /**
@@ -124,12 +127,15 @@ export class ConsensusManager {
 
   /**
    * Cast a vote on a proposal.
+   * If evidenceHash and trustScore are supplied, consensus additionally requires
+   * a non-empty evidence hash and a trust score above the configured threshold,
+   * ensuring hallucinated claims cannot reach consensus.
    */
   vote(
     consensusId: string,
     agentId: string,
     vote: Vote,
-    comment?: string,
+    options: { comment?: string; evidenceHash?: string; trustScore?: number } = {},
   ): Result<ConsensusRecord, string> {
     const record = this.records.get(consensusId);
     if (!record) {
@@ -157,8 +163,10 @@ export class ConsensusManager {
         ...record.votes,
         {
           agentId,
-          comment,
+          comment: options.comment,
+          evidenceHash: options.evidenceHash,
           timestamp: new Date().toISOString(),
+          trustScore: options.trustScore,
           vote,
         },
       ],
@@ -202,18 +210,35 @@ export class ConsensusManager {
 
   /**
    * Evaluate if consensus has been reached.
+   * Requires a simple majority and, when votes include evidence metadata, a
+   * non-empty evidence hash and a trust score above the configured threshold.
    */
   private evaluateConsensus(record: ConsensusRecord): {
     decision?: string;
     reached: boolean;
   } {
     const votes = record.votes;
-    if (votes.length < this.defaultQuorum) {
+
+    // Filter out votes that lack required evidence/trust metadata when such
+    // metadata is present on *any* vote. This prevents consensus from being
+    // reached purely on blind approvals.
+    const hasEvidenceMetadata = votes.some((v) => v.evidenceHash !== undefined || v.trustScore !== undefined);
+    let eligibleVotes = votes;
+    if (hasEvidenceMetadata) {
+      eligibleVotes = votes.filter((v) => {
+        if (v.vote === 'abstain') return false;
+        if (!v.evidenceHash || v.evidenceHash.length === 0) return false;
+        if (v.trustScore !== undefined && v.trustScore < this.trustThreshold) return false;
+        return true;
+      });
+    }
+
+    if (eligibleVotes.length < this.defaultQuorum) {
       return { reached: false };
     }
 
-    const approves = votes.filter((v) => v.vote === 'approve').length;
-    const rejects = votes.filter((v) => v.vote === 'reject').length;
+    const approves = eligibleVotes.filter((v) => v.vote === 'approve').length;
+    const rejects = eligibleVotes.filter((v) => v.vote === 'reject').length;
     const total = approves + rejects; // Don't count abstains
 
     if (total === 0) {
