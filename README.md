@@ -58,6 +58,24 @@ npm ci
 npm link
 ```
 
+To refresh an existing source checkout and its global link, use:
+
+```bash
+npm run relink
+```
+
+This installs with the committed lifecycle policy, runs a real AST parse across
+every guaranteed production grammar, and then refreshes the global link.
+
+Do not use `npm unlink shadow-auditor` for this workflow. npm treats that
+command as a local package uninstall, not as removal of the global link, and
+npm 11 may consequently print misleading `allow-scripts` warnings while it
+reifies the local dependency tree. The following `npm install` still applies
+the committed `package.json#allowScripts` policy, but the uninstall step is
+unnecessary. To remove the global link intentionally, use
+`npm unlink --global shadow-auditor` with a user-owned npm prefix or the
+permissions required by your global npm directory.
+
 ### Publish the prepared package
 
 After authenticating with npm and confirming the package name is still

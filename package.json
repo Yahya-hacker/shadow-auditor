@@ -136,7 +136,9 @@
     "postpack": "shx rm -f oclif.manifest.json",
     "posttest": "npm run lint",
     "prepack": "npm run build && oclif manifest && oclif readme",
+    "relink": "npm install && npm run test:native && npm link",
     "test": "mocha --forbid-only \"test/**/*.test.ts\"",
+    "test:native": "mocha --forbid-only \"test/**/*.test.ts\" --grep \"uses Tree-sitter AST chunking across guaranteed production languages\"",
     "test:unit": "mocha --forbid-only \"test/**/*.test.ts\"",
     "version": "oclif readme && git add README.md"
   },
