@@ -2,6 +2,7 @@
   "$defs": {
     "Problem": {
       "additionalProperties": false,
+      "description": "Closed RFC 9457 problem details. Required and optional generated strings remain subject to the effective bounded canonical UTF-8 byte limit; the manifest records conservative four-byte-per-code-point maxima.",
       "properties": {
         "code": {
           "$ref": "#/$defs/ProblemCode"
@@ -40,6 +41,7 @@
         },
         "type": {
           "format": "uri",
+          "maxLength": 128,
           "pattern": "^https://shadow-auditor\\.dev/problems/[a-z0-9-]+$",
           "type": "string"
         }

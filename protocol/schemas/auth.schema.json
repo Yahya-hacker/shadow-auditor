@@ -39,6 +39,7 @@
           "$ref": "#/$defs/BoundTokenClaims"
         },
         "accessToken": {
+          "description": "ASCII bound token. Its 8192-byte schema maximum is included in the mandatory generated-string negotiation floor.",
           "maxLength": 8192,
           "minLength": 32,
           "pattern": "^[A-Za-z0-9._~-]+$",
@@ -48,6 +49,7 @@
           "$ref": "common.schema.json#/$defs/Timestamp"
         },
         "refreshToken": {
+          "description": "ASCII device-bound refresh token. Its 8192-byte schema maximum is included in the mandatory generated-string negotiation floor.",
           "maxLength": 8192,
           "minLength": 32,
           "pattern": "^[A-Za-z0-9._~-]+$",

@@ -150,8 +150,9 @@
           "type": "integer"
         },
         "maxStringBytes": {
+          "description": "UTF-8 byte capacity. Protocol 1.0 requires at least 8192 bytes so every mandatory generated cursor, token, identifier, timestamp, digest, signature, and RFC 9457 field fits the effective canonical profile.",
           "maximum": 65536,
-          "minimum": 128,
+          "minimum": 8192,
           "type": "integer"
         },
         "maxToolArgumentsBytes": {
@@ -199,6 +200,7 @@
         "maxRecoveryItemBytes >= maxToolArgumentsBytes + 4096",
         "maxEventBytes >= maxToolArgumentsBytes + 16384",
         "maxBodyBytes >= maxToolResultValueBytes",
+        "maxStringBytes >= 8192",
         "maxRecoveryItemNodes >= 65",
         "maxCanonicalNodes >= 257"
       ],

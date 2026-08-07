@@ -1219,7 +1219,7 @@
       "Only then canonicalize, hash, sign, verify, persist, or act on the value."
     ],
     "schemaLimit": "JSON Schema maxLength counts Unicode code points and cannot enforce aggregate canonical depth, node count, or UTF-8 payload size. It is never a substitute for bounded canonical validation.",
-    "units": "String and payload maxima count UTF-8 bytes. Object member names count as nodes. The frozen limits and validation-step identifiers are machine-readable in manifest.canonicalJson."
+    "units": "String and payload maxima count UTF-8 bytes. Object member names count as nodes. The frozen limits, generated-string audit, derived cursor wire bound, and validation-step identifiers are machine-readable in manifest.canonicalJson."
   },
   "x-shadow-compression": {
     "request": "identity is mandatory; gzip is optional only after negotiation. Body signatures always cover decompressed canonical JSON. Expansion beyond the negotiated body maximum fails before parsing.",
@@ -1250,6 +1250,34 @@
   "x-shadow-limit-negotiation": {
     "algorithm": "Compute the fieldwise minimum of the complete client and server PayloadLimits offers, then call the exported negotiateProtocolLimits semantic validator. The operation is symmetric and deterministic.",
     "failure": "Any violated cross-limit invariant fails before enrollment or session creation with RFC 9457 code incompatible_limit_profile, status 422, retryable false, and no token, session, or partial authority.",
+    "generatedStrings": {
+      "audit": {
+        "accessToken": 8192,
+        "base64Url32": 43,
+        "ed25519Signature": 86,
+        "nonce": 86,
+        "problemCode": 28,
+        "problemDetail": 2048,
+        "problemInstance": 8192,
+        "problemTitle": 512,
+        "problemType": 128,
+        "protocolVersion": 3,
+        "refreshToken": 8192,
+        "replayToken": 256,
+        "sha256Digest": 71,
+        "snapshotCursorToken": 940,
+        "timestamp": 24,
+        "uuid": 36
+      },
+      "minimumMaxStringBytes": 8192,
+      "snapshotCursor": {
+        "canonicalMaxBytes": 705,
+        "derivation": "Strict canonical JSON of the closed SnapshotCursor v1 envelope with the longest collection enum, maximum safe integers, maximum valid fixed-width UUID/date-time/digest/signature encodings, and every authorization/projection field; unpadded base64url expands 705 bytes to 940 characters.",
+        "schema": "./schemas/sessions.schema.json#/$defs/SnapshotCursor",
+        "tokenMaxCharacters": 940
+      },
+      "units": "Audit values are maximum UTF-8 bytes. The cursor token is ASCII, so its character and byte lengths are equal. Any future cursor field requires a newly versioned closed envelope and a newly derived bound."
+    },
     "invariants": [
       "maxBodyBytes >= maxRecoveryItemBytes + maxRecoveryPageOverheadBytes",
       "maxCanonicalNodes >= maxRecoveryItemNodes + maxRecoveryPageOverheadNodes",
@@ -1259,7 +1287,7 @@
       "maxRecoveryItemBytes >= maxToolArgumentsBytes + 4096",
       "maxEventBytes >= maxToolArgumentsBytes + 16384",
       "maxToolResultValueBytes <= maxBodyBytes",
-      "maxStringBytes >= 128, maxObjectKeys >= 32, maxArrayItems >= 7, maxRecoveryItemNodes >= 65"
+      "maxStringBytes >= 8192 for every mandatory generated string, maxObjectKeys >= 32, maxArrayItems >= 7, maxRecoveryItemNodes >= 65"
     ],
     "pinning": "Both peers recompute SHA-256 over strict canonical JSON of the effective limits object. NegotiatedCapabilities.limitProfileDigest is pinned to the enrollment token family and every session. It is bound into every recovery page and signed cursor; substitution or restart under a different profile fails closed.",
     "use": "After negotiation, original body/event/tool acceptance, canonical hashing, snapshot item hashing, longest-prefix packing, cursor/page verification, assembly, and recovery-only lineage verification MUST use the pinned effective profile. Server defaults are never substituted into a negotiated session."
@@ -1292,9 +1320,9 @@
   },
   "x-shadow-snapshot-recovery": {
     "boundary": "At snapshot creation the server freezes state, eventHead, all seven collection item counts, and each terminal collection hash. A collection hash starts from SHA-256 of the ASCII snapshot collection domain plus collection name and advances once per ordered record over the previous hash, stable record UUID, and a record digest computed only after enforcing maxRecoveryItemBytes, maxRecoveryItemDepth, and maxRecoveryItemNodes.",
-    "cursor": "The opaque cursor is unpadded base64url of exact canonical JSON matching SnapshotCursor. Its Ed25519 signature uses the enrollment-pinned server event-signing key and the shadow-auditor/snapshot-cursor/v1 domain. The projection binds protocol, tenant, session, pinned limit-profile digest, snapshot ID/version, collection, collection digest, next offset, and exact snapshot expiry.",
+    "cursor": "The opaque cursor is unpadded base64url of exact canonical JSON matching the closed SnapshotCursor v1 schema. The maximum canonical envelope is derived as 705 UTF-8 bytes and the maximum token as 940 ASCII characters; encoding and decoding enforce both that protocol bound and the effective maxStringBytes. Its Ed25519 signature uses the enrollment-pinned server event-signing key and the shadow-auditor/snapshot-cursor/v1 domain. The projection binds protocol, tenant, session, pinned limit-profile digest, snapshot ID/version, collection, collection digest, next offset, and exact snapshot expiry.",
     "expiry": "The server retains an immutable snapshot for at least 15 minutes and advertises its exact snapshotExpiresAt. At or after expiry, every page or cursor request returns 410 snapshot_expired. The client discards all partial collections and restarts without snapshotId or cursor; pages from different snapshots must never be combined.",
-    "integrity": "Pages begin at the requested exact offset and never overlap. Under the pinned effective limit profile, the server deterministically selects the longest ordered prefix of at most maxRecoveryPageItems records whose complete canonical page satisfies maxBodyBytes, maxCanonicalNodes, and maxCanonicalDepth; if records remain, at least one record is returned. Each record is independently bounded by the effective recovery-item limits. Semantically validated reserves cover the non-item envelope, and the page adds at most two depth levels, so every accepted record can make progress. The final page has null nextCursor. Clients require the same limitProfileDigest on pages and cursors, run schema plus bounded canonical validation with that profile, validate even terminal pages against trusted authenticated request scope and the frozen identity established by the first accepted page, require every record to match that tenant and session, and require contiguous offsets, globally strict UUID ordering, no duplicate IDs, exact item counts, and matching terminal hashes across every collection before accepting recovery.",
+    "integrity": "Pages begin at the requested exact offset and never overlap. Under the pinned effective limit profile, the server deterministically selects the longest ordered prefix of at most maxRecoveryPageItems records whose complete canonical page, including the exact generated nextCursor for a non-terminal candidate, satisfies maxBodyBytes, maxCanonicalNodes, maxCanonicalDepth, maxStringBytes, maxObjectKeys, and maxArrayItems; if records remain, at least one record is returned. Each record is independently bounded by the effective recovery-item limits. Semantically validated reserves cover the non-item envelope, generated cursor, and two added depth levels, so every accepted record can make progress. The final page has null nextCursor. Clients require the same limitProfileDigest on pages and cursors, run schema plus bounded canonical validation with that profile, validate even terminal pages against trusted authenticated request scope and the frozen identity established by the first accepted page, require every record to match that tenant and session, and require contiguous offsets, globally strict UUID ordering, no duplicate IDs, exact item counts, and matching terminal hashes across every collection before accepting recovery.",
     "lineage": "The proposals, decisions, and grants collections retain complete signed history; results contains compact signed ToolResult records. For every result, the client requires exactly one proposal, decision, and grant whose signed IDs and digests match the result, then verifies the complete existing signature/digest chain. Recovery therefore uses only authenticated recovery artifacts without composite-size amplification. pendingProposals and activeGrants are separate live-state views and are not lineage sources.",
     "retry": "Until expiry, repeating the same snapshotId, collection, and cursor returns the identical status, selected headers, media type, and body bytes. Altered, cross-collection, cross-snapshot, stale-version, foreign-tenant/session, or skipped-offset cursor use fails closed with snapshot_cursor_mismatch."
   },

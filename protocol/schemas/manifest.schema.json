@@ -30,6 +30,142 @@
     "canonicalJson": {
       "additionalProperties": false,
       "properties": {
+        "generatedStrings": {
+          "additionalProperties": false,
+          "properties": {
+            "limits": {
+              "additionalProperties": false,
+              "properties": {
+                "accessToken": {
+                  "const": 8192,
+                  "type": "integer"
+                },
+                "base64Url32": {
+                  "const": 43,
+                  "type": "integer"
+                },
+                "ed25519Signature": {
+                  "const": 86,
+                  "type": "integer"
+                },
+                "nonce": {
+                  "const": 86,
+                  "type": "integer"
+                },
+                "problemCode": {
+                  "const": 28,
+                  "type": "integer"
+                },
+                "problemDetail": {
+                  "const": 2048,
+                  "type": "integer"
+                },
+                "problemInstance": {
+                  "const": 8192,
+                  "type": "integer"
+                },
+                "problemTitle": {
+                  "const": 512,
+                  "type": "integer"
+                },
+                "problemType": {
+                  "const": 128,
+                  "type": "integer"
+                },
+                "protocolVersion": {
+                  "const": 3,
+                  "type": "integer"
+                },
+                "refreshToken": {
+                  "const": 8192,
+                  "type": "integer"
+                },
+                "replayToken": {
+                  "const": 256,
+                  "type": "integer"
+                },
+                "sha256Digest": {
+                  "const": 71,
+                  "type": "integer"
+                },
+                "snapshotCursorToken": {
+                  "const": 940,
+                  "type": "integer"
+                },
+                "timestamp": {
+                  "const": 24,
+                  "type": "integer"
+                },
+                "uuid": {
+                  "const": 36,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "accessToken",
+                "base64Url32",
+                "ed25519Signature",
+                "nonce",
+                "problemCode",
+                "problemDetail",
+                "problemInstance",
+                "problemTitle",
+                "problemType",
+                "protocolVersion",
+                "refreshToken",
+                "replayToken",
+                "sha256Digest",
+                "snapshotCursorToken",
+                "timestamp",
+                "uuid"
+              ],
+              "type": "object"
+            },
+            "minimumNegotiatedMaxStringBytes": {
+              "const": 8192,
+              "type": "integer"
+            },
+            "snapshotCursor": {
+              "additionalProperties": false,
+              "properties": {
+                "canonicalMaxBytes": {
+                  "const": 705,
+                  "type": "integer"
+                },
+                "encoding": {
+                  "const": "unpadded-base64url",
+                  "type": "string"
+                },
+                "schema": {
+                  "const": "protocol/schemas/sessions.schema.json#/$defs/SnapshotCursor",
+                  "type": "string"
+                },
+                "tokenMaxCharacters": {
+                  "const": 940,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "canonicalMaxBytes",
+                "encoding",
+                "schema",
+                "tokenMaxCharacters"
+              ],
+              "type": "object"
+            },
+            "unitSemantics": {
+              "const": "All values are maximum UTF-8 bytes; snapshotCursor.tokenMaxCharacters is also bytes because base64url is ASCII. Problem title, detail, and instance conservatively allow four UTF-8 bytes per schema code point.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "limits",
+            "minimumNegotiatedMaxStringBytes",
+            "snapshotCursor",
+            "unitSemantics"
+          ],
+          "type": "object"
+        },
         "limitInvariants": {
           "additionalProperties": false,
           "properties": {
@@ -50,7 +186,7 @@
               "type": "integer"
             },
             "minimumStringBytes": {
-              "const": 128,
+              "const": 8192,
               "type": "integer"
             },
             "profileDigestSemantics": {
@@ -213,6 +349,7 @@
         }
       },
       "required": [
+        "generatedStrings",
         "limitInvariants",
         "limits",
         "profile",

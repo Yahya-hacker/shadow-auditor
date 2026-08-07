@@ -30,9 +30,15 @@ import {
   assertCompatibleProtocolLimits,
   bodyCanonicalLimits,
   eventCanonicalLimits,
+  MAX_SNAPSHOT_CURSOR_CANONICAL_BYTES,
+  MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH,
+  MIN_SNAPSHOT_CURSOR_TOKEN_LENGTH,
   protocolLimitProfileDigest,
   recoveryItemCanonicalLimits,
   SERVER_PROTOCOL_LIMITS,
+  SNAPSHOT_CURSOR_AUTHORIZATION_FIELDS,
+  SNAPSHOT_CURSOR_COLLECTION_NAMES,
+  SNAPSHOT_CURSOR_PROJECTION_FIELDS,
   toolArgumentsCanonicalLimits,
   toolResultValueCanonicalLimits,
 } from './negotiated-limits.js';
@@ -1685,15 +1691,8 @@ export function verifyToolResult(
   validateBoundedCanonicalJson(result, recoveryItemCanonicalLimits(effectiveLimits));
 }
 
-const SNAPSHOT_COLLECTIONS: readonly RecoveryCollectionName[] = [
-  'activeGrants',
-  'decisions',
-  'grants',
-  'operations',
-  'pendingProposals',
-  'proposals',
-  'results',
-];
+const SNAPSHOT_COLLECTIONS: readonly RecoveryCollectionName[] =
+  SNAPSHOT_CURSOR_COLLECTION_NAMES;
 
 function cursorString(
   record: Readonly<Record<string, JsonValue>>,
@@ -1731,7 +1730,7 @@ function assertSnapshotCursorStructure(
   const authorizationRecord = authorization as Record<string, JsonValue>;
   if (
     Object.keys(authorizationRecord).sort().join(',') !==
-    'algorithm,keyId,signature'
+    SNAPSHOT_CURSOR_AUTHORIZATION_FIELDS.join(',')
   ) {
     fail('snapshot_cursor_mismatch', 'snapshot cursor authorization is malformed');
   }
@@ -1757,21 +1756,9 @@ function assertSnapshotCursorStructure(
   }
 
   const projectionRecord = projection as Record<string, JsonValue>;
-  const projectionKeys = [
-    'collection',
-    'collectionDigest',
-    'expiresAt',
-    'limitProfileDigest',
-    'nextOffset',
-    'protocolVersion',
-    'sessionId',
-    'snapshotId',
-    'snapshotVersion',
-    'tenantId',
-  ];
   if (
     Object.keys(projectionRecord).sort().join(',') !==
-    projectionKeys.sort().join(',')
+    SNAPSHOT_CURSOR_PROJECTION_FIELDS.join(',')
   ) {
     fail('snapshot_cursor_mismatch', 'snapshot cursor projection is malformed');
   }
@@ -1848,10 +1835,22 @@ export function encodeSnapshotCursor(
   limits?: EffectiveProtocolLimits,
 ): string {
   const effectiveLimits = resolveEffectiveLimits(limits);
-  return Buffer.from(
-    canonicalizeJson(cursor, bodyCanonicalLimits(effectiveLimits)),
-    'utf8',
-  ).toString('base64url');
+  const canonical = canonicalizeJson(cursor, bodyCanonicalLimits(effectiveLimits));
+  assertSnapshotCursorStructure(parseStrictJson(canonical));
+  const canonicalBytes = Buffer.from(canonical, 'utf8');
+  if (canonicalBytes.byteLength > MAX_SNAPSHOT_CURSOR_CANONICAL_BYTES) {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor exceeds the protocol 1.0 wire bound');
+  }
+
+  const token = canonicalBytes.toString('base64url');
+  if (
+    token.length > MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH ||
+    Buffer.byteLength(token, 'utf8') > effectiveLimits.maxStringBytes
+  ) {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor token exceeds the negotiated string bound');
+  }
+
+  return token;
 }
 
 export function decodeSnapshotCursor(
@@ -1861,15 +1860,19 @@ export function decodeSnapshotCursor(
   const effectiveLimits = resolveEffectiveLimits(limits);
   if (
     typeof token !== 'string' ||
-    token.length < 128 ||
-    token.length > 2048 ||
+    token.length < MIN_SNAPSHOT_CURSOR_TOKEN_LENGTH ||
+    token.length > MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH ||
+    Buffer.byteLength(token, 'utf8') > effectiveLimits.maxStringBytes ||
     !/^[A-Za-z0-9_-]+$/u.test(token)
   ) {
     fail('snapshot_cursor_mismatch', 'snapshot cursor token is malformed');
   }
 
   const decoded = Buffer.from(token, 'base64url');
-  if (decoded.toString('base64url') !== token || decoded.length > 1536) {
+  if (
+    decoded.toString('base64url') !== token ||
+    decoded.length > MAX_SNAPSHOT_CURSOR_CANONICAL_BYTES
+  ) {
     fail('snapshot_cursor_mismatch', 'snapshot cursor token is not canonical base64url');
   }
 
@@ -2075,6 +2078,52 @@ export function snapshotCollectionBoundary(
   return {collectionDigest, itemCount: items.length};
 }
 
+interface PackedSnapshotPageContext {
+  readonly candidate: readonly unknown[];
+  readonly effectiveLimits: EffectiveProtocolLimits;
+  readonly nextOffset: number;
+  readonly pageStart: number;
+  readonly recordCount: number;
+}
+
+function assertPackedSnapshotPage(page: unknown, context: PackedSnapshotPageContext): void {
+  const {
+    candidate,
+    effectiveLimits,
+    nextOffset,
+    pageStart,
+    recordCount,
+  } = context;
+  if (typeof page !== 'object' || page === null || Array.isArray(page)) {
+    fail('snapshot_integrity_failed', 'snapshot page builder did not return an envelope');
+  }
+
+  const pageRecord = page as Record<string, unknown>;
+  if (
+    pageRecord.pageStart !== pageStart ||
+    canonicalizeJson(pageRecord.items, bodyCanonicalLimits(effectiveLimits)) !==
+      canonicalizeJson(candidate, bodyCanonicalLimits(effectiveLimits))
+  ) {
+    fail('snapshot_integrity_failed', 'snapshot page builder changed the selected range');
+  }
+
+  if (nextOffset < recordCount) {
+    if (typeof pageRecord.nextCursor !== 'string') {
+      fail('snapshot_integrity_failed', 'non-terminal snapshot page builder omitted its cursor');
+    }
+
+    const cursor = decodeSnapshotCursor(pageRecord.nextCursor, effectiveLimits);
+    if (
+      cursor.projection.nextOffset !== nextOffset ||
+      cursor.projection.limitProfileDigest !== protocolLimitProfileDigest(effectiveLimits)
+    ) {
+      fail('snapshot_integrity_failed', 'snapshot page cursor does not bind its range and profile');
+    }
+  } else if (pageRecord.nextCursor !== null) {
+    fail('snapshot_integrity_failed', 'terminal snapshot page builder emitted a cursor');
+  }
+}
+
 export function selectSnapshotPageItems<T>(
   records: readonly T[],
   pageStart: number,
@@ -2100,8 +2149,17 @@ export function selectSnapshotPageItems<T>(
     validateBoundedCanonicalJson(item, recoveryItemCanonicalLimits(effectiveLimits));
     const candidate = [...selected, item];
     try {
+      const nextOffset = pageStart + candidate.length;
+      const page = buildPage(candidate, nextOffset);
+      assertPackedSnapshotPage(page, {
+        candidate,
+        effectiveLimits,
+        nextOffset,
+        pageStart,
+        recordCount: records.length,
+      });
       const pageValidation = validateBoundedCanonicalJson(
-        buildPage(candidate, pageStart + candidate.length),
+        page,
         bodyCanonicalLimits(effectiveLimits),
       );
       const itemArrayValidation = validateBoundedCanonicalJson(

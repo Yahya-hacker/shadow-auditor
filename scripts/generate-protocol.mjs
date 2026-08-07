@@ -38,6 +38,65 @@ function stable(value) {
   return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}`;
 }
 
+const SNAPSHOT_COLLECTIONS = [
+  'activeGrants',
+  'decisions',
+  'grants',
+  'operations',
+  'pendingProposals',
+  'proposals',
+  'results',
+];
+let maximumSnapshotCollection = '';
+for (const collection of SNAPSHOT_COLLECTIONS) {
+  if (collection.length > maximumSnapshotCollection.length) {
+    maximumSnapshotCollection = collection;
+  }
+}
+
+const maximumSnapshotCursorV1 = {
+  authorization: {
+    algorithm: 'Ed25519',
+    keyId: 'ffffffff-ffff-8fff-bfff-ffffffffffff',
+    signature: 'A'.repeat(86),
+  },
+  projection: {
+    collection: maximumSnapshotCollection,
+    collectionDigest: `sha256:${'f'.repeat(64)}`,
+    expiresAt: '9999-12-31T23:59:59.999Z',
+    limitProfileDigest: `sha256:${'f'.repeat(64)}`,
+    nextOffset: Number.MAX_SAFE_INTEGER,
+    protocolVersion: '1.0',
+    sessionId: 'ffffffff-ffff-8fff-bfff-ffffffffffff',
+    snapshotId: 'ffffffff-ffff-8fff-bfff-ffffffffffff',
+    snapshotVersion: Number.MAX_SAFE_INTEGER,
+    tenantId: 'ffffffff-ffff-8fff-bfff-ffffffffffff',
+  },
+};
+const MAX_SNAPSHOT_CURSOR_CANONICAL_BYTES =
+  Buffer.byteLength(stable(maximumSnapshotCursorV1), 'utf8');
+const MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH =
+  Math.ceil(MAX_SNAPSHOT_CURSOR_CANONICAL_BYTES * 4 / 3);
+const GENERATED_STRING_LIMITS = {
+  accessToken: 8192,
+  base64Url32: 43,
+  ed25519Signature: 86,
+  nonce: 86,
+  problemCode: 28,
+  problemDetail: 2048,
+  problemInstance: 8192,
+  problemTitle: 512,
+  problemType: 128,
+  protocolVersion: 3,
+  refreshToken: 8192,
+  replayToken: 256,
+  sha256Digest: 71,
+  snapshotCursorToken: MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH,
+  timestamp: 24,
+  uuid: 36,
+};
+const MIN_PROTOCOL_STRING_BYTES = Math.max(...Object.values(GENERATED_STRING_LIMITS));
+
 function pretty(value) {
   const normalized = JSON.parse(stable(value));
   return `${JSON.stringify(normalized, null, 2)}\n`;
@@ -710,6 +769,19 @@ async function main() {
     }
   }
 
+  const commonSchema = schemas.get('common.schema.json');
+  const sessionsSchema = schemas.get('sessions.schema.json');
+  if (
+    commonSchema?.$defs?.PayloadLimits?.properties?.maxStringBytes?.minimum !==
+      MIN_PROTOCOL_STRING_BYTES ||
+    sessionsSchema?.$defs?.SnapshotCursor?.['x-max-canonical-bytes'] !==
+      MAX_SNAPSHOT_CURSOR_CANONICAL_BYTES ||
+    sessionsSchema?.$defs?.SnapshotCursorToken?.maxLength !==
+      MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH
+  ) {
+    throw new Error('Generated string or snapshot cursor schema bounds drifted');
+  }
+
   const schemaNames = [...schemas.keys()];
   const normalizedJson = new Map();
   for (const name of schemaNames) {
@@ -738,12 +810,23 @@ async function main() {
 
   const manifestProjection = {
     canonicalJson: {
+      generatedStrings: {
+        limits: GENERATED_STRING_LIMITS,
+        minimumNegotiatedMaxStringBytes: MIN_PROTOCOL_STRING_BYTES,
+        snapshotCursor: {
+          canonicalMaxBytes: MAX_SNAPSHOT_CURSOR_CANONICAL_BYTES,
+          encoding: 'unpadded-base64url',
+          schema: 'protocol/schemas/sessions.schema.json#/$defs/SnapshotCursor',
+          tokenMaxCharacters: MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH,
+        },
+        unitSemantics: 'All values are maximum UTF-8 bytes; snapshotCursor.tokenMaxCharacters is also bytes because base64url is ASCII. Problem title, detail, and instance conservatively allow four UTF-8 bytes per schema code point.',
+      },
       limitInvariants: {
         minimumArrayItems: 7,
         minimumObjectKeys: 32,
         minimumRecoveryPageOverheadBytes: 16_384,
         minimumRecoveryPageOverheadNodes: 256,
-        minimumStringBytes: 128,
+        minimumStringBytes: MIN_PROTOCOL_STRING_BYTES,
         profileDigestSemantics: 'SHA-256 over strict canonical JSON of the complete effective limits object.',
         recoveryPageDepthOverhead: 2,
         semanticValidator: 'negotiateProtocolLimits',

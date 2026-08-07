@@ -32,9 +32,92 @@ export const TOOL_PROPOSAL_ITEM_OVERHEAD_BYTES = 4096;
 export const TOOL_PROPOSAL_ITEM_OVERHEAD_NODES = 64;
 export const TOOL_PROPOSAL_EVENT_OVERHEAD_BYTES = 16_384;
 export const TOOL_PROPOSAL_EVENT_OVERHEAD_NODES = 256;
-export const MIN_PROTOCOL_STRING_BYTES = 128;
 export const MIN_PROTOCOL_OBJECT_KEYS = 32;
 export const MIN_PROTOCOL_ARRAY_ITEMS = 7;
+
+export const SNAPSHOT_CURSOR_AUTHORIZATION_FIELDS = Object.freeze([
+  'algorithm',
+  'keyId',
+  'signature',
+] as const);
+export const SNAPSHOT_CURSOR_PROJECTION_FIELDS = Object.freeze([
+  'collection',
+  'collectionDigest',
+  'expiresAt',
+  'limitProfileDigest',
+  'nextOffset',
+  'protocolVersion',
+  'sessionId',
+  'snapshotId',
+  'snapshotVersion',
+  'tenantId',
+] as const);
+export const SNAPSHOT_CURSOR_COLLECTION_NAMES = Object.freeze([
+  'activeGrants',
+  'decisions',
+  'grants',
+  'operations',
+  'pendingProposals',
+  'proposals',
+  'results',
+] as const);
+export const MIN_SNAPSHOT_CURSOR_TOKEN_LENGTH = 128;
+
+let longestSnapshotCollectionName = '';
+for (const collection of SNAPSHOT_CURSOR_COLLECTION_NAMES) {
+  if (collection.length > longestSnapshotCollectionName.length) {
+    longestSnapshotCollectionName = collection;
+  }
+}
+
+const maximumSnapshotCursorV1 = {
+  authorization: {
+    algorithm: 'Ed25519',
+    keyId: 'ffffffff-ffff-8fff-bfff-ffffffffffff',
+    signature: 'A'.repeat(86),
+  },
+  projection: {
+    collection: longestSnapshotCollectionName,
+    collectionDigest: `sha256:${'f'.repeat(64)}`,
+    expiresAt: '9999-12-31T23:59:59.999Z',
+    limitProfileDigest: `sha256:${'f'.repeat(64)}`,
+    nextOffset: Number.MAX_SAFE_INTEGER,
+    protocolVersion: '1.0',
+    sessionId: 'ffffffff-ffff-8fff-bfff-ffffffffffff',
+    snapshotId: 'ffffffff-ffff-8fff-bfff-ffffffffffff',
+    snapshotVersion: Number.MAX_SAFE_INTEGER,
+    tenantId: 'ffffffff-ffff-8fff-bfff-ffffffffffff',
+  },
+};
+
+// The literal's keys are in JCS order and its values use every closed v1 field's maximum encoding.
+const maximumSnapshotCursorV1CanonicalJson = JSON.stringify(maximumSnapshotCursorV1);
+export const MAX_SNAPSHOT_CURSOR_CANONICAL_BYTES =
+  Buffer.byteLength(maximumSnapshotCursorV1CanonicalJson, 'utf8');
+export const MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH =
+  Math.ceil(MAX_SNAPSHOT_CURSOR_CANONICAL_BYTES * 4 / 3);
+
+export const PROTOCOL_GENERATED_STRING_MAX_BYTES = Object.freeze({
+  accessToken: 8192,
+  base64Url32: 43,
+  ed25519Signature: 86,
+  nonce: 86,
+  problemCode: 28,
+  problemDetail: 2048,
+  problemInstance: 8192,
+  problemTitle: 512,
+  problemType: 128,
+  protocolVersion: 3,
+  refreshToken: 8192,
+  replayToken: 256,
+  sha256Digest: 71,
+  snapshotCursorToken: MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH,
+  timestamp: 24,
+  uuid: 36,
+});
+export const MIN_PROTOCOL_STRING_BYTES = Math.max(
+  ...Object.values(PROTOCOL_GENERATED_STRING_MAX_BYTES),
+);
 
 export const SERVER_PROTOCOL_LIMITS: EffectiveProtocolLimits = Object.freeze({
   maxArrayItems: 1024,
@@ -124,7 +207,12 @@ export function assertCompatibleProtocolLimits(limits: EffectiveProtocolLimits):
     MIN_RECOVERY_PAGE_OVERHEAD_NODES,
     'recovery_page_node_reserve',
   );
-  assertAtLeast(limits, 'maxStringBytes', MIN_PROTOCOL_STRING_BYTES, 'fixed_protocol_strings');
+  assertAtLeast(
+    limits,
+    'maxStringBytes',
+    MIN_PROTOCOL_STRING_BYTES,
+    'mandatory_generated_strings',
+  );
   assertAtLeast(limits, 'maxObjectKeys', MIN_PROTOCOL_OBJECT_KEYS, 'protocol_object_shape');
   assertAtLeast(limits, 'maxArrayItems', MIN_PROTOCOL_ARRAY_ITEMS, 'recovery_collection_count');
   assertAtLeast(

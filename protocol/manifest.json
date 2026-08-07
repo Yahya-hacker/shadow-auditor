@@ -1,11 +1,39 @@
 {
   "canonicalJson": {
+    "generatedStrings": {
+      "limits": {
+        "accessToken": 8192,
+        "base64Url32": 43,
+        "ed25519Signature": 86,
+        "nonce": 86,
+        "problemCode": 28,
+        "problemDetail": 2048,
+        "problemInstance": 8192,
+        "problemTitle": 512,
+        "problemType": 128,
+        "protocolVersion": 3,
+        "refreshToken": 8192,
+        "replayToken": 256,
+        "sha256Digest": 71,
+        "snapshotCursorToken": 940,
+        "timestamp": 24,
+        "uuid": 36
+      },
+      "minimumNegotiatedMaxStringBytes": 8192,
+      "snapshotCursor": {
+        "canonicalMaxBytes": 705,
+        "encoding": "unpadded-base64url",
+        "schema": "protocol/schemas/sessions.schema.json#/$defs/SnapshotCursor",
+        "tokenMaxCharacters": 940
+      },
+      "unitSemantics": "All values are maximum UTF-8 bytes; snapshotCursor.tokenMaxCharacters is also bytes because base64url is ASCII. Problem title, detail, and instance conservatively allow four UTF-8 bytes per schema code point."
+    },
     "limitInvariants": {
       "minimumArrayItems": 7,
       "minimumObjectKeys": 32,
       "minimumRecoveryPageOverheadBytes": 16384,
       "minimumRecoveryPageOverheadNodes": 256,
-      "minimumStringBytes": 128,
+      "minimumStringBytes": 8192,
       "profileDigestSemantics": "SHA-256 over strict canonical JSON of the complete effective limits object.",
       "recoveryPageDepthOverhead": 2,
       "semanticValidator": "negotiateProtocolLimits",
@@ -44,14 +72,14 @@
   "fileDigestSemantics": "SHA-256 over UTF-8 text after CRLF and CR normalization to LF; manifest.json is excluded to avoid self-reference.",
   "files": [
     {
-      "bytes": 54361,
+      "bytes": 56048,
       "path": "protocol/openapi.json",
-      "sha256": "sha256:17242ff1bedc2fd443caa0ba2e994fa81929a61a98b3e78be2a8d9fa9b310255"
+      "sha256": "sha256:ab65ace91865f62c14d3ba8f72f5913e7bc4ebf56b24f3dbd91b12babacd3413"
     },
     {
-      "bytes": 8522,
+      "bytes": 8819,
       "path": "protocol/schemas/auth.schema.json",
-      "sha256": "sha256:18a6df02c0c7fe7726c0de7661b74a35a496223be3580a8ad9fc7501431855b5"
+      "sha256": "sha256:68cdfd9321b385d28a5eb3b259fe57a3ed71acfdbdd2aa909dbcdeaf603a4b10"
     },
     {
       "bytes": 7313,
@@ -59,9 +87,9 @@
       "sha256": "sha256:22ac8dca350a393bc594249e8083361b47e6c3f693d43bccd37edfb972778047"
     },
     {
-      "bytes": 7047,
+      "bytes": 7316,
       "path": "protocol/schemas/common.schema.json",
-      "sha256": "sha256:59f1d0f13c8a15161864e6b5ef05c490275348efd14620e4f52886a44fe33ef5"
+      "sha256": "sha256:1e9bf76901abb1ab91f1fae763a0bc27576d09cf6f85a0c3c36d2763015bffce"
     },
     {
       "bytes": 9468,
@@ -69,9 +97,9 @@
       "sha256": "sha256:b6c3fc6f29aa73f33bf9319938ecc9d06709d4cce16f10e5646c533ec4da1ad1"
     },
     {
-      "bytes": 13766,
+      "bytes": 18081,
       "path": "protocol/schemas/manifest.schema.json",
-      "sha256": "sha256:3eec37f9bdffd001ca0302fdc5b6b54d736a1dddc7bd53d83124b1dc86cf387b"
+      "sha256": "sha256:5488db34560080ffe1e5c05235832dbb500378c005e73d7e6022f01b4dacaca1"
     },
     {
       "bytes": 5405,
@@ -79,9 +107,9 @@
       "sha256": "sha256:08260c43dbbf1ca73ae9de3be8500fc4b0829ac7bf9db0c20b3da3f79ce09a32"
     },
     {
-      "bytes": 2457,
+      "bytes": 2717,
       "path": "protocol/schemas/problem.schema.json",
-      "sha256": "sha256:c4592025056304ecff777437183e6bb2fdc2ac553fa93d0721fd63c00aa4c7aa"
+      "sha256": "sha256:e398c66afed8105c009b08aa7cc46b827cbaff8f7cdd19d1a844fcf7c83312a3"
     },
     {
       "bytes": 4296,
@@ -94,9 +122,9 @@
       "sha256": "sha256:042240a395f715da06f3df6cc2c19225486617636a603d03adbb15e83531fdbd"
     },
     {
-      "bytes": 16993,
+      "bytes": 17355,
       "path": "protocol/schemas/sessions.schema.json",
-      "sha256": "sha256:f04c8a570939fe7f39aa7299a9f26759da79fafd18cd14b4ef2814a614e578b3"
+      "sha256": "sha256:39abbdbb37491714f14296373b8eaa0568441ebff0923f32c1fcdaba38e48e8b"
     },
     {
       "bytes": 16897,
@@ -114,9 +142,9 @@
       "sha256": "sha256:5cc93a1d1bee881097a8b6ffd74e359e8cac4b81aa3c71074df20cbb07d7854e"
     },
     {
-      "bytes": 27161,
+      "bytes": 30092,
       "path": "scripts/generate-protocol.mjs",
-      "sha256": "sha256:0b446b60af2f99c44cbd89766b15ec6a5889f4f9af5c1c6da31f648c51d44add"
+      "sha256": "sha256:d7bf15195c5de1f4eb39993e96d92cb8229620f81d2626fe840cc91fd8a51170"
     },
     {
       "bytes": 15292,
@@ -124,9 +152,9 @@
       "sha256": "sha256:fa20da538c609b5bc5eabec6f7332f9331d5520b4d9f61552903b9927bb833e0"
     },
     {
-      "bytes": 36593,
+      "bytes": 37640,
       "path": "src/protocol/generated/dtos.ts",
-      "sha256": "sha256:89fcb0810f7c080174936dec3771f81f8a18a1aa68037a0d7c082c84f59beb97"
+      "sha256": "sha256:adfae410f48552c00965c571f2e203bf87cf7bc3e8f9f4c1ff3189feee5f323e"
     },
     {
       "bytes": 144,
@@ -134,17 +162,17 @@
       "sha256": "sha256:e9fe8d9e27cc9f202e49ea4d957521b40d6a7e988d16c01e7b2e0ae5528867b5"
     },
     {
-      "bytes": 9076,
+      "bytes": 11512,
       "path": "src/protocol/negotiated-limits.ts",
-      "sha256": "sha256:e5e3a8aeb67e018e2eea35acfd7255c11cfc7d8c1f88073a037a2c23147d162f"
+      "sha256": "sha256:c96c99b22357b8b19e39e3d0664877da8bf7e72396c027cb1d481909c80d5d21"
     },
     {
-      "bytes": 86814,
+      "bytes": 89361,
       "path": "src/protocol/signing.ts",
-      "sha256": "sha256:11f05578bb427099b84c168a0e44d16e40f4a03231d1770ca94d320ccddb130d"
+      "sha256": "sha256:f1ebf4531209914626eedca162c481544bf8fbaef4fd684cf02fed70a0da624d"
     }
   ],
-  "protocolDigest": "sha256:872f7b0ebcddbcdef4b6529d4ec3bedfb6296c67ed91ce5eb2e72d042f737ac2",
+  "protocolDigest": "sha256:9584b1db3dde0473e07c1fddff3cbfbd54328a7a65c111cdeb74cd47894307de",
   "protocolDigestSemantics": "SHA-256 over strict canonical JSON of every manifest member except protocolDigest.",
   "protocolVersion": "1.0",
   "release": "1.0.0",

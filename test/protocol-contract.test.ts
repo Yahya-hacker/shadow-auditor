@@ -50,11 +50,15 @@ import {
   keyThumbprint,
   MAX_RECOVERY_ITEM_BYTES,
   MAX_RECOVERY_PAGE_ITEMS,
+  MAX_SNAPSHOT_CURSOR_CANONICAL_BYTES,
+  MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH,
   MAX_TOOL_ARGUMENTS_BYTES,
   MAX_TOOL_RESULT_VALUE_BYTES,
+  MIN_PROTOCOL_STRING_BYTES,
   negotiateProtocolLimits,
   parseStrictJson,
   PROTOCOL_CANONICAL_LIMITS,
+  PROTOCOL_GENERATED_STRING_MAX_BYTES,
   ProtocolLimitNegotiationError,
   protocolLimitProfileDigest,
   ProtocolSigningError,
@@ -488,40 +492,34 @@ function recoveryPages(
   const boundaries = recoveryBoundaries(operations, effectiveLimits);
   const profileDigest = protocolLimitProfileDigest(effectiveLimits);
   const pages: SnapshotPage[] = [];
-  for (
-    let pageStart = 0;
-    pageStart < operations.length || pageStart === 0;
-    pageStart += effectiveLimits.maxRecoveryPageItems
-  ) {
-    const items = operations.slice(pageStart, pageStart + effectiveLimits.maxRecoveryPageItems);
-    const nextOffset = pageStart + items.length;
-    const nextCursor = nextOffset < operations.length
-      ? encodeSnapshotCursor(createSnapshotCursor(
-        {
-          collection: 'operations',
-          collectionDigest: boundaries.operations.collectionDigest,
-          expiresAt: snapshotExpiresAt,
-          limitProfileDigest: profileDigest,
-          nextOffset,
-          protocolVersion: '1.0',
-          sessionId: vectors.request.projection.sessionId as string,
-          snapshotId,
-          snapshotVersion: 1,
-          tenantId: vectors.request.projection.tenantId,
-        },
-        vectors.eventChain.serverSigningKey.keyId,
-        vectors.privateSeed,
-        effectiveLimits,
-      ), effectiveLimits)
-      : null;
-    pages.push({
+  let pageStart = 0;
+  while (pageStart < operations.length || pages.length === 0) {
+    const buildPage = (items: readonly unknown[], nextOffset: number): SnapshotPage => ({
       collection: 'operations',
       collectionBoundaries: boundaries,
       createdAt: '2026-01-02T03:04:05.000Z',
       eventHead: {cursor: 1, eventHash: vectors.eventChain.eventHash},
       items,
       limitProfileDigest: profileDigest,
-      nextCursor,
+      nextCursor: nextOffset < operations.length
+        ? encodeSnapshotCursor(createSnapshotCursor(
+          {
+            collection: 'operations',
+            collectionDigest: boundaries.operations.collectionDigest,
+            expiresAt: snapshotExpiresAt,
+            limitProfileDigest: profileDigest,
+            nextOffset,
+            protocolVersion: '1.0',
+            sessionId: vectors.request.projection.sessionId as string,
+            snapshotId,
+            snapshotVersion: 1,
+            tenantId: vectors.request.projection.tenantId,
+          },
+          vectors.eventChain.serverSigningKey.keyId,
+          vectors.privateSeed,
+          effectiveLimits,
+        ), effectiveLimits)
+        : null,
       pageStart,
       protocolVersion: '1.0',
       sessionId: vectors.request.projection.sessionId as string,
@@ -533,7 +531,16 @@ function recoveryPages(
       tenantId: vectors.request.projection.tenantId,
       updatedAt: '2026-01-02T03:04:10.000Z',
     });
-    if (operations.length === 0) break;
+    const items = selectSnapshotPageItems(
+      operations,
+      pageStart,
+      buildPage,
+      effectiveLimits,
+    );
+    const nextOffset = pageStart + items.length;
+    pages.push(buildPage(items, nextOffset));
+    if (nextOffset >= operations.length) break;
+    pageStart = nextOffset;
   }
 
   return pages;
@@ -704,12 +711,163 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
         {...loweredLimitOffer, maxCanonicalDepth: loweredLimitOffer.maxCanonicalDepth - 1},
         {...loweredLimitOffer, maxEventBytes: loweredLimitOffer.maxToolArgumentsBytes + 16_383},
         {...loweredLimitOffer, maxRecoveryPageItems: loweredLimitOffer.maxArrayItems + 1},
-        {...loweredLimitOffer, maxStringBytes: 127},
+        {...loweredLimitOffer, maxStringBytes: MIN_PROTOCOL_STRING_BYTES - 1},
       ]) {
         expect(() => negotiateProtocolLimits(SERVER_PROTOCOL_LIMITS, incompatible))
           .to.throw(ProtocolLimitNegotiationError)
           .with.property('code', 'incompatible_limit_profile');
       }
+    });
+
+    it('derives and enforces mandatory generated-string and cursor wire bounds', () => {
+      const minimumStringOffer = {
+        ...loweredLimitOffer,
+        maxStringBytes: MIN_PROTOCOL_STRING_BYTES,
+      };
+      const effective = negotiateProtocolLimits(SERVER_PROTOCOL_LIMITS, minimumStringOffer);
+      expect(negotiateProtocolLimits(minimumStringOffer, SERVER_PROTOCOL_LIMITS))
+        .to.deep.equal(effective);
+      expect(effective.maxStringBytes).to.equal(8192);
+      expect(MIN_PROTOCOL_STRING_BYTES).to.equal(
+        Math.max(...Object.values(PROTOCOL_GENERATED_STRING_MAX_BYTES)),
+      );
+
+      const maximumMultibyteString = '\u{1F600}'.repeat(MIN_PROTOCOL_STRING_BYTES / 4);
+      expect(Buffer.byteLength(maximumMultibyteString, 'utf8'))
+        .to.equal(MIN_PROTOCOL_STRING_BYTES);
+      validateBoundedCanonicalJson(maximumMultibyteString, bodyCanonicalLimits(effective));
+      expectCanonicalError(
+        () => validateBoundedCanonicalJson(
+          `${maximumMultibyteString}\u{1F600}`,
+          bodyCanonicalLimits(effective),
+        ),
+        'string_too_large',
+      );
+
+      const worstCaseCursor = createSnapshotCursor(
+        {
+          collection: 'pendingProposals',
+          collectionDigest: `sha256:${'f'.repeat(64)}`,
+          expiresAt: '9999-12-31T23:59:59.999Z',
+          limitProfileDigest: protocolLimitProfileDigest(effective),
+          nextOffset: Number.MAX_SAFE_INTEGER,
+          protocolVersion: '1.0',
+          sessionId: 'ffffffff-ffff-8fff-bfff-ffffffffffff',
+          snapshotId: 'ffffffff-ffff-8fff-bfff-ffffffffffff',
+          snapshotVersion: Number.MAX_SAFE_INTEGER,
+          tenantId: 'ffffffff-ffff-8fff-bfff-ffffffffffff',
+        },
+        'ffffffff-ffff-8fff-bfff-ffffffffffff',
+        vectors.privateSeed,
+        effective,
+      );
+      const canonicalCursor = canonicalizeJson(
+        worstCaseCursor,
+        bodyCanonicalLimits(effective),
+      );
+      expect(Buffer.byteLength(canonicalCursor, 'utf8'))
+        .to.equal(MAX_SNAPSHOT_CURSOR_CANONICAL_BYTES);
+      const token = encodeSnapshotCursor(worstCaseCursor, effective);
+      expect(token).to.have.length(MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH);
+      expect(decodeSnapshotCursor(token, effective)).to.deep.equal(worstCaseCursor);
+      expectSigningError(
+        () => decodeSnapshotCursor('A'.repeat(MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH + 1), effective),
+        'snapshot_cursor_mismatch',
+      );
+
+      expect(() => negotiateProtocolLimits(
+        SERVER_PROTOCOL_LIMITS,
+        {...minimumStringOffer, maxStringBytes: MIN_PROTOCOL_STRING_BYTES - 1},
+      )).to.throw(ProtocolLimitNegotiationError)
+        .with.property('invariant', 'mandatory_generated_strings');
+    });
+
+    it('paginates completely at the minimum generated-string profile', () => {
+      const minimumOffer = {
+        ...loweredLimitOffer,
+        maxRecoveryPageItems: 2,
+        maxStringBytes: MIN_PROTOCOL_STRING_BYTES,
+      };
+      const effective = negotiateProtocolLimits(SERVER_PROTOCOL_LIMITS, minimumOffer);
+      const operations = Array.from({length: 5}, (_, index) => recoveryOperation(index));
+      const pages = recoveryPages(
+        operations,
+        vectors.snapshotCursor.projection.snapshotId,
+        '2026-01-02T03:04:08.000Z',
+        vectors.snapshotCursor.projection.expiresAt,
+        effective,
+      );
+      expect(pages).to.have.length(3);
+      expect(pages.at(-1)?.nextCursor).to.equal(null);
+      expect(pages.flatMap((page) => page.items)).to.deep.equal(operations);
+      expect(new Set(pages.flatMap((page) => page.items.map(
+        (item) => (item as ReturnType<typeof recoveryOperation>).operation.requestId,
+      ))).size).to.equal(operations.length);
+      expectSigningError(
+        () => selectSnapshotPageItems(
+          operations,
+          0,
+          (items) => ({...pages[0], items, nextCursor: null}),
+          effective,
+        ),
+        'snapshot_integrity_failed',
+      );
+
+      for (const [index, page] of pages.entries()) {
+        const validation = validateBoundedCanonicalJson(page, bodyCanonicalLimits(effective));
+        expect(validation.payloadBytes).to.be.at.most(effective.maxBodyBytes);
+        expect(validation.nodeCount).to.be.at.most(effective.maxCanonicalNodes);
+        expect(page.items).to.have.length(index < 2 ? 2 : 1);
+        if (page.nextCursor !== null) {
+          expect(page.nextCursor.length).to.be.at.most(MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH);
+          const cursor = decodeSnapshotCursor(page.nextCursor, effective);
+          expect(cursor.projection.nextOffset).to.equal(page.pageStart + page.items.length);
+          expect(cursor.projection.limitProfileDigest)
+            .to.equal(protocolLimitProfileDigest(effective));
+        }
+      }
+
+      const now = Date.parse('2026-01-02T03:05:00.000Z');
+      expect(assembleSnapshotCollection(
+        pages,
+        snapshotContext(pages[0], effective),
+        snapshotAuthority(),
+        now,
+      )).to.deep.equal(operations);
+
+      const restarted = recoveryPages(
+        operations,
+        'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        '2026-01-02T03:24:08.000Z',
+        '2026-01-02T03:44:08.000Z',
+        effective,
+      );
+      expect(assembleSnapshotCollection(
+        restarted,
+        snapshotContext(restarted[0], effective),
+        snapshotAuthority(),
+        Date.parse('2026-01-02T03:25:00.000Z'),
+      )).to.deep.equal(operations);
+
+      const firstCursor = decodeSnapshotCursor(pages[0].nextCursor as string, effective);
+      const alternate = negotiateProtocolLimits(
+        SERVER_PROTOCOL_LIMITS,
+        {...minimumOffer, maxStringBytes: MIN_PROTOCOL_STRING_BYTES + 1},
+      );
+      expectSigningError(
+        () => verifySnapshotCursor(
+          firstCursor,
+          {
+            ...firstCursor.projection,
+            expectedOffset: firstCursor.projection.nextOffset,
+            limits: alternate,
+            snapshotExpiresAt: firstCursor.projection.expiresAt,
+          },
+          snapshotAuthority(),
+          now,
+        ),
+        'incompatible_limit_profile',
+      );
     });
 
     it('pins a compatible lowered profile across acceptance and paginated recovery', () => {
@@ -2027,6 +2185,23 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       expect(timestamp('2026-01-02T03:04:05+00:00')).to.equal(false);
     });
 
+    it('freezes generated-string minima and the derived cursor maximum in schemas', () => {
+      const payloadLimits = validator(ajv, 'common', 'PayloadLimits');
+      const snapshotCursorToken = validator(ajv, 'sessions', 'SnapshotCursorToken');
+      expect(payloadLimits({
+        ...SERVER_PROTOCOL_LIMITS,
+        maxStringBytes: MIN_PROTOCOL_STRING_BYTES,
+      })).to.equal(true);
+      expect(payloadLimits({
+        ...SERVER_PROTOCOL_LIMITS,
+        maxStringBytes: MIN_PROTOCOL_STRING_BYTES - 1,
+      })).to.equal(false);
+      expect(snapshotCursorToken('A'.repeat(MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH)))
+        .to.equal(true);
+      expect(snapshotCursorToken('A'.repeat(MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH + 1)))
+        .to.equal(false);
+    });
+
     it('requires bounded canonical validation after structural schema validation', () => {
       const jsonValue = validator(ajv, 'common', 'JsonValue');
       const multibyte = '\u00E9'.repeat(32_769);
@@ -2659,14 +2834,43 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
         ...recoveryBoundaries([]),
         proposals: proposalBoundary,
       };
+      const buildProposalPage = (
+        items: readonly SignedToolProposal[],
+        nextOffset: number,
+      ): SnapshotPage => {
+        const page = recoveryPage('proposals', items, boundaries);
+        return {
+          ...page,
+          nextCursor: nextOffset < 2
+            ? encodeSnapshotCursor(createSnapshotCursor(
+              {
+                collection: 'proposals',
+                collectionDigest: boundaries.proposals.collectionDigest,
+                expiresAt: page.snapshotExpiresAt,
+                limitProfileDigest: page.limitProfileDigest,
+                nextOffset,
+                protocolVersion: '1.0',
+                sessionId: page.sessionId,
+                snapshotId: page.snapshotId,
+                snapshotVersion: page.snapshotVersion,
+                tenantId: page.tenantId,
+              },
+              vectors.eventChain.serverSigningKey.keyId,
+              vectors.privateSeed,
+              limits,
+            ), limits)
+            : null,
+        };
+      };
+
       const packed = selectSnapshotPageItems(
         [proposal, secondProposal],
         0,
-        (items) => recoveryPage('proposals', items, boundaries),
+        buildProposalPage,
         limits,
       );
       expect(packed.length).to.be.within(1, limits.maxRecoveryPageItems);
-      const packedPage = recoveryPage('proposals', packed, boundaries);
+      const packedPage = buildProposalPage(packed, packed.length);
       expect(validateBoundedCanonicalJson(packedPage).payloadBytes)
         .to.be.at.most(PROTOCOL_CANONICAL_LIMITS.maxPayloadBytes);
       expect(packed.length).to.be.at.most(MAX_RECOVERY_PAGE_ITEMS);
@@ -2805,11 +3009,29 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       const manifest = JSON.parse(
         fs.readFileSync(path.join(root, 'protocol', 'manifest.json'), 'utf8'),
       ) as {
-        canonicalJson: {limits: Record<string, number>};
+        canonicalJson: {
+          generatedStrings: {
+            limits: Record<string, number>;
+            minimumNegotiatedMaxStringBytes: number;
+            snapshotCursor: {
+              canonicalMaxBytes: number;
+              tokenMaxCharacters: number;
+            };
+          };
+          limits: Record<string, number>;
+        };
         files: Array<{path: string}>;
         requiredFeatures: string[];
       };
       expect(validateManifest(manifest), JSON.stringify(validateManifest.errors)).to.equal(true);
+      expect(manifest.canonicalJson.generatedStrings.limits)
+        .to.deep.equal(PROTOCOL_GENERATED_STRING_MAX_BYTES);
+      expect(manifest.canonicalJson.generatedStrings.minimumNegotiatedMaxStringBytes)
+        .to.equal(MIN_PROTOCOL_STRING_BYTES);
+      expect(manifest.canonicalJson.generatedStrings.snapshotCursor).to.include({
+        canonicalMaxBytes: MAX_SNAPSHOT_CURSOR_CANONICAL_BYTES,
+        tokenMaxCharacters: MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH,
+      });
 
       const traversal = structuredClone(manifest);
       traversal.files[0]!.path = 'protocol/../openapi.json';
@@ -2869,9 +3091,23 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       expect(openapi).to.have.property('x-shadow-request-signing');
       expect(openapi).to.have.property('x-shadow-idempotency');
       expect(openapi).to.have.property('x-shadow-key-rotation');
+      expect(openapi).to.have.property('x-shadow-limit-negotiation');
+      expect(openapi).to.have.property('x-shadow-snapshot-recovery');
       expect(openapi).to.have.property('x-shadow-tool-authority');
       expect(openapi).to.have.property('x-shadow-sse');
       expect(openapi).to.have.property('x-shadow-version-negotiation');
+      const limitNegotiation = openapi['x-shadow-limit-negotiation'] as {
+        generatedStrings: {
+          minimumMaxStringBytes: number;
+          snapshotCursor: {canonicalMaxBytes: number; tokenMaxCharacters: number};
+        };
+      };
+      expect(limitNegotiation.generatedStrings.minimumMaxStringBytes)
+        .to.equal(MIN_PROTOCOL_STRING_BYTES);
+      expect(limitNegotiation.generatedStrings.snapshotCursor).to.include({
+        canonicalMaxBytes: MAX_SNAPSHOT_CURSOR_CANONICAL_BYTES,
+        tokenMaxCharacters: MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH,
+      });
       expect(JSON.stringify(openapi)).not.to.include('AllSignedHeaders');
 
       const paths = openapi.paths as Record<string, Record<string, Record<string, unknown>>>;

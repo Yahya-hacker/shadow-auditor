@@ -508,6 +508,7 @@
     },
     "SnapshotCursor": {
       "additionalProperties": false,
+      "description": "Closed Protocol 1.0 cursor envelope. Its maximum strict canonical representation is 705 UTF-8 bytes after accounting for every field at its maximum valid encoding.",
       "properties": {
         "authorization": {
           "$ref": "common.schema.json#/$defs/DetachedSignature"
@@ -520,7 +521,8 @@
         "projection",
         "authorization"
       ],
-      "type": "object"
+      "type": "object",
+      "x-max-canonical-bytes": 705
     },
     "SnapshotCursorProjection": {
       "additionalProperties": false,
@@ -571,11 +573,12 @@
       "type": "object"
     },
     "SnapshotCursorToken": {
-      "description": "Unpadded base64url encoding of the exact UTF-8 strict canonical JSON SnapshotCursor. Decoding, canonical re-encoding, schema validation, signature validation, and scope validation are all mandatory.",
-      "maxLength": 2048,
+      "description": "Unpadded base64url encoding of the exact UTF-8 strict canonical JSON SnapshotCursor. The 940-character maximum is derived from the closed cursor's 705-byte maximum, not an observed token. Decoding, canonical re-encoding, schema validation, signature validation, and scope validation are all mandatory.",
+      "maxLength": 940,
       "minLength": 128,
       "pattern": "^[A-Za-z0-9_-]+$",
-      "type": "string"
+      "type": "string",
+      "x-max-canonical-bytes": 940
     },
     "SnapshotPageBase": {
       "description": "Every complete page MUST pass bounded canonical validation under the immutable effective profile identified by limitProfileDigest. The server selects the longest ordered prefix, up to effective maxRecoveryPageItems, whose complete canonical page fits effective maxBodyBytes and maxCanonicalNodes; if records remain it MUST include at least one. Each item is independently bounded by the effective recovery item limits. Cross-limit semantic validation reserves the effective page overhead and two depth levels, guaranteeing progress.",
