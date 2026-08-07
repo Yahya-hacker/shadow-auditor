@@ -301,16 +301,23 @@ No official npm package is published yet. When a release is available, verify
 that it is linked from this repository and that npm displays provenance from
 `Yahya-hacker/shadow-auditor` before installing it.
 
+Repository publication is fail-closed: release builds and smoke tests may run,
+but the publish job is disabled unless the owner completes the
+[public-client release cutover](RELEASE_INTEGRATION.md) and explicitly sets the
+`NPM_PUBLISH_ENABLED` repository variable to `true`.
+
 Shadow Auditor uses native Tree-sitter packages. npm's strict lifecycle-script
-policy requires you to approve only these packages:
+policy requires exact version approvals for the reviewed native packages:
 
 ```bash
-npm config set allow-scripts tree-sitter,tree-sitter-go,tree-sitter-javascript,tree-sitter-python,tree-sitter-typescript --location=user
-npm install --global shadow-auditor --strict-allow-scripts
+npm config set allow-scripts \
+  'tree-sitter@0.21.1,tree-sitter-go@0.21.2,tree-sitter-javascript@0.21.4,tree-sitter-javascript@0.23.1,tree-sitter-python@0.21.0,tree-sitter-typescript@0.23.2' \
+  --location=user
+npm install --global shadow-auditor@1.0.0 --strict-allow-scripts
 ```
 
-Do not broaden the allowlist to `*`. Review the package diff and this list
-again before every upgrade.
+Do not remove the versions or broaden the allowlist to `*`. Review the package
+diff and replace these exact approvals before every upgrade.
 
 ### Source checkout
 
