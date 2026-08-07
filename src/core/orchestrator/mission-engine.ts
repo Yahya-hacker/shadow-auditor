@@ -8,22 +8,27 @@ import { EventStore } from '../memory/event-store.js';
 import { KnowledgeGraph } from '../memory/knowledge-graph.js';
 import { Retrieval } from '../memory/retrieval.js';
 import { err, ok, type Result } from '../schema/base.js';
-import { CheckpointManager } from './checkpoints.js';
+import { CheckpointManager, computeStateHash } from './checkpoints.js';
 import {
+  type BudgetState,
   type Hypothesis,
   isTerminalPhase,
   type MissionObjective,
   type MissionPhase,
   type MissionState,
+  missionStateSchema,
   type PendingAction,
+  PHASE_DESCRIPTIONS,
   phaseAllowsToolExecution,
 } from './mission-state.js';
 import {
   attemptTransition,
   calculateMissionConfidence,
+  getAllowedTransitionsForState,
   isBudgetExhausted,
   recommendNextPhase,
   type TransitionContext,
+  type TransitionResult,
 } from './transitions.js';
 
 export interface MissionEngineOptions {
@@ -55,7 +60,7 @@ export class MissionEngine {
   private readonly options: Required<MissionEngineOptions>;
   private phaseHandlers: Map<MissionPhase, PhaseHandler> = new Map();
   private retrieval!: Retrieval;
-  private state!: MissionState;
+private state!: MissionState;
 
   constructor(options: MissionEngineOptions) {
     this.options = {

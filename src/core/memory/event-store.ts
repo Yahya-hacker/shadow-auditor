@@ -7,7 +7,6 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
-import { logToStderr } from '../../utils/stderr-logger.js';
 import { err, ok, type Result, safeParseJson } from '../schema/base.js';
 import { type Event, eventSchema, type EventType } from './memory-schema.js';
 
@@ -42,9 +41,7 @@ export class EventStore {
    */
   static async create(options: EventStoreOptions): Promise<EventStore> {
     await fs.mkdir(options.storagePath, { recursive: true });
-    const store = new EventStore(options);
-    await store.repairInterruptedTail();
-    return store;
+    return new EventStore(options);
   }
 
   /**
@@ -68,18 +65,13 @@ export class EventStore {
     }
 
     // Serialize writes to prevent interleaving
-    const write = this.writeQueue.then(async () => {
+    this.writeQueue = this.writeQueue.then(async () => {
       const line = `${JSON.stringify(event)}\n`;
       await fs.appendFile(this.eventsPath, line, 'utf8');
     });
-    this.writeQueue = write.catch(() => {});
 
-    try {
-      await write;
-      return ok(event);
-    } catch (error) {
-      return err(`Failed to append event: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    await this.writeQueue;
+    return ok(event);
   }
 
   /**
@@ -87,8 +79,7 @@ export class EventStore {
    */
   async count(): Promise<number> {
     const result = await this.read();
-    if (!result.ok) throw new Error(result.error);
-    return result.value.length;
+    return result.ok ? result.value.length : 0;
   }
 
   /**
@@ -103,10 +94,7 @@ export class EventStore {
    */
   async read(filter?: EventFilter): Promise<Result<Event[], string>> {
     try {
-      const content = await fs.readFile(this.eventsPath, 'utf8').catch((error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT') return '';
-        throw error;
-      });
+      const content = await fs.readFile(this.eventsPath, 'utf8').catch(() => '');
       if (!content.trim()) {
         return ok([]);
       }
@@ -148,7 +136,7 @@ export class EventStore {
 
       // Report parse errors but don't fail - allow partial recovery
       if (parseErrors.length > 0) {
-        logToStderr(`[EventStore] ${parseErrors.length} parse errors encountered`);
+        console.warn(`[EventStore] ${parseErrors.length} parse errors encountered`);
       }
 
       return ok(events);
@@ -164,21 +152,5 @@ export class EventStore {
     const timestamp = Date.now().toString(36);
     const random = crypto.randomBytes(4).toString('hex');
     return `evt_${timestamp}_${random}`;
-  }
-
-  /**
-   * A process crash can leave the final append partially written. Remove only
-   * that unterminated tail so a later append cannot corrupt the next event.
-   */
-  private async repairInterruptedTail(): Promise<void> {
-    const content = await fs.readFile(this.eventsPath).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return null;
-      throw error;
-    });
-    if (!content || content.length === 0 || content.at(-1) === 0x0A) return;
-
-    const lastNewline = content.lastIndexOf(0x0A);
-    await fs.truncate(this.eventsPath, lastNewline + 1);
-    logToStderr('[EventStore] Removed an interrupted trailing event record.');
   }
 }

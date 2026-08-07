@@ -6,13 +6,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
-import type { EventStore } from '../memory/event-store.js';
-import type { KnowledgeGraph } from '../memory/knowledge-graph.js';
-
-import { recoverAtomicWrite, writeFileAtomic } from '../../utils/fs-atomic.js';
-import { logToStderr } from '../../utils/stderr-logger.js';
 import { err, ok, type Result, safeParseJson } from '../schema/base.js';
-import { ConsensusManager } from './consensus.js';
 import {
   type AgentRegistration,
   agentRegistrationSchema,
@@ -20,8 +14,8 @@ import {
   type BlackboardState,
   blackboardStateSchema,
   type ConflictMarker,
+  conflictMarkerSchema,
   type ConflictType,
-  type ConsensusRecord,
   type EvidenceClaim,
   evidenceClaimSchema,
   type EvidenceClaimStatus,
@@ -31,10 +25,7 @@ import {
 import { TaskGraph } from './task-graph.js';
 
 export interface BlackboardOptions {
-  consensusManager?: ConsensusManager;
-  eventStore?: EventStore;
   heartbeatTimeout?: number; // ms before agent considered offline
-  knowledgeGraph?: KnowledgeGraph;
   runId: string;
   storagePath: string;
 }
@@ -48,32 +39,23 @@ export type TaskListener = (task: Task) => void;
  */
 export class Blackboard {
   private agents: Map<string, AgentRegistration> = new Map();
-  private agentTrustScores: Map<string, number> = new Map();
   private claims: Map<string, EvidenceClaim> = new Map();
   private claimSubmittedListeners: Set<ClaimListener> = new Set();
   private claimTypeListeners: Map<string, Set<ClaimListener>> = new Map();
   private claimVerifiedListeners: Set<ClaimListener> = new Set();
   private conflictCreatedListeners: Set<ConflictListener> = new Set();
   private conflicts: Map<string, ConflictMarker> = new Map();
-  private readonly consensusManager: ConsensusManager;
-  private readonly eventStore?: EventStore;
-  private readonly heartbeatTimeout: number;
-  private readonly knowledgeGraph?: KnowledgeGraph;
+private readonly heartbeatTimeout: number;
   private readonly runId: string;
   private readonly snapshotPath: string;
   private taskCompletedListeners: Set<TaskListener> = new Set();
   private readonly taskGraph: TaskGraph;
-  // Serializes mutating operations so concurrent async writes cannot interleave.
-  private writeQueue: Promise<void> = Promise.resolve();
 
   private constructor(options: BlackboardOptions) {
     this.runId = options.runId;
     this.snapshotPath = path.join(options.storagePath, 'blackboard.json');
     this.heartbeatTimeout = options.heartbeatTimeout ?? 60_000;
     this.taskGraph = new TaskGraph();
-    this.eventStore = options.eventStore;
-    this.knowledgeGraph = options.knowledgeGraph;
-    this.consensusManager = options.consensusManager ?? new ConsensusManager();
   }
 
   /**
@@ -138,15 +120,6 @@ export class Blackboard {
       return err('Agent cannot contest its own claim');
     }
 
-    if (claim.contestedBy.includes(contestingAgentId)) {
-      return err('Agent has already contested this claim');
-    }
-
-    const contestingTrustScore = this.agentTrustScores.get(contestingAgentId);
-    if (contestingTrustScore === undefined) {
-      return err(`Trust score is not registered for contesting agent: ${contestingAgentId}`);
-    }
-
     const updated: EvidenceClaim = {
       ...claim,
       contestedBy: [...claim.contestedBy, contestingAgentId],
@@ -154,16 +127,6 @@ export class Blackboard {
     };
 
     this.claims.set(claimId, updated);
-
-    // Cast a rejection vote on the consensus proposal for this claim,
-    // including evidence hash and trust score for epistemic gating.
-    const proposal = this.consensusManager.getActiveProposals().find((p) => p.topic === claimId);
-    if (proposal) {
-      this.consensusManager.vote(proposal.consensusId, contestingAgentId, 'reject', {
-        evidenceHash: updated.evidenceHash,
-        trustScore: contestingTrustScore,
-      });
-    }
 
     // Create conflict marker
     this.createConflict('contradictory_evidence', [claim.agentId, contestingAgentId], {
@@ -207,17 +170,6 @@ export class Blackboard {
   }
 
   /**
-   * Close expired consensus proposals and return the records that timed out.
-   *
-   * The supervisor calls this each consensus-evaluation superstep so proposals
-   * do not linger in 'voting' forever — without it, `checkTimeouts` is never
-   * invoked and consensus state never transitions to 'timeout'/'failed'.
-   */
-  expireConsensusProposals(): ConsensusRecord[] {
-    return this.consensusManager.checkTimeouts();
-  }
-
-  /**
    * Get all active agents.
    */
   getActiveAgents(): AgentRegistration[] {
@@ -233,20 +185,6 @@ export class Blackboard {
    */
   getAgentsByRole(role: AgentRole): AgentRegistration[] {
     return this.getActiveAgents().filter((agent) => agent.role === role);
-  }
-
-  /**
-   * Get all claims.
-   */
-  getAllClaims(): EvidenceClaim[] {
-    return [...this.claims.values()];
-  }
-
-  /**
-   * Get all conflicts.
-   */
-  getAllConflicts(): ConflictMarker[] {
-    return [...this.conflicts.values()];
   }
 
   /**
@@ -271,47 +209,11 @@ export class Blackboard {
   }
 
   /**
-   * Get all consensus records (proposals and their votes).
-   *
-   * Delegates to the consensus manager so the supervisor can flow consensus
-   * state into the checkpointed LangGraph blackboard channel — without this,
-   * proposals and votes are only persisted to the JSON snapshot and are lost
-   * from graph checkpoints.
-   */
-  getConsensusRecords(): ConsensusRecord[] {
-    return this.consensusManager.exportRecords();
-  }
-
-  /**
    * Get open conflicts.
    */
   getOpenConflicts(): ConflictMarker[] {
     return [...this.conflicts.values()].filter((c) => c.status === 'open' || c.status === 'resolving');
   }
-
-  /**
-   * Get every registered agent, regardless of heartbeat freshness.
-   *
-   * Unlike `getActiveAgents`, this does not filter by heartbeat. It is
-   * used by the supervisor to reconcile in-memory workers against persisted
-   * agent registrations when resuming a run from a checkpoint — a crashed
-   * process has stale heartbeats but the agent identities must still map to
-   * live workers for task dispatch to resume.
-   */
-  getRegisteredAgents(): AgentRegistration[] {
-    return [...this.agents.values()];
-  }
-
-  /**
-   * Get the run ID.
-   */
-  getRunId(): string {
-    return this.runId;
-  }
-
-  // ==========================================================================
-  // Evidence Claims
-  // ==========================================================================
 
   /**
    * Get claims with skepticism annotations for cross-tier consumption.
@@ -334,6 +236,10 @@ export class Blackboard {
       return { ...claim };
     });
   }
+
+  // ==========================================================================
+  // Evidence Claims
+  // ==========================================================================
 
   /**
    * Get the task graph.
@@ -420,9 +326,12 @@ export class Blackboard {
     }
 
     this.agents.set(agentId, registration);
-    this.agentTrustScores.set(agentId, 0.5);
     return ok(registration);
   }
+
+  // ==========================================================================
+  // Persistence
+  // ==========================================================================
 
   /**
    * Resolve a conflict.
@@ -444,64 +353,38 @@ export class Blackboard {
     return ok(updated);
   }
 
-  // ==========================================================================
-  // Persistence
-  // ==========================================================================
-
   /**
    * Save blackboard state.
-   *
-   * Enqueued behind `writeQueue` so that snapshot captures are atomic with
-   * respect to concurrent claim submissions — without this, a snapshot write
-   * could interleave with a `submitClaim` mutation and produce a corrupt or
-   * inconsistent JSON file.
    */
   async saveSnapshot(): Promise<void> {
-    return this.enqueueWrite(async () => {
-      const state: BlackboardState = {
-        agents: [...this.agents.values()],
-        claims: [...this.claims.values()],
-        conflicts: [...this.conflicts.values()],
-        consensusRecords: this.consensusManager.exportRecords(),
-        runId: this.runId,
-        schemaVersion: '1.0.0',
-        snapshotAt: new Date().toISOString(),
-        tasks: this.taskGraph.exportTasks(),
-      };
+    const state: BlackboardState = {
+      agents: [...this.agents.values()],
+      claims: [...this.claims.values()],
+      conflicts: [...this.conflicts.values()],
+      consensusRecords: [], // Persisted via dedicated consensus manager flow.
+      runId: this.runId,
+      schemaVersion: '1.0.0',
+      snapshotAt: new Date().toISOString(),
+      tasks: this.taskGraph.exportTasks(),
+    };
 
-      const validation = blackboardStateSchema.safeParse(state);
-      if (!validation.success) {
-        throw new Error(`Invalid blackboard state: ${validation.error.message}`);
-      }
-
-      await writeFileAtomic(this.snapshotPath, JSON.stringify(state, null, 2));
-    });
-  }
-
-  setAgentTrustScore(agentId: string, trustScore: number): Result<void, string> {
-    if (!this.agents.has(agentId)) {
-      return err(`Agent not found: ${agentId}`);
+    const validation = blackboardStateSchema.safeParse(state);
+    if (!validation.success) {
+      throw new Error(`Invalid blackboard state: ${validation.error.message}`);
     }
 
-    if (!Number.isFinite(trustScore) || trustScore < 0 || trustScore > 1) {
-      return err(`Invalid trust score for agent ${agentId}`);
-    }
-
-    this.agentTrustScores.set(agentId, trustScore);
-    return ok();
+    await fs.writeFile(this.snapshotPath, JSON.stringify(state, null, 2), 'utf8');
   }
 
   /**
    * Submit an evidence claim.
-   * This operation is async because it persists an event to the event store
-   * and computes an evidence hash linking the claim to the knowledge graph.
    */
-  async submitClaim(
+  submitClaim(
     agentId: string,
     claimType: string,
     data: Record<string, unknown>,
-    options: { confidence?: number; entityId?: string; linkedEntityIds?: string[]; linkedEventIds?: string[]; modelTier?: ModelTier; trustScore?: number } = {},
-  ): Promise<Result<EvidenceClaim, string>> {
+    options: { confidence?: number; entityId?: string; modelTier?: ModelTier; trustScore?: number } = {},
+  ): Result<EvidenceClaim, string> {
     const agent = this.agents.get(agentId);
     if (!agent) {
       return err(`Agent not found: ${agentId}`);
@@ -510,11 +393,7 @@ export class Blackboard {
     const now = new Date().toISOString();
     const claimId = `claim_${crypto.randomBytes(8).toString('hex')}`;
 
-    // Build linked entity list: explicit IDs plus the primary entity if provided.
-    const linkedEntityIds = [...new Set([...(options.entityId ? [options.entityId] : []), ...(options.linkedEntityIds ?? [])])];
-
-    // Create a preliminary claim for hashing.
-    const preliminaryClaim: EvidenceClaim = {
+    const claim: EvidenceClaim = {
       agentId,
       claimId,
       claimType,
@@ -523,69 +402,35 @@ export class Blackboard {
       createdAt: now,
       data,
       entityId: options.entityId,
-      evidenceHash: '',
-      linkedEntityIds,
-      linkedEventIds: [],
       modelTier: options.modelTier ?? 'standard',
       status: 'proposed',
       trustScore: options.trustScore ?? 0.7,
       verifiedBy: [],
     };
 
-    return this.enqueueWrite(async () => {
-      // Persist an event so the claim has an audit trail.
-      const linkedEventIds: string[] = [...(options.linkedEventIds ?? [])];
-      if (this.eventStore) {
-        const eventResult = await this.eventStore.append('finding_created', {
-          agentId,
-          claimId,
-          claimType,
-          entityId: options.entityId,
-          linkedEntityIds,
-        });
-        if (eventResult.ok) {
-          linkedEventIds.push(eventResult.value.eventId);
-        }
-      }
+    const validation = evidenceClaimSchema.safeParse(claim);
+    if (!validation.success) {
+      return err(`Invalid claim: ${validation.error.message}`);
+    }
 
-      const evidenceHash = this.computeEvidenceHash(preliminaryClaim, linkedEventIds, linkedEntityIds);
+    this.claims.set(claimId, claim);
 
-      const claim: EvidenceClaim = {
-        ...preliminaryClaim,
-        evidenceHash,
-        linkedEventIds,
-      };
+    // Notify listeners
+    for (const listener of this.claimSubmittedListeners) {
+      listener(claim);
+    }
 
-      const validation = evidenceClaimSchema.safeParse(claim);
-      if (!validation.success) {
-        return err(`Invalid claim: ${validation.error.message}`);
-      }
-
-      this.claims.set(claimId, claim);
-
-      // Trigger consensus review of this claim.
-      this.consensusManager.createProposal(agentId, claimId, `Claim ${claimId} of type ${claimType}`, {
-        quorum: 2,
-        timeout: 60_000,
-      });
-
-      // Notify listeners
-      for (const listener of this.claimSubmittedListeners) {
+    const typeListeners = this.claimTypeListeners.get(claimType);
+    if (typeListeners) {
+      for (const listener of typeListeners) {
         listener(claim);
       }
+    }
 
-      const typeListeners = this.claimTypeListeners.get(claimType);
-      if (typeListeners) {
-        for (const listener of typeListeners) {
-          listener(claim);
-        }
-      }
+    // Check for conflicts with existing claims
+    this.checkForClaimConflicts(claim);
 
-      // Check for conflicts with existing claims
-      this.checkForClaimConflicts(claim);
-
-      return ok(claim);
-    });
+    return ok(claim);
   }
 
   // ==========================================================================
@@ -624,15 +469,6 @@ export class Blackboard {
       return err('Agent cannot verify its own claim');
     }
 
-    if (claim.verifiedBy.includes(verifyingAgentId)) {
-      return err('Agent has already verified this claim');
-    }
-
-    const verifierTrustScore = this.agentTrustScores.get(verifyingAgentId);
-    if (verifierTrustScore === undefined) {
-      return err(`Trust score is not registered for verifying agent: ${verifyingAgentId}`);
-    }
-
     const updated: EvidenceClaim = {
       ...claim,
       status: this.determineClaimStatus(claim.verifiedBy.length + 1, claim.contestedBy.length),
@@ -640,16 +476,6 @@ export class Blackboard {
     };
 
     this.claims.set(claimId, updated);
-
-    // Cast an approval vote on the consensus proposal for this claim,
-    // including evidence hash and trust score for epistemic gating.
-    const proposal = this.consensusManager.getActiveProposals().find((p) => p.topic === claimId);
-    if (proposal) {
-      this.consensusManager.vote(proposal.consensusId, verifyingAgentId, 'approve', {
-        evidenceHash: updated.evidenceHash,
-        trustScore: verifierTrustScore,
-      });
-    }
 
     // Notify listeners
     for (const listener of this.claimVerifiedListeners) {
@@ -674,24 +500,6 @@ export class Blackboard {
     }
   }
 
-  private computeEvidenceHash(
-    claim: EvidenceClaim,
-    linkedEventIds: string[],
-    linkedEntityIds: string[],
-  ): string {
-    const payload = JSON.stringify({
-      agentId: claim.agentId,
-      claimType: claim.claimType,
-      data: claim.data,
-      entityId: claim.entityId,
-      linkedEntityIds: linkedEntityIds.sort(),
-      linkedEventIds: linkedEventIds.sort(),
-      trustScore: claim.trustScore,
-    });
-
-    return crypto.createHash('sha256').update(payload).digest('hex');
-  }
-
   private determineClaimStatus(verifyCount: number, contestCount: number): EvidenceClaimStatus {
     if (contestCount >= 2) {
       return 'rejected';
@@ -712,34 +520,16 @@ export class Blackboard {
     return 'proposed';
   }
 
-  private enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
-    return new Promise((resolve, reject) => {
-      this.writeQueue = this.writeQueue.then(async () => {
-        try {
-          resolve(await operation());
-        } catch (error) {
-          reject(error);
-        }
-      }).catch((error) => {
-        // Ensure the queue continues even if an individual operation fails.
-        // Log the error so it is not silently swallowed — the caller still
-        // receives the rejection via their own promise.
-        logToStderr(`[Blackboard] Queued write operation failed: ${error instanceof Error ? error.message : String(error)}`);
-      });
-    });
-  }
-
   /**
    * Load blackboard state.
    */
   private async loadSnapshot(): Promise<void> {
     try {
-      await recoverAtomicWrite(this.snapshotPath);
       const content = await fs.readFile(this.snapshotPath, 'utf8');
       const result = safeParseJson(blackboardStateSchema, content);
 
       if (!result.ok) {
-        logToStderr(`[Blackboard] Invalid snapshot, starting fresh: ${result.error}`);
+        console.warn('[Blackboard] Invalid snapshot, starting fresh:', result.error);
         return;
       }
 
@@ -748,7 +538,6 @@ export class Blackboard {
       // Restore agents
       for (const agent of state.agents) {
         this.agents.set(agent.agentId, agent);
-        this.agentTrustScores.set(agent.agentId, 0.5);
       }
 
       // Restore claims
@@ -763,9 +552,6 @@ export class Blackboard {
 
       // Restore tasks
       this.taskGraph.importTasks(state.tasks);
-
-      // Restore consensus records
-      this.consensusManager.importRecords(state.consensusRecords);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return;

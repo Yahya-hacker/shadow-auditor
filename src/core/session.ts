@@ -32,7 +32,6 @@ export interface StreamWithContinuationOptions<TOOLS extends ToolSet> {
   model: LanguageModel;
   onActivity?: (activity: StreamActivity) => void;
   onChunk: (chunk: string) => void;
-  onTokenUsage?: (usage: TokenUsageData) => void;
   systemPrompt: string;
   tools: TOOLS;
 }
@@ -44,7 +43,6 @@ export interface StreamWithContinuationResult<TOOLS extends ToolSet> {
   rawFinishReason: string | undefined;
   steps: Array<StepResult<TOOLS>>;
   text: string;
-  totalTokenUsage: TokenUsageData;
 }
 
 export interface StreamActivity {
@@ -52,12 +50,6 @@ export interface StreamActivity {
   summary: string;
   toolCallId: string;
   toolName: string;
-}
-
-export interface TokenUsageData {
-  completionTokens: number;
-  promptTokens: number;
-  totalTokens: number;
 }
 
 function overlapLength(base: string, addition: string): number {
@@ -188,7 +180,6 @@ export async function streamWithContinuation<TOOLS extends ToolSet>({
   model,
   onActivity,
   onChunk,
-  onTokenUsage,
   systemPrompt,
   tools,
 }: StreamWithContinuationOptions<TOOLS>): Promise<StreamWithContinuationResult<TOOLS>> {
@@ -198,8 +189,6 @@ export async function streamWithContinuation<TOOLS extends ToolSet>({
   let finalFinishReason: FinishReason = 'stop';
   let finalRawFinishReason: string | undefined;
   let stitchedText = '';
-  let accumulatedPromptTokens = 0;
-  let accumulatedCompletionTokens = 0;
 
   while (true) {
     const result = streamText({
@@ -220,21 +209,11 @@ export async function streamWithContinuation<TOOLS extends ToolSet>({
       }
     }
 
-    const [steps, finishReason, rawFinishReason, usage] = await Promise.all([
+    const [steps, finishReason, rawFinishReason] = await Promise.all([
       result.steps,
       result.finishReason,
       result.rawFinishReason,
-      result.usage,
     ]);
-
-    // Accumulate token usage from this stream iteration
-    if (usage) {
-      const promptTokens = usage.inputTokens ?? 0;
-      const completionTokens = usage.outputTokens ?? 0;
-      accumulatedPromptTokens += promptTokens;
-      accumulatedCompletionTokens += completionTokens;
-      onTokenUsage?.({ completionTokens, promptTokens, totalTokens: promptTokens + completionTokens });
-    }
 
     allSteps.push(...steps);
     const activities = extractStepActivities(steps);
@@ -291,10 +270,5 @@ export async function streamWithContinuation<TOOLS extends ToolSet>({
     rawFinishReason: finalRawFinishReason,
     steps: allSteps,
     text: stitchedText,
-    totalTokenUsage: {
-      completionTokens: accumulatedCompletionTokens,
-      promptTokens: accumulatedPromptTokens,
-      totalTokens: accumulatedPromptTokens + accumulatedCompletionTokens,
-    },
   };
 }

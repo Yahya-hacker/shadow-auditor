@@ -1,8 +1,5 @@
 /**
  * MCP Action Policy - Policy tiers for MCP tool invocations.
- *
- * This is the unified, authoritative MCP policy module. It replaces the
- * simpler allowlist that was previously in `src/core/mcp/policy.ts`.
  */
 
 import { z } from 'zod';
@@ -64,27 +61,23 @@ export type MCPActionDecision = z.infer<typeof mcpActionDecisionSchema>;
 const DEFAULT_TOOL_TIERS: Record<string, MCPActionTier> = {
   // Sensitive - Interactive but limited side-effects
   'chrome-devtools.click': 'sensitive',
-  // Legacy/alternate tool names from the simple allowlist (backward compat)
-  'chrome-devtools.console_messages': 'safe',
   // Dangerous - Can execute arbitrary code/commands
   'chrome-devtools.evaluate_script': 'dangerous',
   'chrome-devtools.fill': 'sensitive',
   'chrome-devtools.get_console_message': 'safe',
   'chrome-devtools.get_network_request': 'safe',
   'chrome-devtools.hover': 'sensitive',
-  
   'chrome-devtools.list_console_messages': 'safe',
+
   'chrome-devtools.list_network_requests': 'safe',
   'chrome-devtools.list_pages': 'safe',
   'chrome-devtools.navigate_page': 'sensitive',
-  'chrome-devtools.network_requests': 'safe',
   'chrome-devtools.new_page': 'sensitive',
   'chrome-devtools.press_key': 'sensitive',
-
   'chrome-devtools.take_screenshot': 'safe',
-
   // Safe - Read-only operations
   'chrome-devtools.take_snapshot': 'safe',
+
   'chrome-devtools.type_text': 'sensitive',
   'kali-official.dirb_scan': 'sensitive',
   'kali-official.enum4linux_scan': 'sensitive',
@@ -108,13 +101,12 @@ const DEFAULT_TOOL_TIERS: Record<string, MCPActionTier> = {
 const DEFAULT_SERVER_TIERS: Record<string, MCPActionTier> = {
   'chrome-devtools': 'sensitive',
   'github-mcp-server': 'safe',
-  'kali-linux': 'dangerous',   // Adapter id used at runtime
-  'kali-official': 'dangerous', // Alternate adapter id (tests / config)
+  'kali-official': 'dangerous',
   'playwright': 'sensitive',
 };
 
 // =============================================================================
-// Policy Evaluato
+// Policy Evaluator
 // =============================================================================
 
 /**
@@ -127,22 +119,16 @@ export function evaluateMCPPolicy(
 ): MCPActionDecision {
   const fullPolicy = mcpActionPolicySchema.parse(policy);
   const fullToolName = `${serverName}.${toolName}`;
-  const canonicalServerName = serverName === 'kali-linux' ? 'kali-official' : serverName;
-  const canonicalToolName = `${canonicalServerName}.${toolName}`;
   
   // Determine tier: tool-specific > server-specific > default
   let tier: MCPActionTier;
   
   if (fullPolicy.toolTiers[fullToolName]) {
     tier = fullPolicy.toolTiers[fullToolName];
-  } else if (fullPolicy.toolTiers[canonicalToolName]) {
-    tier = fullPolicy.toolTiers[canonicalToolName];
   } else if (fullPolicy.serverTiers[serverName]) {
     tier = fullPolicy.serverTiers[serverName];
   } else if (DEFAULT_TOOL_TIERS[fullToolName]) {
     tier = DEFAULT_TOOL_TIERS[fullToolName];
-  } else if (DEFAULT_TOOL_TIERS[canonicalToolName]) {
-    tier = DEFAULT_TOOL_TIERS[canonicalToolName];
   } else if (DEFAULT_SERVER_TIERS[serverName]) {
     tier = DEFAULT_SERVER_TIERS[serverName];
   } else {
@@ -229,7 +215,7 @@ export function getPolicySummary(policy: Partial<MCPActionPolicy> = {}): string 
 }
 
 // =============================================================================
-// Policy Builde
+// Policy Builder
 // =============================================================================
 
 /**
@@ -273,58 +259,4 @@ export class MCPPolicyBuilder {
     this.policy.toolTiers[`${serverName}.${toolName}`] = tier;
     return this;
   }
-}
-
-// =============================================================================
-// Compatibility Bridge
-// =============================================================================
-
-/**
- * Result shape expected by MCPManager.wrapTool().
- * Mirrors the interface that the old simple policy (`mcp/policy.ts`) returned,
- * so the manager can use the richer tier-based policy without changes.
- */
-export interface MCPPolicyDecision {
-  allowed: boolean;
-  reason: string;
-  warning?: string;
-}
-
-/**
- * Bridge function: evaluate MCP policy using the tier system but return
- * the simple decision shape that MCPManager expects.
- *
- * Replaces the simple allowlist from `src/core/mcp/policy.ts`.
- */
-export function evaluateMcpPolicy(
-  adapterId: string,
-  toolDefinition: { name: string; requiresConfirmation?: boolean; riskLevel?: string; },
-  expertUnsafe: boolean,
-): MCPPolicyDecision {
-  const decision = evaluateMCPPolicy(adapterId, toolDefinition.name, {
-    expertUnsafe,
-  });
-
-  // Map the tier decision to the simple interface
-  if (!decision.allowed) {
-    // In expert-unsafe mode, override the denial (matching the old simple policy)
-    if (expertUnsafe) {
-      return {
-        allowed: true,
-        reason: `[MCP_POLICY_ALLOWED] ${adapterId}.${toolDefinition.name} allowed in expert unsafe mode.`,
-        warning: `[EXPERT-UNSAFE] ${adapterId}.${toolDefinition.name} is classified as ${decision.tier}. Confirm only when authorized.`,
-      };
-    }
-
-    return {
-      allowed: false,
-      reason: decision.reason,
-    };
-  }
-
-  return {
-    allowed: true,
-    reason: decision.reason,
-    warning: decision.warning,
-  };
 }

@@ -1,15 +1,8 @@
-import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-
-import {chunkGeneric} from '../core/memory/chunkers/generic-chunker.js';
-import {
-  getLanguageForExt,
-  getSupportedExtensions,
-  Parser,
-} from '../core/memory/tree-sitter-languages.js';
-import {parseTreeSitterSource} from '../core/memory/tree-sitter-parser.js';
-import { logToStderr } from './stderr-logger.js';
+import Parser from 'tree-sitter';
+import JavaScript from 'tree-sitter-javascript';
+import TypeScript from 'tree-sitter-typescript';
 
 // Node types whose structural signatures we extract
 const STRUCTURAL_TYPES = new Set([
@@ -39,8 +32,7 @@ const IGNORED_DIRS = new Set([
 ]);
 
 /**
- * Recursively collect every source/config extension supported by the shared
- * semantic-index language registry.
+ * Recursively collects all .js and .ts files from the given directory
  */
 async function collectFiles(dirPath: string): Promise<string[]> {
   const results: string[] = [];
@@ -62,7 +54,7 @@ async function collectFiles(dirPath: string): Promise<string[]> {
         }
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name);
-        if (getLanguageForExt(ext)) {
+        if (['.js', '.jsx', '.ts', '.tsx'].includes(ext)) {
           results.push(fullPath);
         }
       }
@@ -71,6 +63,31 @@ async function collectFiles(dirPath: string): Promise<string[]> {
 
   await walk(dirPath);
   return results.sort();
+}
+
+/**
+ * Gets the correct parser language for a file extension
+ */
+function getLanguage(filePath: string): null | unknown {
+  const ext = path.extname(filePath);
+  switch (ext) {
+    case '.js':
+    case '.jsx': {
+      return JavaScript;
+    }
+
+    case '.ts': {
+      return TypeScript.typescript;
+    }
+
+    case '.tsx': {
+      return TypeScript.tsx;
+    }
+
+    default: {
+      return null;
+    }
+  }
 }
 
 /**
@@ -210,7 +227,7 @@ function extractMethodSignature(node: Parser.SyntaxNode): string {
  * Parses a single file and returns its structural skeleton
  */
 async function parseFile(parser: Parser, filePath: string, basePath: string): Promise<null | string> {
-  const language = getLanguageForExt(path.extname(filePath));
+  const language = getLanguage(filePath);
   if (!language) return null;
 
   let sourceCode: string;
@@ -223,68 +240,33 @@ async function parseFile(parser: Parser, filePath: string, basePath: string): Pr
   if (sourceCode.trim().length === 0) return null;
 
   try {
-    parser.setLanguage(await language.load() as Parameters<Parser['setLanguage']>[0]);
-    const tree = parseTreeSitterSource(parser, sourceCode);
+    parser.setLanguage(language as Parameters<Parser['setLanguage']>[0]);
+    const tree = parser.parse(sourceCode);
     const root = tree.rootNode;
 
     const signatures: string[] = [];
-    if (language.key === 'javascript' || language.key === 'typescript') {
-      signatures.push(...root.namedChildren
-        .filter((child) => STRUCTURAL_TYPES.has(child.type) || child.type === 'export_statement')
-        .map((child) => extractSignature(child, sourceCode))
-        .filter((signature) => signature.trim()));
-    } else {
-      const chunks = chunkGeneric({
-        filePath,
-        language: language.name,
-        maxChunkChars: 1200,
-        root,
-        sourceCode,
-      });
-      for (const chunk of chunks) {
-        signatures.push(
-          `${chunk.structuralType} ${chunk.symbol} [L${chunk.startLine}-L${chunk.endLine}]`,
-        );
+
+    for (const child of root.namedChildren) {
+      if (
+        STRUCTURAL_TYPES.has(child.type) ||
+        child.type === 'export_statement'
+      ) {
+        const sig = extractSignature(child, sourceCode);
+        if (sig.trim()) {
+          signatures.push(sig);
+        }
       }
     }
 
     if (signatures.length === 0) return null;
 
     const relativePath = path.relative(basePath, filePath);
-    return `\n// ─── ${relativePath} (${language.name}) ${'─'.repeat(Math.max(0, 45 - relativePath.length))}\n${signatures.join('\n\n')}`;
+    return `\n// ─── ${relativePath} ${'─'.repeat(Math.max(0, 60 - relativePath.length))}\n${signatures.join('\n\n')}`;
   } catch (error) {
     const relativePath = path.relative(basePath, filePath);
-    const detail = error instanceof Error ? error.message : String(error);
-    logToStderr(`⚠  Tree-sitter parse error in ${relativePath}: ${detail}`);
-    return `\n// ─── ${relativePath} (${language.name})\n// Mapping unavailable: ${detail}`;
+    console.warn(`⚠  Tree-sitter parse error in ${relativePath}: ${(error as Error).message}`);
+    return null;
   }
-}
-
-/**
- * Content-addressed root for every source file represented in the repo map.
- * Paths and bytes are both hashed, so edits, renames, additions, and deletions
- * invalidate cached maps without depending on filesystem timestamp precision.
- */
-export async function computeRepoMapContentRoot(targetPath: string): Promise<string> {
-  const resolvedPath = path.resolve(targetPath);
-  const files = await collectFiles(resolvedPath);
-  const root = createHash('sha256');
-  for (const filePath of files) {
-    root.update(path.relative(resolvedPath, filePath));
-    root.update('\0');
-    try {
-      root.update(await fs.readFile(filePath));
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to fingerprint repo-map source ${filePath}: ${detail}`, {
-        cause: error,
-      });
-    }
-
-    root.update('\0');
-  }
-
-  return root.digest('hex');
 }
 
 /**
@@ -297,7 +279,7 @@ export async function generateRepoMap(targetPath: string): Promise<string> {
   const files = await collectFiles(resolvedPath);
 
   if (files.length === 0) {
-    return `// No supported source files found in the target directory. Supported extensions: ${getSupportedExtensions().join(', ')}`;
+    return '// No JavaScript/TypeScript files found in the target directory.';
   }
 
   const results: string[] = [

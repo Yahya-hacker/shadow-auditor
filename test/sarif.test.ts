@@ -20,9 +20,9 @@ describe('sarif output', () => {
     });
 
     expect(sarif.version).to.equal('2.1.0');
-    const run = sarif.runs![0]!;
-    const results = run.results!;
+    const run = (sarif.runs as Array<Record<string, unknown>>)[0];
+    const results = run.results as Array<Record<string, unknown>>;
     expect(results).to.have.length(1);
-    expect(results[0]!.ruleId).to.equal('SHADOW-SQLI-001');
+    expect(results[0].ruleId).to.equal('SHADOW-SQLI-001');
   });
 });

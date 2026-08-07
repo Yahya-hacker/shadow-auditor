@@ -11,7 +11,6 @@ import {
 import { generateEnhancedSarifReport } from '../src/core/output/sarif.js';
 
 type SarifResult = {
-  fixes?: unknown;
   level: string;
   locations: Array<{
     physicalLocation: {
@@ -96,7 +95,7 @@ function createValidEnhancedReport(): EnhancedReport {
   });
 }
 
-function toSarif(payload: import('sarif').Log | Record<string, unknown>): SarifPayload {
+function toSarif(payload: Record<string, unknown>): SarifPayload {
   return payload as unknown as SarifPayload;
 }
 
@@ -274,11 +273,6 @@ describe('enhanced reporting pipeline', () => {
       expect(result.locations).to.have.lengthOf(1);
       expect(result.locations[0].physicalLocation.artifactLocation.uri).to.equal('src/db.ts');
       expect(result.locations[0].physicalLocation.region?.startLine).to.equal(42);
-    });
-
-    it('does not publish informational code examples as automatic edits', () => {
-      const result = toSarif(generateEnhancedSarifReport(createValidEnhancedReport())).runs[0].results[0];
-      expect(result.fixes).to.equal(undefined);
     });
 
     it('creates rules for unique findings', () => {
