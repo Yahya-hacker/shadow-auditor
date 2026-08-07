@@ -8,9 +8,9 @@
  * - Query OAST callback logs for exploit validation
  */
 
-import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 
+import { type LocalToolSet, localTool as tool } from '../tools/local-tool.js';
 import { type SandboxManager } from './sandbox-manager.js';
 
 // =============================================================================
@@ -24,7 +24,7 @@ export interface SandboxToolsOptions {
 /**
  * Create agent-facing sandbox tools for verifier and exploit-analyst roles.
  */
-export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
+export function createSandboxTools(options: SandboxToolsOptions): LocalToolSet {
   const { sandboxManager } = options;
   const mirage = sandboxManager.getMirage();
 

@@ -1,0 +1,107 @@
+{
+  "commands": {
+    "shell": {
+      "aliases": [],
+      "args": {},
+      "description": "Local Shadow Auditor client for a remote private backend",
+      "examples": [
+        "<%= config.bin %>",
+        "<%= config.bin %> --reconfigure",
+        "<%= config.bin %> --mode bounty",
+        "<%= config.bin %> --ci --objective \"Audit changed authentication code\" --fail-on high",
+        "<%= config.bin %> --since HEAD~5"
+      ],
+      "flags": {
+        "ci": {
+          "description": "Enable CI mode: produce deterministic machine outputs and exit non-zero on severity threshold",
+          "name": "ci",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "diff": {
+          "description": "Incremental scan: scope analysis to files changed since --since ref (default: HEAD~1)",
+          "name": "diff",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "expertUnsafe": {
+          "description": "Permit broader local execution of backend-proposed commands with explicit approval",
+          "name": "expertUnsafe",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "fail-on": {
+          "description": "Minimum severity that causes a non-zero exit in CI mode",
+          "name": "fail-on",
+          "default": "high",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "options": [
+            "critical",
+            "high",
+            "medium",
+            "low",
+            "none"
+          ],
+          "type": "option"
+        },
+        "mode": {
+          "description": "Remote audit objective: audit, bounty, or ctf",
+          "name": "mode",
+          "default": "audit",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "options": [
+            "audit",
+            "bounty",
+            "ctf"
+          ],
+          "type": "option"
+        },
+        "objective": {
+          "description": "Security audit objective. Required in non-interactive CI mode.",
+          "name": "objective",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "reconfigure": {
+          "char": "r",
+          "description": "Enroll with a different backend or device",
+          "name": "reconfigure",
+          "allowNo": false,
+          "type": "boolean"
+        },
+        "since": {
+          "description": "Git ref for incremental scan base (used with --diff). Defaults to HEAD~1.",
+          "name": "since",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "target": {
+          "description": "Repository directory. Defaults to the current working directory in CI mode.",
+          "name": "target",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        }
+      },
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "shell",
+      "pluginAlias": "shadow-auditor",
+      "pluginName": "shadow-auditor",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": true,
+      "relativePath": [
+        "dist",
+        "commands",
+        "shell.js"
+      ]
+    }
+  },
+  "version": "1.0.0"
+}

@@ -4,7 +4,7 @@
  * Uses Tree-sitter for AST-aware chunking at function/class boundaries,
  * captures parent scope context (imports, class declarations) per chunk,
  * and generates embeddings via a configurable provider (Ollama default,
- * OpenAI optional) stored in the local VectorStore.
+ * optional local embeddings) stored in the local VectorStore.
  *
  * Design note: Overlapping sliding windows include the immediate parent
  * scope (e.g., class imports, surrounding class declaration) so that
@@ -129,46 +129,6 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
     }
 
     return results;
-  }
-}
-
-/**
- * OpenAI embedding provider (optional, for users who prioritize speed).
- */
-export class OpenAIEmbeddingProvider implements EmbeddingProvider {
-  readonly dimension: number;
-  readonly name = 'openai';
-  private readonly apiKey: string;
-  private readonly model: string;
-
-  constructor(options: { apiKey: string; dimension?: number; model?: string }) {
-    this.apiKey = options.apiKey;
-    this.model = options.model ?? 'text-embedding-3-small';
-    this.dimension = options.dimension ?? 1536;
-  }
-
-  async embed(texts: string[]): Promise<number[][]> {
-    const response = await fetch('https://api.openai.com/v1/embeddings', {
-      body: JSON.stringify({
-        input: texts,
-        model: this.model,
-      }),
-      headers: {
-        'Authorization': `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      method: 'POST',
-    });
-
-    if (!response.ok) {
-      throw new Error(`OpenAI embed error (${response.status}): ${response.statusText}`);
-    }
-
-    const data = (await response.json()) as {
-      data: Array<{ embedding: number[] }>;
-    };
-
-    return data.data.map((d) => d.embedding);
   }
 }
 

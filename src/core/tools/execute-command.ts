@@ -2,7 +2,6 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 
-import { confirmCommandExecution } from '../../utils/human-in-loop.js';
 import { type CommandPolicyConfig, evaluateCommandPolicy } from '../policy/command-policy.js';
 
 const execAsync = promisify(exec);
@@ -20,11 +19,6 @@ export function createExecuteCommandTool(options: ExecuteCommandToolOptions) {
       const policyDecision = evaluateCommandPolicy(command, options.commandPolicy);
       if (!policyDecision.allowed) {
         return policyDecision.reason;
-      }
-
-      const confirmed = await confirmCommandExecution(command, policyDecision.warning);
-      if (!confirmed) {
-        return `[DENIED] User denied command execution: "${command}".`;
       }
 
       try {

@@ -54,7 +54,7 @@ async function runGit(args: string[], cwd: string): Promise<string> {
 export async function getChangedFiles(options: ChangedFilesOptions = {}): Promise<ChangedFilesResult> {
   const cwd = options.cwd ?? process.cwd();
   const baseRef = options.baseRef ?? 'HEAD~1';
-  const exts = options.extensions?.length ? options.extensions : DEFAULT_EXTENSIONS;
+  const exts = options.extensions === undefined ? DEFAULT_EXTENSIONS : options.extensions;
 
   try {
     // Verify git is available and we are inside a repo
@@ -64,23 +64,24 @@ export async function getChangedFiles(options: ChangedFilesOptions = {}): Promis
     const resolvedSha = await runGit(['rev-parse', '--verify', baseRef], cwd);
 
     // Get list of changed files (names only, no status letters)
-    const rawOutput = await runGit(
-      ['diff', '--name-only', '--diff-filter=ACMRT', resolvedSha, 'HEAD'],
-      cwd,
-    );
+    const [rawOutput, untrackedOutput] = await Promise.all([
+      runGit(['diff', '--name-only', '--diff-filter=ACMRT', resolvedSha], cwd),
+      runGit(['ls-files', '--others', '--exclude-standard'], cwd),
+    ]);
 
-    const allFiles = rawOutput
-      ? rawOutput.split('\n').map((f) => f.trim()).filter(Boolean)
-      : [];
+    const allFiles = `${rawOutput}\n${untrackedOutput}`
+      .split('\n')
+      .map((file) => file.trim())
+      .filter(Boolean);
 
     const filtered = allFiles.filter((f) => {
       const ext = path.extname(f).toLowerCase();
-      return exts.includes(ext);
+      return exts.length === 0 || exts.includes(ext);
     });
 
     return {
-      files: filtered,
-      resolvedRef: resolvedSha.slice(0, 12),
+      files: [...new Set(filtered)].sort(),
+      resolvedRef: resolvedSha,
       usedFallback: false,
     };
   } catch {

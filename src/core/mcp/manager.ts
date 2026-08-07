@@ -1,8 +1,6 @@
-import { type ToolSet } from "ai";
-
+import type { LocalToolSet } from '../tools/local-tool.js';
 import type { MCPAdapter, MCPExecutionContext, MCPToolDefinition } from './types.js';
 
-import { confirmMcpToolExecution } from '../../utils/human-in-loop.js';
 import { evaluateMcpPolicy } from './policy.js';
 
 export interface MCPManagerOptions {
@@ -35,8 +33,8 @@ export class MCPManager {
 
   constructor(private readonly options: MCPManagerOptions) {}
 
-  buildAgentTools(): ToolSet {
-    const tools: ToolSet = {};
+  buildAgentTools(): LocalToolSet {
+    const tools: LocalToolSet = {};
 
     for (const adapter of this.adapters.values()) {
       if (adapter.isAvailable && !adapter.isAvailable()) {
@@ -91,27 +89,13 @@ export class MCPManager {
     adapterId: string,
     definition: MCPToolDefinition,
     context: MCPExecutionContext,
-  ): ToolSet[string] {
+  ): LocalToolSet[string] {
     return {
       description: `[MCP:${adapterId}] ${definition.description}`,
       async execute(input: Record<string, unknown>) {
         const policyDecision = evaluateMcpPolicy(adapterId, definition, context.expertUnsafe);
         if (!policyDecision.allowed) {
           return policyDecision.reason;
-        }
-
-        const {warning} = policyDecision;
-        if (definition.requiresConfirmation || warning) {
-          const confirmed = await confirmMcpToolExecution(
-            adapterId,
-            definition.name,
-            input,
-            warning,
-          );
-
-          if (!confirmed) {
-            return `[DENIED] User denied MCP tool execution for ${adapterId}.${definition.name}.`;
-          }
         }
 
         const output = await definition.execute(input, context);

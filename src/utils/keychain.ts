@@ -1,132 +1,112 @@
-/**
- * Credential Vault — OS Keychain Adapter with Environment Variable Fallback.
- *
- * Implements SecretStoreAdapter using a three-tier resolution chain:
- *   1. OS Keychain (cross-keychain): macOS Keychain, Windows Credential Manager, Linux Secret Service
- *   2. Environment Variables: SHADOW_{PROVIDER}_KEY (e.g. SHADOW_OPENAI_KEY)
- *   3. Plaintext config (handled transparently by config.ts when no adapter resolves)
- *
- * On headless CI/Linux without a desktop secret service, the keychain import
- * fails gracefully and the adapter falls through to env vars — never crashes.
- */
+import { deletePassword, getPassword, setPassword } from 'cross-keychain';
 
-import type { SecretStoreAdapter } from './config.js';
-
-// =============================================================================
-// Constants
-// =============================================================================
+import type { TokenSet } from '../protocol/generated.js';
 
 const SERVICE_NAME = 'shadow-auditor';
 
-/** Maps provider names to their conventional environment variable names. */
-const ENV_VAR_MAP: Record<string, string> = {
-  anthropic: 'SHADOW_ANTHROPIC_KEY',
-  custom: 'SHADOW_CUSTOM_KEY',
-  google: 'SHADOW_GOOGLE_KEY',
-  mistral: 'SHADOW_MISTRAL_KEY',
-  ollama: 'SHADOW_OLLAMA_KEY',
-  openai: 'SHADOW_OPENAI_KEY',
-};
-
-// =============================================================================
-// Keychain Bindings (lazy, crash-safe)
-// =============================================================================
-
-interface KeychainModule {
-  deletePassword(service: string, account: string): Promise<boolean>;
-  getPassword(service: string, account: string): Promise<null | string>;
-  setPassword(service: string, account: string, password: string): Promise<void>;
+export interface DeviceCredentials {
+  deviceId: string;
+  keyId: string;
+  privateKeyPkcs8: string;
+  publicKey: string;
+  serverSigningKeys: Array<{
+    algorithm: 'ed25519';
+    keyId: string;
+    publicKey: string;
+  }>;
+  tokens: TokenSet;
 }
 
-let keychainModule: KeychainModule | null = null;
-let keychainLoadAttempted = false;
+export interface CredentialStore {
+  delete(account: string): Promise<void>;
+  get(account: string): Promise<null | string>;
+  set(account: string, value: string): Promise<void>;
+}
 
-/**
- * Lazily attempt to load cross-keychain.
- * Returns null if the module is unavailable or the OS backend fails.
- */
-async function getKeychainModule(): Promise<KeychainModule | null> {
-  if (keychainLoadAttempted) return keychainModule;
-  keychainLoadAttempted = true;
-
-  try {
-    // Dynamic import so the CLI doesn't crash if cross-keychain isn't installed
-    // or if the OS has no secret service daemon running.
-    // Use a variable to prevent TypeScript from resolving the module at compile time.
-    const moduleName = 'cross-keychain';
-    const mod = await import(/* webpackIgnore: true */ moduleName) as KeychainModule;
-    keychainModule = mod;
-    return keychainModule;
-  } catch {
-    // Expected on headless CI, Docker, Alpine Linux, etc.
-    return null;
+export class CredentialStoreError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'CredentialStoreError';
   }
 }
 
-// =============================================================================
-// Environment Variable Resolver
-// =============================================================================
-
-function getApiKeyFromEnv(provider: string): null | string {
-  const envVar = ENV_VAR_MAP[provider.toLowerCase()];
-  if (!envVar) return null;
-
-  const value = process.env[envVar];
-  return value?.trim() || null;
-}
-
-// =============================================================================
-// KeychainAdapter
-// =============================================================================
-
-/**
- * Production-grade SecretStoreAdapter.
- *
- * Resolution order for getApiKey:
- *   1. OS Keychain (if available)
- *   2. Environment variable (SHADOW_{PROVIDER}_KEY)
- *   3. Returns null → config.ts falls back to plaintext JSON
- *
- * setApiKey always tries the OS keychain first; silently skips on failure.
- */
-export class KeychainAdapter implements SecretStoreAdapter {
-  /**
-   * Retrieve an API key for the given provider.
-   */
-  async getApiKey(provider: string): Promise<null | string> {
-    // 1. Try OS keychain
-    const keychain = await getKeychainModule();
-    if (keychain) {
-      try {
-        const secret = await keychain.getPassword(SERVICE_NAME, `apiKey-${provider}`);
-        if (secret) return secret;
-      } catch {
-        // Keychain access denied or corrupt — fall through
-      }
+export class KeychainCredentialStore implements CredentialStore {
+  async delete(account: string): Promise<void> {
+    try {
+      await deletePassword(SERVICE_NAME, account);
+    } catch (error) {
+      throw new CredentialStoreError('Unable to delete credentials from the operating-system keychain', { cause: error });
     }
-
-    // 2. Try environment variable
-    return getApiKeyFromEnv(provider);
   }
 
-  /**
-   * Store an API key in the OS keychain.
-   * Silently no-ops if the keychain is unavailable.
-   */
-  async setApiKey(provider: string, apiKey: string): Promise<void> {
-    const keychain = await getKeychainModule();
-    if (!keychain) return;
+  async get(account: string): Promise<null | string> {
+    try {
+      return await getPassword(SERVICE_NAME, account);
+    } catch (error) {
+      throw new CredentialStoreError('Unable to read credentials from the operating-system keychain', { cause: error });
+    }
+  }
+
+  async set(account: string, value: string): Promise<void> {
+    try {
+      await setPassword(SERVICE_NAME, account, value);
+    } catch (error) {
+      throw new CredentialStoreError('Unable to store credentials in the operating-system keychain', { cause: error });
+    }
+  }
+}
+
+function parseCredentials(serialized: string): DeviceCredentials {
+  const value = JSON.parse(serialized) as Partial<DeviceCredentials>;
+  if (
+    typeof value.deviceId !== 'string' ||
+    typeof value.keyId !== 'string' ||
+    typeof value.privateKeyPkcs8 !== 'string' ||
+    typeof value.publicKey !== 'string' ||
+    !Array.isArray(value.serverSigningKeys) ||
+    typeof value.tokens !== 'object' ||
+    value.tokens === null
+  ) {
+    throw new CredentialStoreError('Stored device credentials are malformed');
+  }
+
+  return value as DeviceCredentials;
+}
+
+export class DeviceCredentialVault {
+  constructor(private readonly store: CredentialStore = new KeychainCredentialStore()) {}
+
+  async delete(account: string): Promise<void> {
+    await this.store.delete(account);
+  }
+
+  async load(account: string): Promise<DeviceCredentials> {
+    const environmentCredentials = process.env.SHADOW_AUDITOR_DEVICE_CREDENTIALS;
+    const serialized = environmentCredentials ?? (await this.store.get(account));
+    if (!serialized) {
+      throw new CredentialStoreError(`No device credentials found for account "${account}"`);
+    }
 
     try {
-      await keychain.setPassword(SERVICE_NAME, `apiKey-${provider}`, apiKey);
-    } catch {
-      // Cannot write to keychain — user will fall back to plaintext JSON
+      return parseCredentials(serialized);
+    } catch (error) {
+      if (error instanceof CredentialStoreError) throw error;
+      throw new CredentialStoreError('Stored device credentials are not valid JSON', { cause: error });
     }
+  }
+
+  async save(account: string, credentials: DeviceCredentials): Promise<void> {
+    if (process.env.SHADOW_AUDITOR_DEVICE_CREDENTIALS) {
+      throw new CredentialStoreError('Environment-supplied credentials are read-only and cannot be rotated');
+    }
+
+    await this.store.set(account, JSON.stringify(credentials));
   }
 }
 
-// =============================================================================
-// Exports for testing
-// =============================================================================
-
-export { ENV_VAR_MAP, getApiKeyFromEnv, SERVICE_NAME };
+export async function deleteDeviceCredentials(
+  account: string,
+  store?: CredentialStore,
+): Promise<void> {
+  await new DeviceCredentialVault(store).delete(account);
+}

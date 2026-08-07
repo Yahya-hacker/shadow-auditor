@@ -2,166 +2,124 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-/**
- * Configuration interface for Shadow Auditor
- */
+export type AuditMode = 'audit' | 'bounty' | 'ctf';
+
 export interface ShadowConfig {
-  apiKey: string;
-  auditMode?: 'balanced' | 'deep' | 'deep-sast' | 'full-report' | 'patch-only' | 'quick' | 'triage';
-  /** CI mode: produce deterministic machine outputs, exit non-zero on threshold */
+  auditMode: AuditMode;
+  backendUrl: string;
   ci?: {
-    enabled?: boolean;
-    /** Minimum severity that causes a non-zero exit. Default: "high". */
-    failOn?: 'critical' | 'high' | 'low' | 'medium' | 'none';
+    failOnSeverity?: 'critical' | 'high' | 'low' | 'medium' | 'none';
+    outputDir?: string;
   };
   commandPolicy?: {
-    additionalAllowedCommandPatterns?: string[];
-    additionalDeniedPatterns?: string[];
-    allowPnpmYarn?: boolean;
+    allowlist?: string[];
+    denylist?: string[];
+    expertUnsafe?: boolean;
   };
-  continuation?: {
-    maxContinuations?: number;
-  };
-  customBaseUrl?: string;
+  credentialAccount: string;
   dast?: {
-    baseImage?: string;
-    cpuLimit?: string;
+    allowedHosts?: string[];
     enabled?: boolean;
-    healthCheckUrl?: string;
-    memoryLimit?: string;
-    startCommand?: string;
+    maxRequests?: number;
+    maxRuntimeMs?: number;
   };
-  /** Incremental diff mode: scope analysis to files changed since this ref */
+  deviceName: string;
   diff?: {
     baseRef?: string;
     enabled?: boolean;
   };
-  expertUnsafe?: boolean;
-  /** Semantic indexing configuration for hybrid code retrieval */
   indexing?: {
-    /** Chunking strategy: 'function' (default), 'class', or 'file' */
-    chunkStrategy?: 'class' | 'file' | 'function';
-    /** Embedding model name (default: 'nomic-embed-text' for Ollama, 'text-embedding-3-small' for OpenAI) */
-    embeddingModel?: string;
-    /** Embedding provider: 'ollama' (default, local) or 'openai' (cloud) */
-    embeddingProvider?: 'ollama' | 'openai';
-    /** Enable semantic indexing (default: true when embedding provider is available) */
-    enabled?: boolean;
-    /** Maximum characters per code chunk (default: 4000) */
-    maxChunkChars?: number;
+    embeddingProvider?: 'none' | 'ollama';
+    ollamaBaseUrl?: string;
+    ollamaModel?: string;
   };
-  licenseKey?: string;
-  maxOutputTokens?: number;
-  maxToolSteps?: number;
+  licensing?: {
+    mode?: 'bounty' | 'client' | 'ctf';
+    proofPath?: string;
+    target?: string;
+  };
   mcp?: {
-    adapters?: Array<'chrome-devtools' | 'kali-linux'>;
+    adapters?: string[];
     chromeDevtoolsEndpoint?: string;
     enabled?: boolean;
     kaliLinuxEndpoint?: string;
   };
-  model: string;
-  provider: string;
   remediation?: {
-    autoRevert?: boolean;
-    containerImage?: string;
     enabled?: boolean;
     testCommand?: string;
-    testTimeoutMs?: number;
-  };
-  reportValidation?: {
-    maxRepairRetries?: number;
-  };
-  swarm?: {
-    enabled?: boolean;
-    maxWorkers?: number;
-    modelOverrides?: Record<string, { apiKey?: string; model: string; provider: string }>;
-    roles?: string[];
-    workerBudgetRatio?: number;
   };
 }
 
-const CONFIG_FILENAME = '.shadow-auditor.json';
-let plaintextApiKeyWarningShown = false;
+const CONFIG_DIR = path.join(os.homedir(), '.shadow-auditor');
+const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 
-/**
- * Extension point for future secure keychain integration.
- * Current behavior remains JSON-file based for backward compatibility.
- */
-export interface SecretStoreAdapter {
-  getApiKey(provider: string): Promise<null | string>;
-  setApiKey?(provider: string, apiKey: string): Promise<void>;
+function isAuditMode(value: unknown): value is AuditMode {
+  return value === 'audit' || value === 'bounty' || value === 'ctf';
 }
 
-let secretStoreAdapter: null | SecretStoreAdapter = null;
-
-export function registerSecretStoreAdapter(adapter: SecretStoreAdapter): void {
-  secretStoreAdapter = adapter;
-}
-
-/**
- * Resolves the absolute path to the global config file
- */
-function getConfigPath(): string {
-  return path.join(os.homedir(), CONFIG_FILENAME);
-}
-
-/**
- * Loads the Shadow Auditor configuration from ~/.shadow-auditor.json
- * Returns null if the file doesn't exist or is invalid
- */
-export async function loadConfig(): Promise<null | ShadowConfig> {
-  const configPath = getConfigPath();
-
+function isHttpsUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
   try {
-    const raw = await fs.readFile(configPath, 'utf8');
-    const parsed = JSON.parse(raw) as ShadowConfig;
-
-    // Validate essential fields
-    if (!parsed.provider || !parsed.model) {
-      return null;
-    }
-
-    // API key is required for non-Ollama providers
-    if (parsed.provider !== 'ollama' && !parsed.apiKey && secretStoreAdapter) {
-      const secureApiKey = await secretStoreAdapter.getApiKey(parsed.provider);
-      if (secureApiKey) {
-        parsed.apiKey = secureApiKey;
-      }
-    }
-
-    if (parsed.provider !== 'ollama' && !parsed.apiKey) {
-      return null;
-    }
-
-    if (parsed.provider !== 'ollama' && parsed.apiKey && !plaintextApiKeyWarningShown) {
-      plaintextApiKeyWarningShown = true;
-      console.warn(
-        `[SHADOW-AUDITOR][WARN] API key is stored in plaintext at ${configPath}. ` +
-          'Consider using environment variables or registerSecretStoreAdapter(...) for keychain integration.',
-      );
-    }
-
-    return parsed;
+    return new URL(value).protocol === 'https:';
   } catch {
+    return false;
+  }
+}
+
+export async function loadConfig(): Promise<null | ShadowConfig> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8')) as Record<string, unknown>;
+    if (
+      !isHttpsUrl(parsed.backendUrl) ||
+      typeof parsed.credentialAccount !== 'string' ||
+      parsed.credentialAccount.length === 0 ||
+      typeof parsed.deviceName !== 'string' ||
+      parsed.deviceName.length === 0 ||
+      !isAuditMode(parsed.auditMode)
+    ) {
+      return null;
+    }
+
+    return parsed as unknown as ShadowConfig;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     return null;
   }
 }
 
-/**
- * Saves the Shadow Auditor configuration to ~/.shadow-auditor.json
- */
-export async function saveConfig(configData: ShadowConfig): Promise<void> {
-  const configPath = getConfigPath();
-
-  if (configData.provider !== 'ollama' && configData.apiKey && secretStoreAdapter?.setApiKey) {
-    await secretStoreAdapter.setApiKey(configData.provider, configData.apiKey);
-
-    const { apiKey: _apiKey, ...configWithoutApiKey } = configData;
-    const json = JSON.stringify(configWithoutApiKey, null, 2);
-    await fs.writeFile(configPath, json, 'utf-8');
-    return;
+export async function saveConfig(config: ShadowConfig): Promise<void> {
+  if (!isHttpsUrl(config.backendUrl)) {
+    throw new Error('Backend URL must use HTTPS');
   }
 
-  const json = JSON.stringify(configData, null, 2);
-  await fs.writeFile(configPath, json, 'utf-8');
+  await fs.mkdir(CONFIG_DIR, { mode: 0o700, recursive: true });
+  const temporaryPath = `${CONFIG_PATH}.${process.pid}.tmp`;
+  await fs.writeFile(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+  await fs.rename(temporaryPath, CONFIG_PATH);
+}
+
+export async function deleteConfig(): Promise<void> {
+  try {
+    await fs.unlink(CONFIG_PATH);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
+export function isConfigured(config: null | ShadowConfig): config is ShadowConfig {
+  return config !== null;
+}
+
+export function configExists(): Promise<boolean> {
+  return fs
+    .access(CONFIG_PATH)
+    .then(() => true)
+    .catch(() => false);
+}
+
+export function getConfigPath(): string {
+  return CONFIG_PATH;
 }

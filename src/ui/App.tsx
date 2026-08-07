@@ -1,142 +1,109 @@
 import { Box, Static, Text, useApp } from 'ink';
-import SelectInput from 'ink-select-input';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
 import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import React, { useEffect, useRef, useState } from 'react';
 
-import { AgentSession, type AgentStreamEvent } from '../core/agent.js';
-import { enforceLicenseGate, type LicenseGateResult } from '../core/policy/license-guard.js';
-import { buildDiffScopeHint, getChangedFiles } from '../core/tools/git-diff.js';
+import { computeCiExitCode, type FailOnSeverity, formatCiSummary } from '../core/output/ci-exit.js';
+import { securityReportSchema } from '../core/output/report-schema.js';
+import { RemoteApiClient } from '../core/remote/api-client.js';
+import {
+  type AgentRuntime,
+  RemoteAgentSession,
+  type StreamActivity,
+  type ToolApprovalRequest,
+} from '../core/remote/runtime.js';
 import { AsciiMotionCli } from '../utils/ascii-motion-cli.js';
-import { loadConfig, registerSecretStoreAdapter, saveConfig, ShadowConfig } from '../utils/config.js';
-import { KeychainAdapter } from '../utils/keychain.js';
+import { type AuditMode, loadConfig, saveConfig, type ShadowConfig } from '../utils/config.js';
 import { generateRepoMap } from '../utils/repo-map.js';
-import { getModelPlaceholder } from '../utils/setup.js';
 
-// Types
+const CLIENT_VERSION = '1.0.0';
+const MAX_ACTIVITY_EVENTS = 40;
+
 type AppState =
   | 'booting'
+  | 'enrolling'
   | 'initializing'
-  | 'license-blocked'
-  | 'setup'
-  | 'setup-apikey'
-  | 'setup-baseurl'
-  | 'setup-license'
-  | 'setup-model'
-  | 'setup-provider'
+  | 'loading'
+  | 'setup-backend'
+  | 'setup-code'
+  | 'setup-device'
   | 'shell'
-  | 'targetSelection';
+  | 'target-selection';
 
-type Message = {
+interface Message {
   id: string;
   role: 'agent' | 'error' | 'system' | 'user';
   text: string;
-};
-
-type ActivityEventLine = {
-  id: string;
-  kind: AgentStreamEvent['kind'];
-  text: string;
-};
-
-const MAX_ACTIVITY_EVENTS = 40;
-
-function formatActivityLine(event: AgentStreamEvent): string {
-  const timestamp = new Date(event.timestamp).toLocaleTimeString();
-  const toolSuffix = event.toolName ? ` [${event.toolName}]` : '';
-
-  switch (event.kind) {
-    case 'tool_call': {
-      return `${timestamp} ▶ ${event.message}${toolSuffix}`;
-    }
-
-    case 'tool_result': {
-      return `${timestamp} ✓ ${event.message}${toolSuffix}`;
-    }
-
-    default: {
-      return `${timestamp} • ${event.message}${toolSuffix}`;
-    }
-  }
 }
 
-const ActivityStreamPanel = ({
-  activityEvents,
-  isProcessing,
+interface ActivityLine {
+  id: number;
+  text: string;
+  type: StreamActivity['type'];
+}
+
+interface PendingApproval extends ToolApprovalRequest {
+  resolve: (approved: boolean) => void;
+}
+
+function formatActivity(activity: StreamActivity): string {
+  const tool = activity.toolName ? ` [${activity.toolName}]` : '';
+  const detail = activity.detail ? `: ${activity.detail}` : '';
+  return `${activity.content}${tool}${detail}`;
+}
+
+function defaultConfig(
+  backendUrl: string,
+  credentialAccount: string,
+  deviceName: string,
+  options: {
+    ciEnabled?: boolean;
+    diffEnabled?: boolean;
+    expertUnsafe: boolean;
+    failOn?: string;
+    mode?: string;
+    since?: string;
+  },
+): ShadowConfig {
+  const auditMode: AuditMode =
+    options.mode === 'bounty' || options.mode === 'ctf' ? options.mode : 'audit';
+  return {
+    auditMode,
+    backendUrl,
+    ci: options.ciEnabled
+      ? { failOnSeverity: (options.failOn ?? 'high') as FailOnSeverity }
+      : undefined,
+    commandPolicy: { expertUnsafe: options.expertUnsafe },
+    credentialAccount,
+    deviceName,
+    diff: options.diffEnabled
+      ? { baseRef: options.since ?? 'HEAD~1', enabled: true }
+      : undefined,
+    indexing: { embeddingProvider: 'none' },
+  };
+}
+
+const ActivityPanel = ({
+  activities,
+  processing,
 }: {
-  activityEvents: ActivityEventLine[];
-  isProcessing: boolean;
+  activities: ActivityLine[];
+  processing: boolean;
 }) => (
-  <Box borderColor="blue" borderStyle="round" flexDirection="column" marginBottom={1} paddingX={1}>
-    <Text bold color="blue">Live Activity Stream</Text>
-    {activityEvents.length === 0 && isProcessing && (
-      <Text color="gray">Waiting for first tool or status event...</Text>
-    )}
-    {activityEvents.slice(-8).map((event) => {
-      const color = 'gray';
-      const isItalic = false;
-
-
-      return (
-        <Text color={color} key={event.id}>
-          {isItalic ? `\u001B[3m${event.text}\u001B[0m` : event.text}
-        </Text>
-      );
-    })}
-  </Box>
-);
-
-const providerOptions = [
-  { label: 'Anthropic (Claude)', value: 'anthropic' },
-  { label: 'OpenAI (GPT-4o, o1, o3)', value: 'openai' },
-  { label: 'Google (Gemini)', value: 'google' },
-  { label: 'Mistral', value: 'mistral' },
-  { label: 'Ollama (Local)', value: 'ollama' },
-  { label: 'Custom (OpenAI-Compatible)', value: 'custom' },
-];
-
-// =============================================================================
-// License Paywall Component
-// =============================================================================
-
-const LicensePaywall = ({ gateResult, onRetry }: { gateResult: LicenseGateResult; onRetry: () => void }) => (
-  <Box flexDirection="column" padding={1}>
-    <Box borderColor="yellow" borderStyle="round" flexDirection="column" paddingX={2} paddingY={1}>
-      <Text bold color="yellow">⚡ PRO FEATURE</Text>
-      <Box marginTop={1}>
-        <Text>
-          The feature <Text bold color="cyan">{gateResult.feature}</Text> requires a{' '}
-          <Text bold color="magenta">{gateResult.requiredTier?.toUpperCase()}</Text> license.
-        </Text>
-      </Box>
-      <Box marginTop={1}>
-        <Text color="gray">
-          Your current tier: <Text bold>{gateResult.currentTier?.toUpperCase() ?? 'FREE'}</Text>
-        </Text>
-      </Box>
-    </Box>
-
-    <Box flexDirection="column" marginTop={1} paddingX={1}>
-      <Text bold color="green">🔑 Upgrade to unlock:</Text>
-      <Text color="gray">  • Deep SAST analysis with full taint tracing</Text>
-      <Text color="gray">  • Comprehensive PDF/Markdown security reports</Text>
-      <Text color="gray">  • CI/CD integration with exit codes</Text>
-      <Text color="gray">  • Priority support</Text>
-    </Box>
-
-    <Box marginTop={1} paddingX={1}>
-      <Text>
-        👉 <Text bold color="cyan" underline>{gateResult.upgradeUrl}</Text>
+  <Box borderColor="blue" borderStyle="round" flexDirection="column" paddingX={1}>
+    <Text bold color="blue">Remote activity</Text>
+    {activities.length === 0 && processing && <Text color="gray">Waiting for a signed event...</Text>}
+    {activities.slice(-8).map((activity) => (
+      <Text
+        color={activity.type === 'error' ? 'red' : activity.type === 'usage' ? 'yellow' : 'gray'}
+        key={activity.id}
+      >
+        {activity.text}
       </Text>
-    </Box>
-
-    <Box marginTop={1} paddingX={1}>
-      <Text color="gray" dimColor>
-        Already purchased? Run <Text bold>shadow-auditor --reconfigure</Text> to enter your license key.
-      </Text>
-    </Box>
+    ))}
   </Box>
 );
 
@@ -146,6 +113,8 @@ const App = ({
   expertUnsafe,
   failOn,
   forceReconfigure,
+  initialObjective,
+  initialTarget,
   mode,
   since,
 }: {
@@ -154,252 +123,405 @@ const App = ({
   expertUnsafe: boolean;
   failOn?: string;
   forceReconfigure: boolean;
+  initialObjective?: string;
+  initialTarget?: string;
   mode?: string;
   since?: string;
-  // eslint-disable-next-line complexity
 }) => {
-  const [appState, setAppState] = useState<AppState>('booting');
-  const [config, setConfig] = useState<null | ShadowConfig>(null);
-  const [targetPath, setTargetPath] = useState<string>('');
-  const [licenseGateResult, setLicenseGateResult] = useState<LicenseGateResult | null>(null);
-
-  // Setup Wizard State
-  const [setupData, setSetupData] = useState<Partial<ShadowConfig>>({});
-  const [setupInput, setSetupInput] = useState<string>('');
-
-  // Custom Path Input
-  const [useCurrentDir, setUseCurrentDir] = useState<boolean>(true);
-  const [customPathInput, setCustomPathInput] = useState<string>('');
-  const [pathError, setPathError] = useState<string>('');
-
-  // Shell State
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [activeMessage, setActiveMessage] = useState<Message | null>(null);
-  const [input, setInput] = useState<string>('');
-  const [agentSession, setAgentSession] = useState<AgentSession | null>(null);
-  const [activityEvents, setActivityEvents] = useState<ActivityEventLine[]>([]);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const activityEventCounter = useRef(0);
-  const keychainRegistered = useRef(false);
-
-  useEffect(() => {
-    // Config Load Effect
-    const checkConfig = async () => {
-      const cfg = forceReconfigure ? null : await loadConfig();
-      if (cfg) {
-        setConfig(cfg);
-        setAppState('targetSelection');
-      } else {
-        setAppState('setup-provider');
-      }
-    };
-
-    if (appState === 'setup') {
-      checkConfig();
-    }
-  }, [appState, forceReconfigure]);
-
-  const handleProviderSelect = (item: { value: string }) => {
-    setSetupData({ ...setupData, provider: item.value });
-    if (item.value === 'custom') {
-      setAppState('setup-baseurl');
-    } else {
-      setAppState('setup-model');
-    }
-  };
-
-  const handleBaseUrlInput = (value: string) => {
-    setSetupData({ ...setupData, customBaseUrl: value });
-    setSetupInput('');
-    setAppState('setup-model');
-  };
-
-  const handleModelInput = async (value: string) => {
-    const updated = { ...setupData, model: value };
-    setSetupData(updated);
-    setSetupInput('');
-
-    if (updated.provider === 'ollama') {
-      const finalConfig = { ...updated, apiKey: '' } as ShadowConfig;
-      await saveConfig(finalConfig);
-      setConfig(finalConfig);
-      setAppState('targetSelection');
-    } else {
-      setAppState('setup-apikey');
-    }
-  };
-
-  const handleApiKeyInput = async (value: string) => {
-    const finalConfig = { ...setupData, apiKey: value } as ShadowConfig;
-    await saveConfig(finalConfig);
-    setConfig(finalConfig);
-    setSetupInput('');
-    setAppState('setup-license');
-  };
-
-  const handleLicenseKeyInput = async (value: string) => {
-    if (value.trim()) {
-      const updatedConfig = { ...config!, licenseKey: value.trim() };
-      await saveConfig(updatedConfig);
-      setConfig(updatedConfig);
-    }
-
-    setSetupInput('');
-    setAppState('targetSelection');
-  };
-
-  useEffect(() => {
-    // Register KeychainAdapter once at boot
-    if (!keychainRegistered.current) {
-      keychainRegistered.current = true;
-      registerSecretStoreAdapter(new KeychainAdapter());
-    }
-
-    if (appState === 'booting') {
-      // The animation has ~1 frame taking 83.3ms, we loop false
-      // Give it 1.5s then jump to next state
-      const timer = setTimeout(() => {
-        setAppState('setup');
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-
-    if (appState === 'initializing' && targetPath && config) {
-      const initSession = async () => {
-        try {
-          // Build effective config with CLI flag overrides
-          const effectiveConfig: ShadowConfig = {
-            ...config,
-            ...(mode ? { auditMode: mode as ShadowConfig['auditMode'] } : {}),
-            ...(ciEnabled ? { ci: { enabled: true, failOn: (failOn ?? 'high') as 'critical' | 'high' | 'low' | 'medium' | 'none' } } : {}),
-            ...(diffEnabled ? { diff: { baseRef: since ?? 'HEAD~1', enabled: true } } : {}),
-          };
-
-          // License gate check
-          const gateResult = await enforceLicenseGate(effectiveConfig);
-          if (!gateResult.allowed) {
-            setLicenseGateResult(gateResult);
-            setAppState('license-blocked');
-            return;
-          }
-
-          const map = await generateRepoMap(targetPath);
-
-          // Build diff scope hint for incremental mode
-          let diffScopeHint: string | undefined;
-          if (diffEnabled) {
-            const changedFiles = await getChangedFiles({
-              baseRef: since ?? 'HEAD~1',
-              cwd: targetPath,
-            });
-            diffScopeHint = buildDiffScopeHint(changedFiles) || undefined;
-          }
-
-          const session = new AgentSession(effectiveConfig, map, targetPath, {
-            diffScopeHint,
-            expertUnsafe,
-          });
-          setAgentSession(session);
-
-          setAppState('shell');
-        } catch (error) {
-          setMessages([{
-            id: 'init-error',
-            role: 'error',
-            text: `Failed to initialize: ${(error as Error).message}`
-          }]);
-          setAppState('shell'); // Go to shell to show error
-        }
-      };
-
-      initSession();
-    }
-  }, [appState, targetPath, config, expertUnsafe, mode, ciEnabled, failOn, diffEnabled, since]);
-
-  const handlePathSubmit = async (p: string) => {
-    try {
-      const resolved = path.resolve(p);
-      const stat = await fs.stat(resolved);
-      if (!stat.isDirectory()) {
-        setPathError('Target path is not a directory.');
-        return;
-      }
-
-      setTargetPath(resolved);
-      setAppState('initializing');
-    } catch {
-      setPathError('Target path does not exist.');
-    }
-  };
-
-  const handleUseCurrentDirSubmit = (value: string) => {
-    if (value.toLowerCase() === 'y' || value.toLowerCase() === 'yes' || value === '') {
-      handlePathSubmit(process.cwd());
-    } else {
-      setUseCurrentDir(false);
-      setCustomPathInput(''); // clear the "n" typed
-    }
-  };
-
   const { exit } = useApp();
+  const [appState, setAppState] = useState<AppState>(ciEnabled ? 'loading' : 'booting');
+  const [config, setConfig] = useState<null | ShadowConfig>(null);
+  const [backendUrl, setBackendUrl] = useState('');
+  const [deviceName, setDeviceName] = useState(os.hostname());
+  const [enrollmentCode, setEnrollmentCode] = useState('');
+  const [setupError, setSetupError] = useState('');
+  const [targetPath, setTargetPath] = useState('');
+  const [targetInput, setTargetInput] = useState(process.cwd());
+  const [targetError, setTargetError] = useState('');
+  const [input, setInput] = useState('');
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [activeResponse, setActiveResponse] = useState('');
+  const [activities, setActivities] = useState<ActivityLine[]>([]);
+  const [processing, setProcessing] = useState(false);
+  const [pendingApproval, setPendingApproval] = useState<null | PendingApproval>(null);
+  const runtimeRef = useRef<AgentRuntime | null>(null);
+  const pendingApprovalRef = useRef<null | PendingApproval>(null);
+  const activityCounter = useRef(0);
+  const ciStartedRef = useRef(false);
 
-  const handleCommandSubmit = async (command: string) => {
-    if (!command.trim() || isProcessing) return;
+  useEffect(() => {
+    if (appState !== 'booting') return;
+    const timer = setTimeout(() => setAppState('loading'), 900);
+    return () => clearTimeout(timer);
+  }, [appState]);
 
-    if ([':q', ':quit', 'exit', 'quit'].includes(command.trim().toLowerCase())) {
+  useEffect(() => {
+    if (appState !== 'loading') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const existing = forceReconfigure ? null : await loadConfig();
+        if (cancelled) return;
+        if (existing) {
+          setConfig(existing);
+          const selectedTarget = initialTarget?.trim();
+          if (selectedTarget) {
+            const resolved = path.resolve(selectedTarget);
+            if (!(await fs.stat(resolved)).isDirectory()) throw new Error('Target is not a directory');
+            setTargetPath(resolved);
+            setAppState('initializing');
+          } else {
+            setTargetInput(process.cwd());
+            setAppState('target-selection');
+          }
+        } else {
+          setAppState('setup-backend');
+        }
+      } catch (error) {
+        if (cancelled) return;
+        if (ciEnabled) {
+          process.exitCode = 2;
+          exit();
+          return;
+        }
+
+        setTargetInput(initialTarget ?? process.cwd());
+        setTargetError(error instanceof Error ? error.message : String(error));
+        setAppState('target-selection');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [appState, ciEnabled, exit, forceReconfigure, initialTarget]);
+
+  useEffect(() => {
+    if (appState !== 'initializing' || !config || !targetPath) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const effectiveConfig: ShadowConfig = {
+          ...config,
+          auditMode: mode === 'bounty' || mode === 'ctf' ? mode : config.auditMode,
+          ci: ciEnabled
+            ? { ...config.ci, failOnSeverity: (failOn ?? 'high') as FailOnSeverity }
+            : config.ci,
+          commandPolicy: {
+            ...config.commandPolicy,
+            expertUnsafe: expertUnsafe || config.commandPolicy?.expertUnsafe,
+          },
+          diff: diffEnabled
+            ? { baseRef: since ?? 'HEAD~1', enabled: true }
+            : config.diff,
+        };
+        const repositoryMap = await generateRepoMap(targetPath);
+        const runtime = await RemoteAgentSession.create({
+          ciEnabled,
+          config: effectiveConfig,
+          confirmToolExecution: (request) => new Promise<boolean>((resolve) => {
+            pendingApprovalRef.current?.resolve(false);
+            const pending = { ...request, resolve };
+            pendingApprovalRef.current = pending;
+            setPendingApproval(pending);
+          }),
+          repositoryMap,
+          targetPath,
+        });
+        if (cancelled) {
+          await runtime.shutdown();
+          return;
+        }
+
+        runtimeRef.current = runtime;
+        setConfig(effectiveConfig);
+        setMessages([{
+          id: 'ready',
+          role: 'system',
+          text: `Connected to ${effectiveConfig.backendUrl}. Type /help for local controls.`,
+        }]);
+        setAppState('shell');
+      } catch (error) {
+        if (cancelled) return;
+        setMessages([{
+          id: 'init-error',
+          role: 'error',
+          text: `Initialization failed: ${error instanceof Error ? error.message : String(error)}`,
+        }]);
+        setAppState('shell');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [appState, ciEnabled, config, diffEnabled, expertUnsafe, failOn, mode, since, targetPath]);
+
+  useEffect(
+    () => () => {
+      pendingApprovalRef.current?.resolve(false);
+      pendingApprovalRef.current = null;
+      runtimeRef.current?.shutdown();
+    },
+    [],
+  );
+
+  const appendMessage = (role: Message['role'], text: string) => {
+    setMessages((current) => [...current, {
+      id: `${Date.now()}-${Math.random()}`,
+      role,
+      text,
+    }]);
+  };
+
+  const submitBackend = (value: string) => {
+    try {
+      const parsed = new URL(value.trim());
+      if (parsed.protocol !== 'https:') throw new Error('HTTPS is required');
+      setBackendUrl(parsed.toString().replace(/\/$/, ''));
+      setSetupError('');
+      setAppState('setup-device');
+    } catch (error) {
+      setSetupError(error instanceof Error ? error.message : 'Invalid backend URL');
+    }
+  };
+
+  const submitDevice = (value: string) => {
+    if (!value.trim()) {
+      setSetupError('Device name is required');
+      return;
+    }
+
+    setDeviceName(value.trim());
+    setSetupError('');
+    setAppState('setup-code');
+  };
+
+  const submitEnrollmentCode = async (value: string) => {
+    if (!value.trim()) {
+      setSetupError('Enrollment code is required');
+      return;
+    }
+
+    setEnrollmentCode(value);
+    setSetupError('');
+    setAppState('enrolling');
+    const credentialAccount = `${new URL(backendUrl).host}:${deviceName}`;
+    try {
+      await RemoteApiClient.enroll({
+        backendUrl,
+        clientVersion: CLIENT_VERSION,
+        credentialAccount,
+        deviceName,
+        enrollmentCode: value.trim(),
+      });
+      const nextConfig = defaultConfig(backendUrl, credentialAccount, deviceName, {
+        ciEnabled,
+        diffEnabled,
+        expertUnsafe,
+        failOn,
+        mode,
+        since,
+      });
+      await saveConfig(nextConfig);
+      setEnrollmentCode('');
+      setConfig(nextConfig);
+      setTargetInput(process.cwd());
+      setAppState('target-selection');
+    } catch (error) {
+      setEnrollmentCode('');
+      setSetupError(error instanceof Error ? error.message : String(error));
+      setAppState('setup-code');
+    }
+  };
+
+  const submitTarget = async (value: string) => {
+    try {
+      const resolved = path.resolve(value.trim() || process.cwd());
+      if (!(await fs.stat(resolved)).isDirectory()) throw new Error('Target is not a directory');
+      setTargetPath(resolved);
+      setTargetError('');
+      setAppState('initializing');
+    } catch (error) {
+      setTargetError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const applyCiResult = async (runtime: AgentRuntime) => {
+    if (!ciEnabled) return;
+    try {
+      const reportPath = path.join(runtime.getRunDirectory(), 'report.json');
+      const report = securityReportSchema.parse(JSON.parse(await fs.readFile(reportPath, 'utf8')));
+      const threshold = (failOn ?? 'high') as FailOnSeverity;
+      const result = computeCiExitCode({ failOn: threshold, findings: report.findings });
+      process.exitCode = result.code;
+      appendMessage(result.code === 0 ? 'system' : 'error', formatCiSummary(result, threshold));
+    } catch (error) {
+      process.exitCode = 2;
+      appendMessage('error', `CI report validation failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const consume = async (stream: AsyncGenerator<StreamActivity>) => {
+    let response = '';
+    setProcessing(true);
+    setActivities([]);
+    setActiveResponse('');
+    try {
+      for await (const activity of stream) {
+        activityCounter.current += 1;
+        setActivities((current) => [...current, {
+          id: activityCounter.current,
+          text: formatActivity(activity),
+          type: activity.type,
+        }].slice(-MAX_ACTIVITY_EVENTS));
+        if (activity.type === 'text') {
+          response += `${response ? '\n' : ''}${activity.content}`;
+          setActiveResponse(response);
+        }
+      }
+
+      if (response) appendMessage('agent', response);
+      const runtime = runtimeRef.current;
+      if (runtime) await applyCiResult(runtime);
+    } catch (error) {
+      appendMessage('error', error instanceof Error ? error.message : String(error));
+      if (ciEnabled) process.exitCode = 2;
+    } finally {
+      setActiveResponse('');
+      setProcessing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (
+      appState !== 'shell' ||
+      !ciEnabled ||
+      !initialObjective?.trim() ||
+      ciStartedRef.current
+    ) {
+      return;
+    }
+
+    const runtime = runtimeRef.current;
+    if (!runtime) {
+      process.exitCode = 2;
       exit();
       return;
     }
 
-    const newMsgId = Date.now().toString();
-    const userMsg: Message = { id: `u-${newMsgId}`, role: 'user', text: command };
-    setMessages(prev => [...prev, userMsg]);
-    setInput('');
+    ciStartedRef.current = true;
+    appendMessage('user', initialObjective.trim());
+    (async () => {
+      try {
+        await consume(runtime.sendMessage(initialObjective.trim()));
+      } finally {
+        try {
+          await runtime.shutdown();
+        } catch {
+          process.exitCode = 2;
+        }
 
-    if (!agentSession) {
-       setMessages(prev => [...prev, { id: `e-${newMsgId}`, role: 'error', text: 'Agent session not initialized.' }]);
-       return;
+        exit();
+      }
+    })();
+  }, [appState, ciEnabled, exit, initialObjective]);
+
+  const submitCommand = async (value: string) => {
+    const command = value.trim();
+    if (!command) return;
+    setInput('');
+    if ([':q', ':quit', 'exit', 'quit'].includes(command.toLowerCase())) {
+      await runtimeRef.current?.shutdown();
+      exit();
+      return;
     }
 
-    setIsProcessing(true);
-    setActivityEvents([]);
-    const agentMsgId = `a-${newMsgId}`;
-    setActiveMessage({ id: agentMsgId, role: 'agent', text: '' });
+    const runtime = runtimeRef.current;
+    if (!runtime) {
+      appendMessage('error', 'Remote runtime is not initialized');
+      return;
+    }
 
-    try {
-      let finalResponse = '';
-      await agentSession.sendMessage(
-        command,
-        (chunk: string) => {
-          finalResponse += chunk;
-          setActiveMessage({ id: agentMsgId, role: 'agent', text: finalResponse });
-        },
-        (event: AgentStreamEvent) => {
-          const line = formatActivityLine(event);
-          activityEventCounter.current += 1;
-          setActivityEvents((prev) => [
-            ...prev,
-            {
-              id: `activity-${activityEventCounter.current}`,
-              kind: event.kind,
-              text: line,
-            },
-          ].slice(-MAX_ACTIVITY_EVENTS));
-        },
-      );
-      setMessages(prev => [...prev, { id: agentMsgId, role: 'agent', text: finalResponse }]);
-      setActiveMessage(null);
-    } catch (error) {
-      const errMsg = (error as Error).message;
-      if (errMsg.includes('API key') || errMsg.includes('401') || errMsg.includes('authentication')) {
-        setMessages(prev => [...prev, { id: `e-${Date.now()}`, role: 'error', text: 'Authentication failed. Run again with --reconfigure.' }]);
-      } else {
-        setMessages(prev => [...prev, { id: `e-${Date.now()}`, role: 'error', text: `Error: ${errMsg}` }]);
+    const control = command.toLowerCase();
+    if (control === '/cancel' || control === '/pause') {
+      try {
+        if (control === '/cancel') await runtime.cancel();
+        else await runtime.pause();
+        appendMessage('system', control === '/cancel' ? 'Cancellation requested' : 'Session paused');
+      } catch (error) {
+        appendMessage('error', error instanceof Error ? error.message : String(error));
       }
 
-      setActiveMessage(null);
-    } finally {
-      setIsProcessing(false);
+      return;
+    }
+
+    if (processing) {
+      appendMessage('error', 'A session is streaming. Use /pause or /cancel first.');
+      return;
+    }
+
+    if (control === '/help') {
+      appendMessage('system', '/tools  /usage  /status  /pause  /resume  /cancel  exit');
+      return;
+    }
+
+    if (control === '/tools') {
+      const tools = runtime.getToolDescriptors();
+      appendMessage(
+        'system',
+        tools.length === 0
+          ? 'No local tools are enabled.'
+          : tools.map((tool) => `${tool.name} [${tool.risk}] - ${tool.description}`).join('\n'),
+      );
+      return;
+    }
+
+    if (control === '/usage') {
+      appendMessage('system', JSON.stringify(runtime.getUsage(), null, 2));
+      return;
+    }
+
+    if (control === '/status') {
+      appendMessage(
+        'system',
+        `Session: ${runtime.getActiveSessionId() ?? 'none'}\nArtifacts: ${runtime.getRunDirectory()}`,
+      );
+      return;
+    }
+
+    if (control === '/resume') {
+      await consume(runtime.resume());
+      return;
+    }
+
+    if (control.startsWith('/')) {
+      appendMessage('error', `Unknown command: ${command}`);
+      return;
+    }
+
+    appendMessage('user', command);
+    await consume(runtime.sendMessage(command));
+  };
+
+  const submitApproval = async (value: string) => {
+    const pending = pendingApprovalRef.current;
+    if (!pending) return;
+    const answer = value.trim().toLowerCase();
+    const control = answer === '/cancel' || answer === '/pause' ? answer : null;
+    const approved = answer === 'y' || answer === 'yes';
+    pendingApprovalRef.current = null;
+    setPendingApproval(null);
+    setInput('');
+    pending.resolve(approved);
+    if (control) {
+      try {
+        if (control === '/cancel') await runtimeRef.current?.cancel();
+        else await runtimeRef.current?.pause();
+        appendMessage('system', control === '/cancel' ? 'Cancellation requested' : 'Session paused');
+      } catch (error) {
+        appendMessage('error', error instanceof Error ? error.message : String(error));
+      }
     }
   };
 
@@ -411,206 +533,103 @@ const App = ({
       {appState === 'booting' && (
         <Box alignItems="center" flexDirection="column" height="100%" justifyContent="center">
           <AsciiMotionCli autoPlay loop={false} />
-          <Box marginTop={1}>
-            <Text color="cyan">Booting Shadow Auditor...</Text>
-          </Box>
+          <Text color="cyan">Starting local Shadow Auditor client...</Text>
         </Box>
       )}
-      {appState === 'setup' && (
-        <Text>Loading configuration...</Text>
-      )}
-      {appState === 'setup-provider' && (
+      {appState === 'loading' && <Text>Loading local client configuration...</Text>}
+      {appState === 'setup-backend' && (
         <Box flexDirection="column" padding={1}>
-          <Box marginBottom={1}>
-            <Text bold color="cyan">🔓 SHADOW AUDITOR :: Configuration Wizard</Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text>Select your LLM provider:</Text>
-          </Box>
-          <SelectInput items={providerOptions} onSelect={handleProviderSelect} />
+          <Text bold color="cyan">Shadow Auditor backend enrollment</Text>
+          <Text>Backend URL (HTTPS):</Text>
+          <TextInput
+            onChange={setBackendUrl}
+            onSubmit={submitBackend}
+            placeholder="https://auditor.example.com"
+            value={backendUrl}
+          />
+          {setupError && <Text color="red">{setupError}</Text>}
         </Box>
       )}
-      {appState === 'setup-baseurl' && (
+      {appState === 'setup-device' && (
         <Box flexDirection="column" padding={1}>
-          <Box marginBottom={1}>
-            <Text bold color="cyan">🔓 SHADOW AUDITOR :: Configuration Wizard</Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text>Enter your custom API base URL:</Text>
-          </Box>
-          <Box>
-            <Text color="gray">❯ </Text>
-            <TextInput
-              onChange={setSetupInput}
-              onSubmit={handleBaseUrlInput}
-              placeholder="https://api.your-provider.com/v1"
-              value={setupInput}
-            />
-          </Box>
+          <Text bold color="cyan">Device identity</Text>
+          <Text>Device name:</Text>
+          <TextInput onChange={setDeviceName} onSubmit={submitDevice} value={deviceName} />
+          {setupError && <Text color="red">{setupError}</Text>}
         </Box>
       )}
-      {appState === 'setup-model' && (
+      {appState === 'setup-code' && (
         <Box flexDirection="column" padding={1}>
-          <Box marginBottom={1}>
-            <Text bold color="cyan">🔓 SHADOW AUDITOR :: Configuration Wizard</Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text>Enter the model name:</Text>
-          </Box>
-          <Box>
-            <Text color="gray">❯ </Text>
-            <TextInput
-              onChange={setSetupInput}
-              onSubmit={handleModelInput}
-              placeholder={getModelPlaceholder(setupData.provider || '')}
-              value={setupInput}
-            />
-          </Box>
+          <Text bold color="cyan">One-time enrollment code</Text>
+          <Text>The code is sent only to {backendUrl} and is never saved locally.</Text>
+          <TextInput
+            mask="*"
+            onChange={setEnrollmentCode}
+            onSubmit={submitEnrollmentCode}
+            value={enrollmentCode}
+          />
+          {setupError && <Text color="red">{setupError}</Text>}
         </Box>
       )}
-      {appState === 'setup-apikey' && (
+      {appState === 'enrolling' && <Text color="cyan"><Spinner type="dots" /> Enrolling device...</Text>}
+      {appState === 'target-selection' && (
         <Box flexDirection="column" padding={1}>
-          <Box marginBottom={1}>
-            <Text bold color="cyan">🔓 SHADOW AUDITOR :: Configuration Wizard</Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text>Enter your API key:</Text>
-          </Box>
-          <Box>
-            <Text color="gray">❯ </Text>
-            <TextInput
-              mask="*"
-              onChange={setSetupInput}
-              onSubmit={handleApiKeyInput}
-              value={setupInput}
-            />
-          </Box>
-        </Box>
-      )}
-      {appState === 'setup-license' && (
-        <Box flexDirection="column" padding={1}>
-          <Box marginBottom={1}>
-            <Text bold color="cyan">🔓 SHADOW AUDITOR :: Configuration Wizard</Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text>Enter your license key <Text color="gray">(press Enter to skip — free tier)</Text>:</Text>
-          </Box>
-          <Box>
-            <Text color="gray">❯ </Text>
-            <TextInput
-              onChange={setSetupInput}
-              onSubmit={handleLicenseKeyInput}
-              placeholder="SA-XXXX-XXXX-XXXX-XXXX"
-              value={setupInput}
-            />
-          </Box>
-          <Box marginTop={1}>
-            <Text color="gray" dimColor>Get a license at: https://polar.sh/Yahya-hacker/shadow-auditor</Text>
-          </Box>
-        </Box>
-      )}
-      {appState === 'license-blocked' && licenseGateResult && (
-        <LicensePaywall gateResult={licenseGateResult} onRetry={() => setAppState('setup-license')} />
-      )}
-      {appState === 'targetSelection' && (
-        <Box flexDirection="column">
-          <Box borderColor="cyan" borderStyle="round" paddingX={2} paddingY={1}>
-            <Text bold color="cyan">Shadow Auditor Target Selection</Text>
-          </Box>
-          <Box flexDirection="column" marginTop={1}>
-            {useCurrentDir ? (
-              <Box>
-                <Text color="yellow">Use current directory (</Text>
-                <Text bold>{process.cwd()}</Text>
-                <Text color="yellow">) for the audit? [Y/n] </Text>
-                <TextInput
-                  onChange={setCustomPathInput}
-                  onSubmit={handleUseCurrentDirSubmit}
-                  value={customPathInput}
-                />
-              </Box>
-            ) : (
-              <Box flexDirection="column">
-                <Box>
-                  <Text color="yellow">Enter target directory: </Text>
-                  <TextInput
-                    onChange={setCustomPathInput}
-                    onSubmit={handlePathSubmit}
-                    value={customPathInput}
-                  />
-                </Box>
-                {pathError && <Text color="red">{pathError}</Text>}
-              </Box>
-            )}
-          </Box>
+          <Text bold color="cyan">Local repository path</Text>
+          <TextInput onChange={setTargetInput} onSubmit={submitTarget} value={targetInput} />
+          {targetError && <Text color="red">{targetError}</Text>}
         </Box>
       )}
       {appState === 'initializing' && (
-        <Box flexDirection="column" padding={1}>
-          <Text color="cyan"><Spinner type="dots" /> Parsing AST with tree-sitter & initializing agent...</Text>
-        </Box>
+        <Text color="cyan"><Spinner type="dots" /> Building local repository map and negotiating capabilities...</Text>
       )}
       {appState === 'shell' && (
         <Box flexDirection="column" height="100%">
-          {/* Header */}
-          <Box borderColor="magenta" borderStyle="round" flexDirection="column" paddingX={2} paddingY={1}>
-            <Text bold color="magenta">Shadow Auditor</Text>
-            <Text color="gray">Interactive Security Analysis Shell</Text>
-            <Text color="yellow">Tip: Type a command to start investigating the codebase.</Text>
-          </Box>
-
-          {/* Status Bar */}
-          <Box marginBottom={1} paddingX={1}>
-            <Text color="blue">● Environment loaded: </Text>
-            <Text color="white">
-              Provider: {config?.provider} | Model: {config?.model} | Target: {path.basename(targetPath)}
-              {expertUnsafe ? ' | Mode: EXPERT-UNSAFE' : ''}
+          <Box borderColor="magenta" borderStyle="round" flexDirection="column" paddingX={2}>
+            <Text bold color="magenta">Shadow Auditor public local client</Text>
+            <Text color="gray">
+              Backend: {config?.backendUrl ?? 'unavailable'} | Target: {targetPath ? path.basename(targetPath) : 'unavailable'}
             </Text>
           </Box>
-
-          {/* Chat History */}
           <Static items={messages}>
-            {(msg) => (
-              <Box flexDirection="column" key={msg.id} marginBottom={1}>
-                <Text color={msg.role === 'user' ? 'green' : msg.role === 'error' ? 'red' : 'cyan'}>
-                  {msg.role === 'user' ? '❯ ' : msg.role === 'error' ? '✖ ' : '● '}
-                  {msg.text}
+            {(message) => (
+              <Box flexDirection="column" key={message.id} marginBottom={1}>
+                <Text color={message.role === 'error' ? 'red' : message.role === 'user' ? 'green' : 'cyan'}>
+                  {message.role === 'user' ? '> ' : message.role === 'error' ? '! ' : '* '}
+                  {message.text}
                 </Text>
               </Box>
             )}
           </Static>
-
-          {/* Input Area */}
-          <Box flexDirection="column" marginTop={1}>
-            {(isProcessing || activityEvents.length > 0) && (
-              <ActivityStreamPanel activityEvents={activityEvents} isProcessing={isProcessing} />
-            )}
-            {activeMessage && (
-               <Box flexDirection="column" marginBottom={1}>
-                 <Text color="cyan">● Streaming response</Text>
-                 <Text color="cyan">{activeMessage.text}</Text>
-                </Box>
-             )}
-            <Box>
-              <Text color="green">{targetPath} [✓] </Text>
+          {(processing || activities.length > 0) && (
+            <ActivityPanel activities={activities} processing={processing} />
+          )}
+          {pendingApproval && (
+            <Box borderColor="yellow" borderStyle="round" flexDirection="column" paddingX={1}>
+              <Text bold color="yellow">Local tool approval required</Text>
+              <Text>{pendingApproval.toolName} [{pendingApproval.risk}]</Text>
+              <Text>{pendingApproval.reason}</Text>
+              <Text color="gray">{JSON.stringify(pendingApproval.arguments, null, 2)}</Text>
+              <Text>Approve this digest-bound proposal? y/N</Text>
             </Box>
-            <Box>
-              <Text bold color="magenta">❯ </Text>
-              {isProcessing ? (
-                 <Text color="cyan"><Spinner type="dots" /> Agent is thinking...</Text>
-              ) : (
-                <TextInput
-                  onChange={setInput}
-                  onSubmit={handleCommandSubmit}
-                  placeholder="Describe a task or ask a question to get started..."
-                  value={input}
-                />
-              )}
-            </Box>
-            <Box marginTop={1}>
-              <Text color="gray" dimColor>Type 'exit' or Ctrl+C to leave the shell.</Text>
-            </Box>
+          )}
+          {activeResponse && <Text color="cyan">{activeResponse}</Text>}
+          <Box marginTop={1}>
+            <Text bold color="magenta">&gt; </Text>
+            <TextInput
+              onChange={setInput}
+              onSubmit={pendingApproval ? submitApproval : submitCommand}
+              placeholder={
+                pendingApproval
+                  ? 'y/N, /pause, or /cancel'
+                  : processing
+                    ? '/pause or /cancel'
+                    : 'Describe the security audit objective'
+              }
+              value={input}
+            />
+            {processing && <Text color="cyan"> <Spinner type="dots" /></Text>}
           </Box>
+          <Text color="gray">Local controls: /help</Text>
         </Box>
       )}
     </Box>

@@ -1,14 +1,14 @@
 /**
  * Remediation Tools - Agent-facing tools for the patch-engineer worker.
  *
- * These tools wrap the TestRunner and RemediationLoop for swarm agent use.
+ * These tools wrap the TestRunner and RemediationLoop for local remediation use.
  * The patch-engineer uses these to apply patches, run tests inside
  * twin containers, and auto-revert on degradation.
  */
 
-import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 
+import { type LocalToolSet, localTool as tool } from '../tools/local-tool.js';
 import { RemediationLoop } from './remediation-loop.js';
 import { type TestRunner } from './test-runner.js';
 
@@ -25,7 +25,7 @@ export interface RemediationToolsOptions {
 /**
  * Create agent-facing remediation tools for the patch-engineer role.
  */
-export function createRemediationTools(options: RemediationToolsOptions): ToolSet {
+export function createRemediationTools(options: RemediationToolsOptions): LocalToolSet {
   const { remediationLoop, testRunner } = options;
 
   return {

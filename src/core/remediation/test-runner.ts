@@ -261,7 +261,7 @@ export class TestRunner {
   }
 
   /**
-   * Capture a baseline fingerprint before the swarm begins.
+   * Capture a baseline fingerprint before remediation begins.
    * This records which tests pass/fail so we can detect degradation later.
    */
   async captureBaseline(): Promise<TestFingerprint> {

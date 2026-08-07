@@ -1,7 +1,6 @@
 import * as fs from 'node:fs/promises';
 import { z } from 'zod';
 
-import { confirmFileEdit } from '../../utils/human-in-loop.js';
 import { type PathGuard, PathGuardError } from '../policy/path-guard.js';
 
 export function createEditFileTool(pathGuard: PathGuard) {
@@ -22,11 +21,6 @@ export function createEditFileTool(pathGuard: PathGuard) {
         const content = await fs.readFile(absolutePath, 'utf8');
         if (!content.includes(targetCode)) {
           return `[ERROR] Target code not found in "${filePath}". Read the file again and provide the exact snippet.`;
-        }
-
-        const confirmed = await confirmFileEdit(filePath, targetCode, replacementCode);
-        if (!confirmed) {
-          return `[DENIED] User denied patch for "${filePath}".`;
         }
 
         const nextContent = content.replace(targetCode, replacementCode);

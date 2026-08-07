@@ -1,102 +1,52 @@
-import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
-import type { SecurityReport } from './output/report-schema.js';
+import type { EventEnvelope, JsonObject, UsageTotals } from '../protocol/generated.js';
 
 export interface SessionMetadata {
+  backendUrl: string;
   completedAt?: string;
-  maxOutputTokens: number;
-  maxToolSteps: number;
-  mcpEnabled: boolean;
-  model: string;
-  provider: string;
+  cursor: number;
+  lastEventHash: null | string;
+  protocolVersion: '1.0';
+  repositoryPath: string;
   runId: string;
+  sessionIds: string[];
   startedAt: string;
-  targetPath: string;
-  warnings: string[];
+  status: 'cancelled' | 'completed' | 'failed' | 'running';
+  usage: UsageTotals;
 }
 
-export interface MessageArtifactEvent {
-  content: unknown;
-  role: 'assistant' | 'system' | 'tool' | 'user';
+export interface LocalMessageArtifact {
+  content: string;
+  role: 'assistant' | 'system' | 'user';
   timestamp: string;
 }
 
-export interface ToolArtifactEvent {
-  data: unknown;
-  event: 'call' | 'result';
-  timestamp: string;
-  toolCallId: string;
-  toolName: string;
-}
-
-async function writeFileAtomic(filePath: string, content: string): Promise<void> {
-  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tempPath, content, 'utf8');
-
-  try {
-    await fs.rename(tempPath, filePath);
-  } catch (error) {
-    const renameError = error as NodeJS.ErrnoException;
-
-    if (renameError.code === 'EEXIST' || renameError.code === 'EPERM') {
-      await fs.rm(filePath, { force: true });
-      await fs.rename(tempPath, filePath);
-      return;
-    }
-
-    await fs.rm(tempPath, { force: true });
-    throw error;
-  }
-}
-
-function createRunId(): string {
-  const timestamp = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
-  const shortId = randomUUID().slice(0, 8);
-  return `${timestamp}-${shortId}`;
-}
-
-async function appendJsonLine(filePath: string, payload: unknown): Promise<void> {
-  const line = `${JSON.stringify(payload)}\n`;
-  await fs.appendFile(filePath, line, 'utf8');
+function generateRunId(): string {
+  const timestamp = new Date().toISOString().replaceAll(/[-:.TZ]/g, '').slice(0, 14);
+  return `${timestamp}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
 export class RunArtifacts {
-  private readonly messagesPath: string;
-  private meta: SessionMetadata;
-  private readonly metaPath: string;
-  private readonly reportJsonPath: string;
-  private readonly reportMarkdownPath: string;
-  private readonly reportSarifPath: string;
-  private readonly toolEventsPath: string;
-
   private constructor(
     private readonly runDirectory: string,
-    initialMeta: SessionMetadata,
-  ) {
-    this.meta = initialMeta;
-    this.metaPath = path.join(runDirectory, 'session-meta.json');
-    this.messagesPath = path.join(runDirectory, 'messages.jsonl');
-    this.toolEventsPath = path.join(runDirectory, 'tool-events.jsonl');
-    this.reportMarkdownPath = path.join(runDirectory, 'report.md');
-    this.reportJsonPath = path.join(runDirectory, 'report.json');
-    this.reportSarifPath = path.join(runDirectory, 'report.sarif');
-  }
+    private metadata: SessionMetadata,
+  ) {}
 
-  static async create(basePath: string, initialMeta: Omit<SessionMetadata, 'runId' | 'startedAt'>): Promise<RunArtifacts> {
-    const runId = createRunId();
-    const startedAt = new Date().toISOString();
+  static async create(
+    basePath: string,
+    initial: Omit<SessionMetadata, 'runId' | 'startedAt'>,
+  ): Promise<RunArtifacts> {
+    const runId = generateRunId();
     const runDirectory = path.join(basePath, '.shadow-auditor', 'runs', runId);
-    await fs.mkdir(runDirectory, { recursive: true });
-
+    await fs.mkdir(runDirectory, { mode: 0o700, recursive: true });
     const instance = new RunArtifacts(runDirectory, {
-      ...initialMeta,
+      ...initial,
       runId,
-      startedAt,
+      startedAt: new Date().toISOString(),
     });
-
-    await instance.writeMeta();
+    await instance.writeMetadata();
     return instance;
   }
 
@@ -104,43 +54,59 @@ export class RunArtifacts {
     return this.runDirectory;
   }
 
-  async markCompleted(): Promise<void> {
-    this.meta = {
-      ...this.meta,
-      completedAt: new Date().toISOString(),
-    };
-    await this.writeMeta();
+  async recordEvent(envelope: EventEnvelope): Promise<void> {
+    await this.appendJsonLine('events.jsonl', envelope as unknown as JsonObject);
   }
 
-  async recordMessage(event: MessageArtifactEvent): Promise<void> {
-    await appendJsonLine(this.messagesPath, event);
+  async recordMessage(message: LocalMessageArtifact): Promise<void> {
+    await this.appendJsonLine('messages.jsonl', message as unknown as JsonObject);
   }
 
-  async recordToolEvent(event: ToolArtifactEvent): Promise<void> {
-    await appendJsonLine(this.toolEventsPath, event);
+  async updateMeta(update: Partial<Omit<SessionMetadata, 'runId' | 'startedAt'>>): Promise<void> {
+    this.metadata = { ...this.metadata, ...update };
+    await this.writeMetadata();
   }
 
-  async updateMeta(partial: Partial<SessionMetadata>): Promise<void> {
-    this.meta = {
-      ...this.meta,
-      ...partial,
-    };
-    await this.writeMeta();
-  }
-
-  async writeReportJson(report: SecurityReport): Promise<void> {
-    await writeFileAtomic(this.reportJsonPath, `${JSON.stringify(report, null, 2)}\n`);
+  async writeReportJson(report: JsonObject): Promise<void> {
+    await fs.writeFile(
+      path.join(this.runDirectory, 'report.json'),
+      `${JSON.stringify(report, null, 2)}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    );
   }
 
   async writeReportMarkdown(markdown: string): Promise<void> {
-    await writeFileAtomic(this.reportMarkdownPath, `${markdown}\n`);
+    await fs.writeFile(path.join(this.runDirectory, 'report.md'), markdown, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
   }
 
-  async writeReportSarif(sarif: Record<string, unknown>): Promise<void> {
-    await writeFileAtomic(this.reportSarifPath, `${JSON.stringify(sarif, null, 2)}\n`);
+  async writeReportSarif(sarif: JsonObject): Promise<void> {
+    await fs.writeFile(
+      path.join(this.runDirectory, 'report.sarif'),
+      `${JSON.stringify(sarif, null, 2)}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    );
   }
 
-  private async writeMeta(): Promise<void> {
-    await writeFileAtomic(this.metaPath, `${JSON.stringify(this.meta, null, 2)}\n`);
+  private async appendJsonLine(fileName: string, value: JsonObject): Promise<void> {
+    const handle = await fs.open(path.join(this.runDirectory, fileName), 'a', 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify(value)}\n`, 'utf8');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  }
+
+  private async writeMetadata(): Promise<void> {
+    const destination = path.join(this.runDirectory, 'meta.json');
+    const temporary = `${destination}.${process.pid}.tmp`;
+    await fs.writeFile(temporary, `${JSON.stringify(this.metadata, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    await fs.rename(temporary, destination);
   }
 }

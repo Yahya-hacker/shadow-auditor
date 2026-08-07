@@ -1,5 +1,5 @@
 # Shadow Auditor — NPM Publish Ignore List
-# Only ./bin, ./dist, oclif.manifest.json, package.json, README.md ship.
+# Only ./bin, ./dist, ./protocol, oclif.manifest.json, package.json, README.md ship.
 
 # Source code (compiled output is in ./dist)
 src/

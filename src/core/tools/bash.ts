@@ -2,7 +2,6 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 
-import { confirmCommandExecution } from '../../utils/human-in-loop.js';
 import { type CommandPolicyConfig, evaluateCommandPolicy } from '../policy/command-policy.js';
 
 const execAsync = promisify(exec);
@@ -33,14 +32,6 @@ export function createBashTool(options: BashToolOptions) {
       const policyDecision = evaluateCommandPolicy(trimmed, options.commandPolicy);
       if (!policyDecision.allowed) {
         return policyDecision.reason;
-      }
-
-      // Require human confirmation whenever the policy signals a warning (non-allowlisted or dangerous)
-      if (policyDecision.warning) {
-        const confirmed = await confirmCommandExecution(trimmed, policyDecision.warning);
-        if (!confirmed) {
-          return `[DENIED] User denied command execution: "${trimmed}".`;
-        }
       }
 
       const startedAt = new Date().toISOString();
