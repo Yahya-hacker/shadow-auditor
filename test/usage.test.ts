@@ -72,4 +72,23 @@ describe('normalizeTokenUsage', () => {
       unclassified: 21,
     });
   });
+
+  it('rejects an inconsistent reported total in favor of component accounting', () => {
+    expect(normalizeTokenUsage({
+      usage_metadata: {input_tokens: 12, output_tokens: 3, total_tokens: 2},
+    })).to.deep.equal({
+      completion: 3,
+      prompt: 12,
+      total: 15,
+      totalSource: 'derived',
+      unclassified: 0,
+    });
+  });
+
+  it('uses the largest consistent counter when providers expose multiple usage shapes', () => {
+    expect(normalizeTokenUsage({
+      response_metadata: {usage: {input_tokens: 18, output_tokens: 7, total_tokens: 25}},
+      usage_metadata: {input_tokens: 2, output_tokens: 1, total_tokens: 3},
+    })?.total).to.equal(25);
+  });
 });

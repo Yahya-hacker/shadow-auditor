@@ -25,6 +25,8 @@ describe('mission state and transitions', () => {
       budget: {
         maxTokens: 10_000,
         maxToolCalls: 100,
+        modelReservations: {},
+        reservedToolCallIds: [],
         tokensUsed: 0,
         toolCallsUsed: 0,
       },
@@ -144,6 +146,8 @@ describe('mission state and transitions', () => {
         isBudgetExhausted({
           maxTokens: 1000,
           maxToolCalls: 10,
+          modelReservations: {},
+          reservedToolCallIds: [],
           tokensUsed: 1000,
           toolCallsUsed: 2,
         }),
@@ -153,8 +157,21 @@ describe('mission state and transitions', () => {
         isBudgetExhausted({
           maxTokens: 1000,
           maxToolCalls: 10,
+          modelReservations: {},
+          reservedToolCallIds: [],
           tokensUsed: 500,
           toolCallsUsed: 10,
+        }),
+      ).to.equal(true);
+
+      expect(
+        isBudgetExhausted({
+          maxTokens: 1000,
+          maxToolCalls: 10,
+          modelReservations: {active: 500},
+          reservedToolCallIds: [],
+          tokensUsed: 500,
+          toolCallsUsed: 2,
         }),
       ).to.equal(true);
     });
@@ -232,6 +249,8 @@ describe('mission state and transitions', () => {
         budget: {
           maxTokens: 100,
           maxToolCalls: 10,
+          modelReservations: {},
+          reservedToolCallIds: [],
           tokensUsed: 100,
           toolCallsUsed: 1,
         },

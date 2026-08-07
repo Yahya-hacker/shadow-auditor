@@ -71,6 +71,8 @@ export type MissionObjective = z.infer<typeof missionObjectiveSchema>;
 export const budgetStateSchema = z.object({
   maxTokens: z.number().int().positive(),
   maxToolCalls: z.number().int().positive(),
+  modelReservations: z.record(z.string(), z.number().int().positive()).default({}),
+  reservedToolCallIds: z.array(z.string()).default([]),
   tokensUsed: z.number().int().nonnegative().default(0),
   toolCallsUsed: z.number().int().nonnegative().default(0),
 });

@@ -1,4 +1,4 @@
-import {AIMessage, AIMessageChunk} from '@langchain/core/messages';
+import {AIMessage, AIMessageChunk, HumanMessage} from '@langchain/core/messages';
 import {Command} from '@langchain/langgraph';
 import {expect} from 'chai';
 import {z} from 'zod';
@@ -12,6 +12,115 @@ import {executeLangChainToolLoop} from '../src/core/services/langchain-tool-exec
 import {createStagedReportFindingTool} from '../src/core/tools/report-finding.js';
 
 describe('executeLangChainToolLoop', () => {
+  it('bounds oversized worker history before the first model invocation', async () => {
+    let observedMessages = 0;
+    const model = {
+      bindTools() {
+        return {
+          async *stream(messages: unknown[]) {
+            observedMessages = messages.length;
+            yield new AIMessageChunk({content: 'Done.'});
+          },
+        };
+      },
+    };
+
+    await executeLangChainToolLoop({
+      history: Array.from(
+        {length: 100},
+        (_, index) => new HumanMessage(`Prior untrusted evidence ${index}`),
+      ),
+      maxToolSteps: 1,
+      model: model as never,
+      prompt: 'Analyze the target.',
+      systemPrompt: 'You are a security worker.',
+      tools: {},
+    });
+
+    expect(observedMessages).to.be.at.most(48);
+  });
+
+  it('reserves mission tool budget before side effects and records results', async () => {
+    const lifecycle: string[] = [];
+    let reservedCallId = '';
+    let reservedExecutionId = '';
+    let streamCount = 0;
+    const model = {
+      bindTools() {
+        return {
+          async *stream() {
+            streamCount += 1;
+            yield streamCount === 1
+              ? new AIMessageChunk({
+                content: '',
+                tool_calls: [{
+                  args: {},
+                  id: 'runtime-call',
+                  name: 'inspect',
+                  type: 'tool_call' as const,
+                }],
+                usage_metadata: {input_tokens: 3, output_tokens: 2, total_tokens: 5},
+              })
+              : new AIMessageChunk({content: 'Done.'});
+          },
+        };
+      },
+    };
+
+    await executeLangChainToolLoop({
+      maxToolSteps: 2,
+      missionRuntime: {
+        async afterModelInvocation() {
+          lifecycle.push('model-result');
+        },
+        async afterToolExecution(_invocation, results) {
+          lifecycle.push(`tool-result:${results[0]?.succeeded}`);
+        },
+        async beforeModelInvocation() {
+          lifecycle.push('model-reserve');
+          return 'reservation-worker';
+        },
+        async beforeToolExecution(invocation, calls) {
+          reservedExecutionId = invocation.executionId ?? '';
+          reservedCallId = calls[0]?.callId ?? '';
+          lifecycle.push('tool-reserve');
+        },
+        async recordMissionCompleted() {},
+        async recordMissionFailed() {},
+        async recordStageCompleted() {},
+        async recordStageStarted() {},
+      },
+      model: model as never,
+      prompt: 'Analyze.',
+      runtimeAgentId: 'worker-1',
+      runtimeExecutionId: 'task-1',
+      runtimeStage: 'swarm_researcher',
+      systemPrompt: 'Use tools.',
+      tools: {
+        inspect: {
+          description: 'Inspect.',
+          async execute() {
+            lifecycle.push('side-effect');
+            return 'ok';
+          },
+          inputSchema: z.object({}),
+        },
+      },
+    });
+
+    expect(lifecycle).to.deep.equal([
+      'model-reserve',
+      'model-result',
+      'tool-reserve',
+      'side-effect',
+      'tool-result:true',
+      'model-reserve',
+      'model-result',
+    ]);
+    expect(reservedExecutionId).to.equal('task-1:0');
+    expect(reservedCallId).to.equal('task-1:0:0');
+  });
+
   it('reports provider usage from streamed swarm worker responses', async () => {
     const activities: Array<{kind: string; usage?: unknown}> = [];
     const model = {
@@ -56,6 +165,55 @@ describe('executeLangChainToolLoop', () => {
         },
       },
     ]);
+  });
+
+  it('accounts for the complete forced-finalization transcript', async () => {
+    const estimates: number[] = [];
+    const model = {
+      bindTools() {
+        return {
+          async *stream() {
+            yield new AIMessageChunk({
+              content: '',
+              tool_calls: [{
+                args: {query: 'x'.repeat(900)},
+                id: 'oversized-call',
+                name: 'inspect',
+                type: 'tool_call' as const,
+              }],
+            });
+          },
+        };
+      },
+      async invoke() {
+        return new AIMessage('Finalized.');
+      },
+    };
+
+    await executeLangChainToolLoop({
+      maxToolSteps: 0,
+      missionRuntime: {
+        async afterModelInvocation() {},
+        async afterToolExecution() {},
+        async beforeModelInvocation(invocation) {
+          estimates.push(invocation.estimatedTokens ?? 0);
+          return `reservation-${estimates.length}`;
+        },
+        async beforeToolExecution() {},
+        async recordMissionCompleted() {},
+        async recordMissionFailed() {},
+        async recordStageCompleted() {},
+        async recordStageStarted() {},
+      },
+      model: model as never,
+      prompt: 'Analyze.',
+      systemPrompt: 'Use tools.',
+      tools: {},
+    });
+
+    expect(estimates).to.have.length(2);
+    expect(estimates[1]).to.be.greaterThan(estimates[0] ?? 0);
+    expect(estimates[1]).to.be.greaterThan(300);
   });
 
   it('does not expose an incomplete DeepSeek protocol prefix as worker progress', async () => {

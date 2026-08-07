@@ -7,6 +7,7 @@ import { type BaseMessage } from '@langchain/core/messages';
 import { type ToolSet } from 'ai';
 
 import type { ShadowConfig } from '../../utils/config.js';
+import type { MissionRuntimeObserver } from '../orchestrator/mission-runtime.js';
 import type { NormalizedTokenUsage } from '../usage.js';
 
 import { logToStderr } from '../../utils/stderr-logger.js';
@@ -28,6 +29,7 @@ export interface AgentWorkerOptions {
   blackboard: Blackboard;
   diffScopeHint?: string;
   maxToolSteps?: number;
+  missionRuntime?: MissionRuntimeObserver;
   model: BaseChatModel;
   modelTier?: ModelTier;
   onReportBatch?: (
@@ -57,6 +59,7 @@ export class AgentWorker {
   private readonly maxContextMessages: number;
   private readonly maxToolSteps: number;
   private readonly messages: BaseMessage[] = [];
+  private readonly missionRuntime?: MissionRuntimeObserver;
   private readonly model: BaseChatModel;
   private readonly onReportBatch?: AgentWorkerOptions['onReportBatch'];
   private readonly providerHint?: string;
@@ -67,6 +70,7 @@ export class AgentWorker {
     this.agentId = options.agentId;
     this.role = options.role;
     this.model = options.model;
+    this.missionRuntime = options.missionRuntime;
     this.onReportBatch = options.onReportBatch;
     this.providerHint = options.providerHint;
     this.blackboard = options.blackboard;
@@ -160,6 +164,7 @@ Collaborate with the swarm. Inspect the blackboard if necessary, perform your ta
       const streamResult = await executeLangChainToolLoop({
         history: this.messages,
         maxToolSteps: this.maxToolSteps,
+        missionRuntime: this.missionRuntime,
         model: this.model,
         onActivity: (activity) => {
           onActivity?.({
@@ -178,6 +183,11 @@ Collaborate with the swarm. Inspect the blackboard if necessary, perform your ta
         },
         prompt: userPrompt,
         providerHint: this.providerHint,
+        runtimeAgentId: this.agentId,
+        runtimeExecutionId: Number(task.parameters._retryCount ?? 0) > 0
+          ? `${task.taskId}:retry-${String(task.parameters._retryCount)}`
+          : task.taskId,
+        runtimeStage: `swarm_${this.role}`,
         signal,
         systemPrompt: this.systemPrompt,
         tools: this.tools,

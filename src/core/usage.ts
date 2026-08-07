@@ -38,12 +38,13 @@ function parseUsage(value: unknown): NormalizedTokenUsage | undefined {
   const reportedTotal = tokenCount(
     usage.total_tokens ?? usage.totalTokens ?? usage.totalTokenCount,
   );
-  const total = reportedTotal || prompt + completion;
+  const componentTotal = prompt + completion;
+  const total = Math.max(reportedTotal, componentTotal);
   return total > 0 ? {
     completion,
     prompt,
     total,
-    totalSource: reportedTotal > 0 ? 'provider' : 'derived',
+    totalSource: reportedTotal >= componentTotal && reportedTotal > 0 ? 'provider' : 'derived',
     unclassified: Math.max(0, total - prompt - completion),
   } : undefined;
 }
@@ -52,7 +53,7 @@ export function normalizeTokenUsage(message: unknown): NormalizedTokenUsage | un
   const value = record(message);
   if (!value) return;
   const responseMetadata = record(value.response_metadata ?? value.responseMetadata);
-  for (const candidate of [
+  const usageValues = [
     value.usage_metadata,
     value.usageMetadata,
     value.usage,
@@ -61,8 +62,13 @@ export function normalizeTokenUsage(message: unknown): NormalizedTokenUsage | un
     responseMetadata?.token_usage,
     responseMetadata?.tokenUsage,
     responseMetadata?.usage,
-  ]) {
-    const usage = parseUsage(candidate);
-    if (usage) return usage;
+  ];
+  let largest: NormalizedTokenUsage | undefined;
+
+  for (const usageValue of usageValues) {
+    const usage = parseUsage(usageValue);
+    if (usage && (!largest || usage.total > largest.total)) largest = usage;
   }
+
+  return largest;
 }

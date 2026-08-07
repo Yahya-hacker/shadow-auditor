@@ -39,4 +39,24 @@ describe('EventStore durability', () => {
     expect(events.value.map((event) => event.payload.sequence)).to.deep.equal([2]);
     await fs.rm(storagePath, { force: true, recursive: true });
   });
+
+  it('streams large logs while preserving filters, limits, and counts', async () => {
+    const storagePath = await fs.mkdtemp(path.join(os.tmpdir(), 'event-store-large-'));
+    try {
+      const store = await EventStore.create({runId: 'large-run', storagePath});
+      for (let sequence = 0; sequence < 2000; sequence += 1) {
+        const eventType = sequence % 2 === 0 ? 'tool_call' : 'tool_result';
+        expect((await store.append(eventType, {sequence})).ok).to.equal(true);
+      }
+
+      expect(await store.count()).to.equal(2000);
+      const filtered = await store.read({eventTypes: ['tool_result'], limit: 7});
+      expect(filtered.ok).to.equal(true);
+      if (!filtered.ok) throw new Error(filtered.error);
+      expect(filtered.value).to.have.length(7);
+      expect(filtered.value.every(({eventType}) => eventType === 'tool_result')).to.equal(true);
+    } finally {
+      await fs.rm(storagePath, {force: true, recursive: true});
+    }
+  });
 });

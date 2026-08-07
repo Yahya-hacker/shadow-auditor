@@ -13,6 +13,8 @@ import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
+import type { MissionRuntimeObserver } from '../orchestrator/mission-runtime.js';
+
 import { type ShadowConfig } from '../../utils/config.js';
 import { DEFAULT_MAX_TOOL_STEPS } from '../model-capabilities.js';
 import { PersistentCheckpointSaver } from '../orchestrator/checkpoint-saver.js';
@@ -43,6 +45,7 @@ export interface SwarmCoordinatorOptions {
   config: ShadowConfig;
   diffScopeHint?: string;
   maxToolSteps?: number;
+  missionRuntime?: MissionRuntimeObserver;
   model: BaseChatModel;
   onReportBatch?: (
     findings: Array<{ finding: EnhancedFinding; sourceClaimId: string }>,
@@ -67,6 +70,7 @@ export class SwarmCoordinator implements SwarmCoordinatorRuntime {
   private currentThreadId: string;
   private lastSynthesis: null | SynthesisResult = null;
   private readonly maxToolSteps: number;
+  private readonly missionRuntime?: MissionRuntimeObserver;
   private readonly onReportBatch?: SwarmCoordinatorOptions['onReportBatch'];
   private userMessage = '';
   private readonly workers: Map<string, AgentWorker> = new Map();
@@ -75,6 +79,7 @@ export class SwarmCoordinator implements SwarmCoordinatorRuntime {
     this.config = options.config;
     this.model = options.model;
     this.maxToolSteps = options.maxToolSteps ?? DEFAULT_MAX_TOOL_STEPS;
+    this.missionRuntime = options.missionRuntime;
     this.onReportBatch = options.onReportBatch;
     this.allTools = options.allTools;
     this.storagePath = options.storagePath;
@@ -99,6 +104,7 @@ export class SwarmCoordinator implements SwarmCoordinatorRuntime {
       blackboard: this.getBlackboard(),
       diffScopeHint: this.diffScopeHint,
       maxToolSteps: this.maxToolSteps,
+      missionRuntime: this.missionRuntime,
       model: options.model,
       modelTier: options.modelTier,
       onReportBatch: this.onReportBatch,

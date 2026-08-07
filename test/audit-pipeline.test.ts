@@ -7,6 +7,7 @@ import { expect } from 'chai';
 import { z } from 'zod';
 
 import type { ToolEntry } from '../src/core/graph/tool-retriever.js';
+import type { MissionRuntimeObserver } from '../src/core/orchestrator/mission-runtime.js';
 
 import {
   calculateWorkflowRecursionLimit,
@@ -177,9 +178,11 @@ describe('deterministic audit pipeline', () => {
 
   it('executes every stage in order and passes validated artifacts downstream', async () => {
     const invocations: string[] = [];
+    const runtimeEvents: string[] = [];
     const handoffs: Record<string, string> = {};
     const counts = new Map<string, number>();
     const stageInputs: Array<{messages: BaseMessage[]; stage: string}> = [];
+    let injectedRetry = false;
     let sawResponsesSafeHistory = false;
     const model = createModel((messages) => {
       const system = String(messages[0]?.content ?? '');
@@ -188,6 +191,13 @@ describe('deterministic audit pipeline', () => {
       stageInputs.push({messages, stage});
       invocations.push(stage);
       handoffs[stage] = task;
+      if (stage === 'codebase' && !injectedRetry) {
+        injectedRetry = true;
+        const error = new Error('429 transient provider throttle') as Error & {retryAfterMs: number};
+        error.retryAfterMs = 0;
+        throw error;
+      }
+
       const count = (counts.get(stage) ?? 0) + 1;
       counts.set(stage, count);
 
@@ -240,8 +250,32 @@ describe('deterministic audit pipeline', () => {
         '# Security Audit Report\n\n## Executive Summary\nNo confirmed vulnerabilities were found.',
       );
     });
+    const missionRuntime: MissionRuntimeObserver = {
+      async afterModelInvocation({stage}) {
+        runtimeEvents.push(`model:end:${stage}`);
+      },
+      async afterToolExecution({stage}, results) {
+        runtimeEvents.push(`tools:end:${stage}:${results.map(({callId}) => callId).join(',')}`);
+      },
+      async beforeModelInvocation({stage}) {
+        runtimeEvents.push(`model:start:${stage}`);
+        return `reservation-${stage}`;
+      },
+      async beforeToolExecution({stage}, calls) {
+        runtimeEvents.push(`tools:start:${stage}:${calls.map(({callId}) => callId).join(',')}`);
+      },
+      async recordMissionCompleted() {},
+      async recordMissionFailed() {},
+      async recordStageCompleted(stage) {
+        runtimeEvents.push(`stage:end:${stage}`);
+      },
+      async recordStageStarted(stage) {
+        runtimeEvents.push(`stage:start:${stage}`);
+      },
+    };
 
     const workflow = compileWorkflow({
+      missionRuntime,
       model,
       repoMap: '- src/index.ts',
       systemPrompt: 'You are Shadow.',
@@ -257,6 +291,7 @@ describe('deterministic audit pipeline', () => {
     );
 
     expect(invocations).to.deep.equal([
+      'codebase',
       'codebase',
       'codebase',
       'sast',
@@ -275,6 +310,30 @@ describe('deterministic audit pipeline', () => {
     expect(state.pipelineFindings).to.deep.equal([]);
     expect(state.activeStage).to.equal('reporting');
     expect(sawResponsesSafeHistory).to.equal(true);
+    expect(runtimeEvents.filter((event) => event.startsWith('stage:start:'))).to.deep.equal([
+      'stage:start:codebase_intelligence',
+      'stage:start:sast_audit',
+      'stage:start:devils_advocate',
+      'stage:start:reporting',
+    ]);
+    expect(runtimeEvents.filter((event) => event.startsWith('stage:end:'))).to.deep.equal([
+      'stage:end:codebase_intelligence',
+      'stage:end:sast_audit',
+      'stage:end:devils_advocate',
+      'stage:end:reporting',
+    ]);
+    expect(runtimeEvents.filter((event) => event === 'model:start:codebase_intelligence')).to.have.length(3);
+    expect(runtimeEvents.filter((event) => event === 'model:end:codebase_intelligence')).to.have.length(3);
+    const toolStarts = runtimeEvents.filter((event) => event.startsWith('tools:start:'));
+    expect(toolStarts.length).to.be.greaterThanOrEqual(2);
+    expect(toolStarts).to.satisfy((events: string[]) =>
+      events.every((event) => /^tools:start:[a-z_]+:[a-z_]+:\d+:\d+$/.test(event)));
+    for (const start of toolStarts) {
+      expect(runtimeEvents.indexOf(start)).to.be.lessThan(
+        runtimeEvents.indexOf(start.replace('tools:start:', 'tools:end:')),
+      );
+    }
+
     for (const input of stageInputs) {
       const systemMessages = input.messages.filter((message) => message._getType() === 'system');
       expect(systemMessages).to.have.length(1);

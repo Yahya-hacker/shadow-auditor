@@ -4,8 +4,10 @@
  */
 
 import * as crypto from 'node:crypto';
+import {createReadStream} from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import {createInterface} from 'node:readline';
 
 import { logToStderr } from '../../utils/stderr-logger.js';
 import { err, ok, type Result, safeParseJson } from '../schema/base.js';
@@ -86,9 +88,21 @@ export class EventStore {
    * Count total events.
    */
   async count(): Promise<number> {
-    const result = await this.read();
-    if (!result.ok) throw new Error(result.error);
-    return result.value.length;
+    let count = 0;
+    try {
+      const lines = createInterface({
+        crlfDelay: Infinity,
+        input: createReadStream(this.eventsPath, {encoding: 'utf8'}),
+      });
+      for await (const line of lines) {
+        if (line.trim()) count += 1;
+      }
+
+      return count;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+      throw error;
+    }
   }
 
   /**
@@ -103,24 +117,21 @@ export class EventStore {
    */
   async read(filter?: EventFilter): Promise<Result<Event[], string>> {
     try {
-      const content = await fs.readFile(this.eventsPath, 'utf8').catch((error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT') return '';
-        throw error;
+      const lines = createInterface({
+        crlfDelay: Infinity,
+        input: createReadStream(this.eventsPath, {encoding: 'utf8'}),
       });
-      if (!content.trim()) {
-        return ok([]);
-      }
-
-      const lines = content.trim().split('\n');
       const events: Event[] = [];
       const parseErrors: string[] = [];
+      let lineNumber = 0;
 
-      for (const [i, line] of lines.entries()) {
+      for await (const line of lines) {
+        lineNumber += 1;
         if (!line.trim()) continue;
 
         const result = safeParseJson(eventSchema, line);
         if (!result.ok) {
-          parseErrors.push(`Line ${i + 1}: ${result.error}`);
+          parseErrors.push(`Line ${lineNumber}: ${result.error}`);
           continue;
         }
 
@@ -153,6 +164,7 @@ export class EventStore {
 
       return ok(events);
     } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ok([]);
       return err(`Failed to read events: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -171,14 +183,37 @@ export class EventStore {
    * that unterminated tail so a later append cannot corrupt the next event.
    */
   private async repairInterruptedTail(): Promise<void> {
-    const content = await fs.readFile(this.eventsPath).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return null;
+    let handle: fs.FileHandle | undefined;
+    try {
+      handle = await fs.open(this.eventsPath, 'r+');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
       throw error;
-    });
-    if (!content || content.length === 0 || content.at(-1) === 0x0A) return;
+    }
 
-    const lastNewline = content.lastIndexOf(0x0A);
-    await fs.truncate(this.eventsPath, lastNewline + 1);
-    logToStderr('[EventStore] Removed an interrupted trailing event record.');
+    try {
+      const {size} = await handle.stat();
+      if (size === 0) return;
+      const finalByte = Buffer.allocUnsafe(1);
+      await handle.read(finalByte, 0, 1, size - 1);
+      if (finalByte[0] === 0x0A) return;
+
+      const chunkSize = 64 * 1024;
+      let cursor = size;
+      let lastNewline = -1;
+      while (cursor > 0 && lastNewline === -1) {
+        const length = Math.min(chunkSize, cursor);
+        cursor -= length;
+        const chunk = Buffer.allocUnsafe(length);
+        await handle.read(chunk, 0, length, cursor);
+        const relative = chunk.lastIndexOf(0x0A);
+        if (relative !== -1) lastNewline = cursor + relative;
+      }
+
+      await handle.truncate(lastNewline + 1);
+      logToStderr('[EventStore] Removed an interrupted trailing event record.');
+    } finally {
+      await handle.close();
+    }
   }
 }

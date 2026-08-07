@@ -13,7 +13,10 @@ import { z } from 'zod';
 import { AgentWorker } from '../src/core/hivemind/agent-worker.js';
 import { Blackboard } from '../src/core/hivemind/blackboard.js';
 import { SwarmCoordinator } from '../src/core/hivemind/swarm-coordinator.js';
-import { collectPatchCompetitionProposals } from '../src/core/hivemind/swarm-supervisor.js';
+import {
+  collectPatchCompetitionProposals,
+  retryFailedVerifierTasks,
+} from '../src/core/hivemind/swarm-supervisor.js';
 
 function createPatchProposal(
   agentRole: 'language_patterns' | 'security_boundaries' | 'tui_state_machine',
@@ -146,6 +149,39 @@ describe('SwarmCoordinator', () => {
     }
 
     await promise;
+  });
+
+  it('does not retry verifier work after a completed response fails accounting', async () => {
+    const blackboard = await Blackboard.create({
+      runId: 'test-accounting-retry',
+      storagePath: storageDir,
+    });
+    const registration = blackboard.registerAgent('verifier');
+    if (!registration.ok) throw new Error(registration.error);
+    const taskGraph = blackboard.getTaskGraph();
+    const task = taskGraph.createTask({
+      description: 'Verify a finding',
+      parameters: {},
+      requiredRole: 'verifier',
+      taskType: 'verify',
+    });
+    if (!task.ok) throw new Error(task.error);
+    if (!taskGraph.claimTask(task.value.taskId, registration.value.agentId).ok) {
+      throw new Error('Task claim failed');
+    }
+
+    if (!taskGraph.startTask(task.value.taskId).ok) throw new Error('Task start failed');
+    if (!taskGraph.failTask(
+      task.value.taskId,
+      'Mission accounting failed after swarm_verifier model completion.',
+    ).ok) {
+      throw new Error('Task failure transition failed');
+    }
+
+    retryFailedVerifierTasks(taskGraph);
+
+    expect(taskGraph.getTask(task.value.taskId)?.status).to.equal('failed');
+    expect(taskGraph.getTask(task.value.taskId)?.parameters._retryCount).to.equal(undefined);
   });
 
   it('requires one submitted claim for every patch perspective', async () => {

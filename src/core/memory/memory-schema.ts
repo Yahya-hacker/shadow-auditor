@@ -188,6 +188,9 @@ export const eventTypeSchema = z.enum([
   'edge_removed',
   'tool_call',
   'tool_result',
+  'model_usage',
+  'stage_started',
+  'stage_completed',
   'hypothesis_created',
   'hypothesis_verified',
   'hypothesis_rejected',
@@ -196,6 +199,7 @@ export const eventTypeSchema = z.enum([
   'state_transition',
   'mission_started',
   'mission_completed',
+  'mission_failed',
   'finding_created',
 ]);
 export type EventType = z.infer<typeof eventTypeSchema>;

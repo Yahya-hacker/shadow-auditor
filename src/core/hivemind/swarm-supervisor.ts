@@ -26,6 +26,7 @@ import type { AgentRole, BlackboardState, Task } from './hivemind-schema.js';
 
 import { debugLog } from '../../utils/debug-logger.js';
 import { AgentState } from '../graph/state.js';
+import {isMissionAccountingFailure} from '../orchestrator/mission-runtime.js';
 import {
   type PatchProposal,
   patchProposalAgentRoleSchema,
@@ -567,9 +568,10 @@ function releaseStaleTasks(
   }
 }
 
-function retryFailedVerifierTasks(taskGraph: TaskGraph): void {
+export function retryFailedVerifierTasks(taskGraph: TaskGraph): void {
   for (const task of taskGraph.getTasksByStatus('failed')) {
     if (task.requiredRole !== 'verifier') continue;
+    if (isMissionAccountingFailure(task.errorMessage ?? '')) continue;
     const retryCount = (task.parameters?._retryCount as number) ?? 0;
     if (retryCount >= MAX_FAILED_RETRIES) continue;
     const resetResult = taskGraph.resetTask(task.taskId);
