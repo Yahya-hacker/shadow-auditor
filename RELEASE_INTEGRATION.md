@@ -16,17 +16,17 @@ The final public-client integration must add a repository-enforced package
 boundary before publication is enabled:
 
 - Add `protocol/**` to the public package's `files` allowlist.
-- Require the tarball to contain the protocol manifest, schemas, and vectors,
+- Require the tarball to contain the protocol manifest, schemas, and signing vector,
   including `protocol/manifest.json`, `protocol/schemas/**`, and
-  `protocol/vectors/**`.
+  `protocol/signing-vectors.json`.
 - Reject tarballs containing proprietary prompts, workflow/orchestration
   implementations, provider implementations, or private-service modules.
 - Reject public-client manifests that depend on private execution dependencies,
   including model-provider SDKs, `@ai-sdk/*`, `@langchain/*`, `ai`, and
   `ollama-ai-provider`.
 - Install the exact tarball into an offline clean consumer and verify that the
-  packaged protocol manifest, schemas, and vectors can be loaded without the
-  repository checkout or network access.
+  packaged protocol manifest, schemas, and signing vector can be loaded without
+  the repository checkout or network access.
 
 These checks belong in the final client/core split integration. They are not
 enabled on this monolithic baseline because doing so would either fail every
