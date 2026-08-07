@@ -3,4 +3,5 @@ dist/
 build/
 .env
 .shadow-auditor/
+.serena/
 shadow-prompt.md

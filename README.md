@@ -4,6 +4,19 @@
 
 # 🌑 Shadow Auditor: The Next Generation of Autonomous Security Testing
 
+> [!IMPORTANT]
+> Shadow Auditor is **source-available, not open source**. You may download and
+> use unmodified copies, including for internal business use. You may not
+> modify, create derivatives, redistribute, republish, sublicense, sell
+> copies, or offer a competing hosted/service version without prior written
+> permission. See [LICENSE](LICENSE).
+
+> [!NOTE]
+> **Distribution status:** `shadow-auditor` is not currently published on the
+> public npm registry. Treat npm installation commands below as release
+> instructions for when an official package becomes available. Until then,
+> use a source checkout without modifying it.
+
 > *In the realm of application security, silence is dangerous. Shadow Auditor hunts in the silence—mapping vast codebases, finding the vulnerabilities your static tools missed, and delivering evidence-backed findings that prove beyond doubt where the risk lies.*
 
 ---
@@ -95,10 +108,10 @@ You are always in control—patches are never applied without your explicit appr
 Run Shadow Auditor in different modes depending on your needs:
 
 ```bash
-shadow-auditor --mode triage        # Fast pass — highest-confidence findings only
-shadow-auditor --mode deep-sast     # Full SAST analysis (default)
-shadow-auditor --mode full-report   # deep-sast + enriched remediation + executive summary
-shadow-auditor --mode patch-only    # Produce code patches, minimal narrative
+shadow-auditor shell --mode triage        # Fast pass — highest-confidence findings only
+shadow-auditor shell --mode deep-sast     # Full SAST analysis (default)
+shadow-auditor shell --mode full-report   # deep-sast + enriched remediation + executive summary
+shadow-auditor shell --mode patch-only    # Produce code patches, minimal narrative
 ```
 
 ### 🔄 Incremental / Diff Scanning
@@ -106,8 +119,8 @@ shadow-auditor --mode patch-only    # Produce code patches, minimal narrative
 Security in CI doesn't mean auditing the whole codebase every time:
 
 ```bash
-shadow-auditor --diff                 # Only files changed since HEAD~1
-shadow-auditor --diff --since main    # Only files changed since 'main' branch
+shadow-auditor shell --diff                 # Only files changed since HEAD~1
+shadow-auditor shell --diff --since main    # Only files changed since 'main' branch
 ```
 
 This keeps CI fast while still catching vulnerabilities in newly changed code.
@@ -117,8 +130,8 @@ This keeps CI fast while still catching vulnerabilities in newly changed code.
 Run in automated pipelines with:
 
 ```bash
-shadow-auditor --ci --fail-on high    # Exit 1 if High or Critical findings exist
-shadow-auditor --ci --fail-on none    # Report-only, always exit 0
+shadow-auditor shell --ci --fail-on high    # Exit 1 if High or Critical findings exist
+shadow-auditor shell --ci --fail-on none    # Report-only, always exit 0
 ```
 
 Every run produces:
@@ -152,7 +165,7 @@ Choose your provider. Shadow Auditor adapts.
 ### 1. **Boot & Configure**
 
 ```bash
-shadow-auditor
+shadow-auditor shell
 ```
 
 On first run:
@@ -218,7 +231,7 @@ Destructive patterns are explicitly denied:
 For advanced users, **expert mode** enables broader capabilities:
 
 ```bash
-shadow-auditor --expert-unsafe
+shadow-auditor shell --expert-unsafe
 ```
 
 Even in expert mode, sensitive actions are flagged and require confirmation.
@@ -276,42 +289,57 @@ The roadmap reflects a core truth: **complex security operations require coordin
 
 ## Getting Started
 
-### Installation
+### Requirements
 
-#### Global Install
+- **Node.js 24.14.1 or newer in the Node 24 release line**
+- **npm 11.5.1 or newer**
+- A supported model provider credential, unless you use Ollama
+
+### Official npm package
+
+No official npm package is published yet. When a release is available, verify
+that it is linked from this repository and that npm displays provenance from
+`Yahya-hacker/shadow-auditor` before installing it.
+
+Shadow Auditor uses native Tree-sitter packages. npm's strict lifecycle-script
+policy requires you to approve only these packages:
+
 ```bash
-npm install -g shadow-auditor
+npm config set allow-scripts tree-sitter,tree-sitter-go,tree-sitter-javascript,tree-sitter-python,tree-sitter-typescript --location=user
+npm install --global shadow-auditor --strict-allow-scripts
 ```
 
-#### Local Development
+Do not broaden the allowlist to `*`. Review the package diff and this list
+again before every upgrade.
+
+### Source checkout
+
+Cloning the repository does not grant permission to modify it.
+
 ```bash
 git clone https://github.com/Yahya-hacker/shadow-auditor.git
 cd shadow-auditor
-npm install
-npm run build
+npm ci --strict-allow-scripts
+npm run verify
+node ./bin/run.js shell
 ```
 
-### Requirements
-- **Node.js 24.14.1+** (LTS)
-- **npm**
+### First run
 
-### Quick Start
-
-```bash
-shadow-auditor
-```
-
-This starts the interactive shell. No arguments needed for first run.
-
-### Advanced Options
+Run `shadow-auditor shell` (or `node ./bin/run.js shell` from a source
+checkout). The interactive setup asks for a provider and model. For hosted
+providers it also requests an API key. Shadow Auditor attempts to use the
+operating-system credential store; environment-variable fallback is supported,
+and a visible warning is emitted if compatibility fallback stores a key in
+`~/.shadow-auditor.json`. Use `--reconfigure` to run setup again.
 
 ```bash
-shadow-auditor --reconfigure      # Reconfigure API key or model
-shadow-auditor --mode triage      # Fast security pass
-shadow-auditor --mode deep-sast   # Full analysis (default)
-shadow-auditor --ci --fail-on high  # CI mode
-shadow-auditor --diff --since main  # Incremental scan
-shadow-auditor --expert-unsafe     # Expert mode with broader capabilities
+shadow-auditor shell --reconfigure        # Reconfigure provider or model
+shadow-auditor shell --mode triage        # Fast security pass
+shadow-auditor shell --mode deep-sast     # Full analysis (default)
+shadow-auditor shell --ci --fail-on high  # CI mode
+shadow-auditor shell --diff --since main  # Incremental scan
+shadow-auditor shell --expert-unsafe      # Broader, explicitly unsafe capabilities
 ```
 
 ---
@@ -333,6 +361,14 @@ Exit with: `exit`, `quit`, or `Ctrl+C`
 ---
 
 ## The Architecture: Designed for Evidence
+
+### Current deployment boundary
+
+The current repository implementation is a single local CLI process. A separate client/server
+boundary is planned so local interaction can be isolated from remotely hosted
+analysis, but that private split is **not implemented in this repository
+today**. Do not deploy the current CLI as though it already provides a
+networked trust boundary or multi-tenant service isolation.
 
 ### Session Artifacts
 
@@ -371,10 +407,14 @@ Derived from:
 ## Development
 
 ```bash
-npm run lint      # Lint the codebase
-npm run build     # Compile TypeScript
-npm test          # Run full test suite
+npm run verify    # Build, test, lint, and verify native parsers
+npm pack --dry-run
 ```
+
+Shadow Auditor does not accept unapproved code changes. Issue reports,
+documentation-only pull requests, and private security reports are welcome
+under [CONTRIBUTING.md](CONTRIBUTING.md). Source, test, dependency, build, and
+workflow modifications require prior written permission from the owner.
 
 ---
 
@@ -428,12 +468,16 @@ On first run, configuration is saved to:
 Includes:
 - `provider` — Which AI provider to use
 - `model` — Model name (e.g., `gpt-4`, `claude-3-sonnet`)
-- `apiKey` — Your API key (not required for Ollama)
+- `apiKey` — Plaintext compatibility fallback when secure storage is unavailable (not required for Ollama)
 - `customBaseUrl` — For custom OpenAI-compatible endpoints
 - `maxOutputTokens` — Output token limit (optional)
 - `maxToolSteps` — Max tool calls per query (optional)
 
-⚠️ **Note:** API keys are stored in plaintext for backward compatibility. A secure secret-store extension hook is planned for future releases.
+⚠️ **Note:** Shadow Auditor attempts to store API keys in the operating-system
+credential store and can read provider-specific environment variables. If
+neither route is available, backward compatibility may store a key in
+plaintext in `~/.shadow-auditor.json`; the CLI emits a warning when this
+happens.
 
 ---
 
@@ -445,7 +489,25 @@ Includes:
 
 ## License
 
-MIT
+Shadow Auditor is distributed under the custom
+[Shadow Auditor Source-Available License](LICENSE). It is **not open source**.
+Unmodified use is allowed, including internal use. Modification, derivative
+works, redistribution, republication, sublicensing, sale of copies, and
+competing hosted/service offerings require prior written permission.
+
+Third-party dependencies remain subject to their own licenses.
+
+---
+
+## Support and Security
+
+Use [GitHub Issues](https://github.com/Yahya-hacker/shadow-auditor/issues) for
+non-sensitive bugs, documentation problems, and support questions. Support is
+community/best-effort with no response-time or compatibility guarantee.
+
+Report suspected vulnerabilities privately under
+[SECURITY.md](SECURITY.md). Never place secrets, proprietary target code, or
+unresolved vulnerability details in a public issue.
 
 ---
 
@@ -453,7 +515,7 @@ MIT
 
 Shadow Auditor is being built for teams that take security seriously. If you want to:
 - **Use it** — Install and start hunting vulnerabilities
-- **Contribute** — Help build the multi-agent mesh
+- **Improve the docs** — Submit focused documentation corrections
 - **Report issues** — Found a bug? Open an issue on GitHub
 - **Share feedback** — Your workflow insights shape the roadmap
 

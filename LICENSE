@@ -1,0 +1,93 @@
+SHADOW AUDITOR SOURCE-AVAILABLE LICENSE
+Version 1.0
+
+Copyright (c) 2026 Yahya-hacker. All rights reserved.
+
+IMPORTANT: THIS IS A SOURCE-AVAILABLE LICENSE, NOT AN OPEN-SOURCE LICENSE.
+
+1. Permission Grant
+
+Subject to this License, the copyright holder grants any individual or
+organization a limited, non-exclusive, non-transferable, revocable permission
+to download, install, and execute unmodified copies of Shadow Auditor for that
+individual's or organization's own use, including internal business use.
+Reasonable internal backup and deployment copies may be made solely to support
+that permitted use.
+
+Using documented configuration options, supplying credentials or target data,
+and using outputs produced by Shadow Auditor do not, by themselves, modify
+Shadow Auditor.
+
+2. Restrictions
+
+Unless the copyright holder gives prior written permission, you may not:
+
+a. modify, adapt, translate, or alter Shadow Auditor;
+b. create derivative works based on Shadow Auditor;
+c. redistribute, republish, publicly post, or otherwise provide copies of
+   Shadow Auditor or its source code to any third party;
+d. sublicense, sell, rent, lease, or transfer Shadow Auditor or any rights in
+   it;
+e. remove or alter copyright, license, attribution, or proprietary notices; or
+f. host, operate, or make Shadow Auditor available to third parties as a
+   managed service, software-as-a-service offering, service bureau, API, or
+   other hosted or service-based offering that competes with or substitutes
+   for Shadow Auditor or an offering of the copyright holder.
+
+No patent, trademark, or other rights are granted except the limited copyright
+permission expressly stated above.
+
+3. Authorized Security Use
+
+You may use Shadow Auditor only on code, systems, and data that you own or are
+authorized to assess. This License does not authorize unlawful access,
+interference, surveillance, or any other unlawful activity.
+
+4. Contributions and Separate Permission
+
+Submitting an issue, security report, feedback, or documentation contribution
+under the repository's CONTRIBUTING.md does not grant you a license to modify,
+distribute, or create derivative works of Shadow Auditor beyond the narrow
+permission expressly stated there. Code modifications require prior written
+permission from the copyright holder and may be subject to separate terms.
+
+5. Ownership and Third-Party Components
+
+Shadow Auditor is licensed, not sold. The copyright holder retains all right,
+title, and interest in Shadow Auditor. Third-party components bundled with or
+used by Shadow Auditor remain subject to their respective licenses; this
+License does not restrict rights granted directly by those third-party
+licenses.
+
+6. Termination
+
+This License terminates automatically if you breach any term. On termination,
+you must stop using Shadow Auditor and delete all copies in your possession or
+control. Sections intended by their nature to survive termination, including
+ownership, disclaimers, and limitations of liability, survive.
+
+7. Disclaimer of Warranty
+
+SHADOW AUDITOR IS PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT,
+ACCURACY, OR SECURITY. THE COPYRIGHT HOLDER DOES NOT WARRANT THAT SHADOW
+AUDITOR WILL BE ERROR-FREE, UNINTERRUPTED, OR SUITABLE FOR ANY PARTICULAR
+SECURITY ASSESSMENT.
+
+8. Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE COPYRIGHT HOLDER AND CONTRIBUTORS
+WILL NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN
+CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH
+SHADOW AUDITOR OR ITS USE, INCLUDING ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES, LOSS OF DATA, LOSS OF PROFITS, BUSINESS
+INTERRUPTION, OR SECURITY INCIDENT, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+DAMAGES.
+
+9. Written Permission
+
+Requests for permissions beyond this License must be made to the copyright
+holder through the contact methods published in the official
+Yahya-hacker/shadow-auditor repository. Permission is effective only when
+granted in writing by the copyright holder.

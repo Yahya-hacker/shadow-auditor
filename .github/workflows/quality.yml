@@ -1,0 +1,115 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-lint:
+    name: Build, test, lint, and audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          cache: npm
+          node-version-file: .node-version
+      - name: Install locked dependencies
+        run: npm ci --strict-allow-scripts
+      - name: Run release gates
+        run: npm run verify
+      - name: Audit dependency vulnerabilities
+        run: npm audit --audit-level=high
+
+  package-smoke:
+    name: Pack and smoke-test CLI
+    needs: build-test-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          cache: npm
+          node-version-file: .node-version
+      - name: Install locked dependencies
+        run: npm ci --strict-allow-scripts
+      - name: Build package
+        run: npm run build
+      - name: Install and smoke-test packed CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="$RUNNER_TEMP/package-artifact"
+          mkdir "$package_dir"
+          npm pack --pack-destination "$package_dir" >/dev/null
+          mapfile -t packages < <(find "$package_dir" -maxdepth 1 -type f -name '*.tgz')
+          test "${#packages[@]}" -eq 1
+          package_path="${packages[0]}"
+
+          consumer="$RUNNER_TEMP/package-smoke"
+          mkdir "$consumer"
+          cd "$consumer"
+          npm init --yes >/dev/null
+          if npm install "$package_path" --strict-allow-scripts --no-audit --no-fund; then
+            echo "Strict install unexpectedly accepted undeclared native scripts." >&2
+            exit 1
+          fi
+
+          rm -rf node_modules package-lock.json
+          node -e '
+            const fs = require("node:fs");
+            const manifest = {
+              name: "shadow-auditor-package-smoke",
+              private: true,
+              allowScripts: {
+                "tree-sitter": true,
+                "tree-sitter-go": true,
+                "tree-sitter-javascript": true,
+                "tree-sitter-python": true,
+                "tree-sitter-typescript": true
+              }
+            };
+            fs.writeFileSync("package.json", JSON.stringify(manifest, null, 2));
+          '
+          npm install "$package_path" --strict-allow-scripts --no-audit --no-fund
+          ./node_modules/.bin/shadow-auditor --help
+          ./node_modules/.bin/shadow-auditor --version
+          ./node_modules/.bin/shadow-auditor shell --help
+          npm explore shadow-auditor -- npm run test:native
+
+  dependency-review:
+    name: Review dependency changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4
+        with:
+          fail-on-severity: high
