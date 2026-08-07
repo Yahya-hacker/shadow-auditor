@@ -52,31 +52,6 @@
       ],
       "type": "object"
     },
-    "RecoveredToolResult": {
-      "additionalProperties": false,
-      "description": "Self-contained signed verification lineage retained with every recovered result even after live proposal, decision, and grant records are no longer independently active.",
-      "properties": {
-        "decision": {
-          "$ref": "#/$defs/ToolDecision"
-        },
-        "grant": {
-          "$ref": "#/$defs/ToolGrant"
-        },
-        "proposal": {
-          "$ref": "#/$defs/ToolProposal"
-        },
-        "result": {
-          "$ref": "#/$defs/ToolResult"
-        }
-      },
-      "required": [
-        "proposal",
-        "decision",
-        "grant",
-        "result"
-      ],
-      "type": "object"
-    },
     "Risk": {
       "enum": [
         "low",
@@ -471,7 +446,8 @@
       "additionalProperties": false,
       "properties": {
         "arguments": {
-          "$ref": "common.schema.json#/$defs/JsonObject"
+          "$ref": "common.schema.json#/$defs/JsonObject",
+          "description": "Canonical arguments MUST pass bounded canonical validation with maxPayloadBytes 524288 before proposal acceptance. This acceptance-time limit guarantees the signed proposal is recoverable within maxRecoveryItemBytes."
         },
         "authorization": {
           "$ref": "common.schema.json#/$defs/DetachedSignature"
@@ -489,7 +465,8 @@
         "proposalDigest",
         "authorization"
       ],
-      "type": "object"
+      "type": "object",
+      "x-max-canonical-bytes": 786432
     },
     "ToolProposalProjection": {
       "additionalProperties": false,
@@ -541,6 +518,7 @@
     },
     "ToolResult": {
       "additionalProperties": false,
+      "description": "The signed result contains digests only. Any supplied output, evidence, or error value MUST pass bounded canonical validation with maxPayloadBytes 524288 before its digest is accepted.",
       "properties": {
         "authorization": {
           "$ref": "common.schema.json#/$defs/DetachedSignature"
@@ -557,7 +535,8 @@
         "resultDigest",
         "authorization"
       ],
-      "type": "object"
+      "type": "object",
+      "x-max-canonical-bytes": 786432
     },
     "ToolResultProjection": {
       "additionalProperties": false,

@@ -118,14 +118,54 @@
           "minimum": 1,
           "type": "integer"
         },
+        "maxRecoveryItemBytes": {
+          "maximum": 786432,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        "maxRecoveryItemDepth": {
+          "maximum": 30,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxRecoveryItemNodes": {
+          "maximum": 9744,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxRecoveryPageItems": {
+          "maximum": 128,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxRecoveryPageOverheadBytes": {
+          "maximum": 262144,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        "maxRecoveryPageOverheadNodes": {
+          "maximum": 256,
+          "minimum": 1,
+          "type": "integer"
+        },
         "maxStringBytes": {
           "maximum": 65536,
           "minimum": 1,
           "type": "integer"
         },
+        "maxToolArgumentsBytes": {
+          "maximum": 524288,
+          "minimum": 1024,
+          "type": "integer"
+        },
         "maxToolDescriptors": {
           "maximum": 128,
           "minimum": 1,
+          "type": "integer"
+        },
+        "maxToolResultValueBytes": {
+          "maximum": 524288,
+          "minimum": 1024,
           "type": "integer"
         }
       },
@@ -135,9 +175,17 @@
         "maxCanonicalDepth",
         "maxCanonicalNodes",
         "maxEventBytes",
+        "maxRecoveryItemBytes",
+        "maxRecoveryItemDepth",
+        "maxRecoveryItemNodes",
+        "maxRecoveryPageItems",
+        "maxRecoveryPageOverheadBytes",
+        "maxRecoveryPageOverheadNodes",
         "maxObjectKeys",
         "maxStringBytes",
-        "maxToolDescriptors"
+        "maxToolArgumentsBytes",
+        "maxToolDescriptors",
+        "maxToolResultValueBytes"
       ],
       "type": "object"
     },

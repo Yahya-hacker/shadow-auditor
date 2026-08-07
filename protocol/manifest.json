@@ -7,8 +7,16 @@
       "maxCanonicalNodes": 10000,
       "maxEventBytes": 262144,
       "maxObjectKeys": 256,
+      "maxRecoveryItemBytes": 786432,
+      "maxRecoveryItemDepth": 30,
+      "maxRecoveryItemNodes": 9744,
+      "maxRecoveryPageItems": 128,
+      "maxRecoveryPageOverheadBytes": 262144,
+      "maxRecoveryPageOverheadNodes": 256,
       "maxStringBytes": 65536,
-      "maxToolDescriptors": 128
+      "maxToolArgumentsBytes": 524288,
+      "maxToolDescriptors": 128,
+      "maxToolResultValueBytes": 524288
     },
     "profile": "RFC 8785 JCS over strict I-JSON",
     "unitSemantics": "maxStringBytes and maxBodyBytes count UTF-8 bytes; maxCanonicalDepth and maxCanonicalNodes are aggregate runtime limits not expressible by JSON Schema.",
@@ -22,9 +30,9 @@
   "fileDigestSemantics": "SHA-256 over UTF-8 text after CRLF and CR normalization to LF; manifest.json is excluded to avoid self-reference.",
   "files": [
     {
-      "bytes": 50684,
+      "bytes": 52183,
       "path": "protocol/openapi.json",
-      "sha256": "sha256:63f8cd1af0df1054bde51b947d42466569555cbff44463a1da30a5645ebbdb07"
+      "sha256": "sha256:b5859912c6683e26bc1289b09f65ba0a5a2c0f7e76cfa6c5702e516439e0ed33"
     },
     {
       "bytes": 8522,
@@ -32,14 +40,14 @@
       "sha256": "sha256:18a6df02c0c7fe7726c0de7661b74a35a496223be3580a8ad9fc7501431855b5"
     },
     {
-      "bytes": 6707,
+      "bytes": 6750,
       "path": "protocol/schemas/capabilities.schema.json",
-      "sha256": "sha256:96b02e21442feda022e9fd02e00d8f13f7e4867e23c845a81c050f6d0623b50f"
+      "sha256": "sha256:df75d751c604f7bf80ce495306e7f4074d1963c67b415b9eb2cd389c2fcbbe80"
     },
     {
-      "bytes": 4655,
+      "bytes": 5959,
       "path": "protocol/schemas/common.schema.json",
-      "sha256": "sha256:0bc7ddc443048d0c9d13192fa571f207bf563037efede803dd14462983e1697f"
+      "sha256": "sha256:19a13cb62415452fa46540f9265c74a4c299f5ccc75f59ed218007dceffc9b59"
     },
     {
       "bytes": 9468,
@@ -47,9 +55,9 @@
       "sha256": "sha256:b6c3fc6f29aa73f33bf9319938ecc9d06709d4cce16f10e5646c533ec4da1ad1"
     },
     {
-      "bytes": 9947,
+      "bytes": 11266,
       "path": "protocol/schemas/manifest.schema.json",
-      "sha256": "sha256:84c6d900b1a69381b2a01daf74d6735061d957b9200254a57bdef451f1035aa2"
+      "sha256": "sha256:fc9cd67973f6f114b3f0a93560a358d78c7194e4d0f8fd8340515f30f3b117a7"
     },
     {
       "bytes": 5405,
@@ -62,9 +70,9 @@
       "sha256": "sha256:9053d3979d09d1b21fe78f673abe29c1ce2c5d09b36c7382b838914a2b3afb34"
     },
     {
-      "bytes": 4445,
+      "bytes": 4296,
       "path": "protocol/schemas/protocol.schema.json",
-      "sha256": "sha256:dfe1e7dfe41212e346245c45d9ce90b37343872023ff75973d94863f1dc1a4f9"
+      "sha256": "sha256:854a628d9104d9d73f8d798a1c86f8d1f8b7f68eb3c60d84d8767d2d34c88ad2"
     },
     {
       "bytes": 4864,
@@ -72,14 +80,14 @@
       "sha256": "sha256:042240a395f715da06f3df6cc2c19225486617636a603d03adbb15e83531fdbd"
     },
     {
-      "bytes": 14642,
+      "bytes": 16736,
       "path": "protocol/schemas/sessions.schema.json",
-      "sha256": "sha256:aab9dc7c28e7ae27bc6a83b3ac40fd374d4b4f11cd2aa6238b4787d8c1a4c025"
+      "sha256": "sha256:1bc8886e12fcef83dadaa667244a5b53540160f0846b7d2fbcdb3a0f1109a133"
     },
     {
-      "bytes": 17074,
+      "bytes": 16897,
       "path": "protocol/schemas/tools.schema.json",
-      "sha256": "sha256:82d5fcf27064087239b2ad9be7a46700ea6a9fff30fd2114908836b9bdcb2757"
+      "sha256": "sha256:db71c5e7275f6f3d00f8c494ef9e600764bb1d6ed7b0cd03c4d00eac112f6fbe"
     },
     {
       "bytes": 6273,
@@ -92,19 +100,19 @@
       "sha256": "sha256:8cac893a118d6a797b0796cbc400d9529ba5006c77ba2ac7950308042f6d59eb"
     },
     {
-      "bytes": 25549,
+      "bytes": 25901,
       "path": "scripts/generate-protocol.mjs",
-      "sha256": "sha256:9a9ec259a0a3b967ffc5332f53986f7972ff60b9ce5c0b963e702826c9907ebd"
+      "sha256": "sha256:c4c18d405d78d57b8a3948a032efe364b23e3048913861f1af3bf588e7241175"
     },
     {
-      "bytes": 14212,
+      "bytes": 15359,
       "path": "src/protocol/canonical-json.ts",
-      "sha256": "sha256:1013cb4dbac6b1ddb0fe5a1f98a6a0e8c64cd5d8589e30ea869182bfbc8f5240"
+      "sha256": "sha256:86068dcd8c6c50ab3a6de77e436b0b85cec783fb0655a5269fb092e4964f8bec"
     },
     {
-      "bytes": 32570,
+      "bytes": 35299,
       "path": "src/protocol/generated/dtos.ts",
-      "sha256": "sha256:ba10fa34b119a9581002321d862d3e515b31aafdbe3434c3cc9870fc5df6f334"
+      "sha256": "sha256:e0e24c9ea53c2e400317086c33a8c1d658ebafea1e980e7f101ae0f3a6540888"
     },
     {
       "bytes": 104,
@@ -112,12 +120,12 @@
       "sha256": "sha256:e4b34beca49d073fc4210c6ed2b593188bb67ed3569987dd659477e166d3e694"
     },
     {
-      "bytes": 75440,
+      "bytes": 80046,
       "path": "src/protocol/signing.ts",
-      "sha256": "sha256:29d3549744f05c74d87ece76b8efa6863830bc93419af04f6d33de00bae41f6b"
+      "sha256": "sha256:fa83a18152573ce7aa6203a45e6978f5da665aea36bb81f02cf57c5d2a2d58d4"
     }
   ],
-  "protocolDigest": "sha256:1ec720d7b46c1340235b2deda3a149276b8a2817ad2c712d0acd8ed7bbaa0fa3",
+  "protocolDigest": "sha256:e7d13cf33d2b198e2421f1951a51578b59f7882271b90e7c9ca1377c70a67484",
   "protocolDigestSemantics": "SHA-256 over strict canonical JSON of every manifest member except protocolDigest.",
   "protocolVersion": "1.0",
   "release": "1.0.0",
@@ -127,6 +135,7 @@
     "durable-idempotency",
     "operation-recovery",
     "snapshot-pagination-v1",
+    "normalized-recovery-lineage-v1",
     "pinned-server-event-keys",
     "signed-hash-chain-sse",
     "tool-authority-v1",

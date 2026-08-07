@@ -54,9 +54,6 @@
       "$ref": "tools.schema.json#/$defs/ToolResult"
     },
     {
-      "$ref": "tools.schema.json#/$defs/RecoveredToolResult"
-    },
-    {
       "$ref": "usage.schema.json#/$defs/UsageRecord"
     },
     {
@@ -85,7 +82,6 @@
     "Problem": "problem.schema.json#/$defs/Problem",
     "ProtocolManifest": "manifest.schema.json",
     "RecoveredOperation": "sessions.schema.json#/$defs/RecoveredOperation",
-    "RecoveredToolResult": "tools.schema.json#/$defs/RecoveredToolResult",
     "RefreshRequest": "auth.schema.json#/$defs/RefreshRequest",
     "RequestSigningProjection": "request-signing.schema.json#/$defs/RequestSigningProjection",
     "RevokeKeyRequest": "auth.schema.json#/$defs/RevokeKeyRequest",

@@ -28,6 +28,37 @@ export const PROTOCOL_CANONICAL_LIMITS: Readonly<CanonicalJsonLimits> = Object.f
   maxStringBytes: 65_536,
 });
 
+export const MAX_TOOL_ARGUMENTS_BYTES = 524_288;
+export const MAX_TOOL_RESULT_VALUE_BYTES = 524_288;
+export const MAX_RECOVERY_ITEM_BYTES = 786_432;
+export const MAX_RECOVERY_ITEM_DEPTH = 30;
+export const MAX_RECOVERY_ITEM_NODES = 9744;
+export const MAX_RECOVERY_PAGE_ITEMS = 128;
+export const MAX_RECOVERY_PAGE_OVERHEAD_BYTES =
+  PROTOCOL_CANONICAL_LIMITS.maxPayloadBytes - MAX_RECOVERY_ITEM_BYTES;
+export const MAX_RECOVERY_PAGE_OVERHEAD_NODES =
+  PROTOCOL_CANONICAL_LIMITS.maxNodes - MAX_RECOVERY_ITEM_NODES;
+
+export const TOOL_ARGUMENTS_CANONICAL_LIMITS: Readonly<CanonicalJsonLimits> =
+  Object.freeze({
+    ...PROTOCOL_CANONICAL_LIMITS,
+    maxPayloadBytes: MAX_TOOL_ARGUMENTS_BYTES,
+  });
+
+export const TOOL_RESULT_VALUE_CANONICAL_LIMITS: Readonly<CanonicalJsonLimits> =
+  Object.freeze({
+    ...PROTOCOL_CANONICAL_LIMITS,
+    maxPayloadBytes: MAX_TOOL_RESULT_VALUE_BYTES,
+  });
+
+export const RECOVERY_ITEM_CANONICAL_LIMITS: Readonly<CanonicalJsonLimits> =
+  Object.freeze({
+    ...PROTOCOL_CANONICAL_LIMITS,
+    maxDepth: MAX_RECOVERY_ITEM_DEPTH,
+    maxNodes: MAX_RECOVERY_ITEM_NODES,
+    maxPayloadBytes: MAX_RECOVERY_ITEM_BYTES,
+  });
+
 export class CanonicalJsonError extends Error {
   constructor(
     public readonly code: string,

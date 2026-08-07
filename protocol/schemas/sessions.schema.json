@@ -136,6 +136,32 @@
       ],
       "title": "Coupled durable event head"
     },
+    "GrantsSnapshotPage": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/SnapshotPageBase"
+        }
+      ],
+      "properties": {
+        "collection": {
+          "const": "grants",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "tools.schema.json#/$defs/ToolGrant"
+          },
+          "maxItems": 128,
+          "type": "array"
+        }
+      },
+      "required": [
+        "collection",
+        "items"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "MissionIntent": {
       "additionalProperties": false,
       "properties": {
@@ -224,6 +250,32 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "ProposalsSnapshotPage": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/SnapshotPageBase"
+        }
+      ],
+      "properties": {
+        "collection": {
+          "const": "proposals",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "tools.schema.json#/$defs/ToolProposal"
+          },
+          "maxItems": 128,
+          "type": "array"
+        }
+      },
+      "required": [
+        "collection",
+        "items"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "RecoveredOperation": {
       "additionalProperties": false,
       "description": "A durable operation plus the session whose recovery view contains it. The explicit session binding is required because authentication operations are tenant-scoped and Operation itself does not carry sessionId.",
@@ -254,7 +306,7 @@
         },
         "items": {
           "items": {
-            "$ref": "tools.schema.json#/$defs/RecoveredToolResult"
+            "$ref": "tools.schema.json#/$defs/ToolResult"
           },
           "maxItems": 128,
           "type": "array"
@@ -360,6 +412,12 @@
           "$ref": "#/$defs/DecisionsSnapshotPage"
         },
         {
+          "$ref": "#/$defs/ProposalsSnapshotPage"
+        },
+        {
+          "$ref": "#/$defs/GrantsSnapshotPage"
+        },
+        {
           "$ref": "#/$defs/ActiveGrantsSnapshotPage"
         },
         {
@@ -392,10 +450,16 @@
         "decisions": {
           "$ref": "#/$defs/SnapshotCollectionBoundary"
         },
+        "grants": {
+          "$ref": "#/$defs/SnapshotCollectionBoundary"
+        },
         "operations": {
           "$ref": "#/$defs/SnapshotCollectionBoundary"
         },
         "pendingProposals": {
+          "$ref": "#/$defs/SnapshotCollectionBoundary"
+        },
+        "proposals": {
           "$ref": "#/$defs/SnapshotCollectionBoundary"
         },
         "results": {
@@ -404,8 +468,10 @@
       },
       "required": [
         "pendingProposals",
+        "proposals",
         "decisions",
         "activeGrants",
+        "grants",
         "results",
         "operations"
       ],
@@ -431,8 +497,10 @@
     "SnapshotCollectionName": {
       "enum": [
         "pendingProposals",
+        "proposals",
         "decisions",
         "activeGrants",
+        "grants",
         "results",
         "operations"
       ],
@@ -506,6 +574,7 @@
       "type": "string"
     },
     "SnapshotPageBase": {
+      "description": "Every complete page MUST pass bounded canonical validation. The server selects the longest ordered prefix, up to maxRecoveryPageItems, whose complete canonical page fits maxBodyBytes and maxCanonicalNodes; if records remain it MUST include at least one. Each item is independently bounded by maxRecoveryItemBytes, maxRecoveryItemDepth, and maxRecoveryItemNodes. The schema-bounded non-item envelope reserves maxRecoveryPageOverheadBytes and maxRecoveryPageOverheadNodes, while the page adds at most two depth levels, guaranteeing progress.",
       "properties": {
         "collectionBoundaries": {
           "$ref": "#/$defs/SnapshotCollectionBoundaries"
@@ -573,7 +642,8 @@
         "pageStart",
         "nextCursor"
       ],
-      "type": "object"
+      "type": "object",
+      "x-max-canonical-bytes": 1048576
     }
   },
   "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/sessions.schema.json",

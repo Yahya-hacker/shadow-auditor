@@ -17,11 +17,19 @@ import type {
 
 import {
   canonicalizeJson,
+  CanonicalJsonError,
   digestCanonicalJson,
   EMPTY_BODY_SHA256,
   JsonValue,
+  MAX_RECOVERY_PAGE_ITEMS,
+  MAX_RECOVERY_PAGE_OVERHEAD_BYTES,
+  MAX_RECOVERY_PAGE_OVERHEAD_NODES,
   parseStrictJson,
+  RECOVERY_ITEM_CANONICAL_LIMITS,
   sha256Bytes,
+  TOOL_ARGUMENTS_CANONICAL_LIMITS,
+  TOOL_RESULT_VALUE_CANONICAL_LIMITS,
+  validateBoundedCanonicalJson,
 } from './canonical-json.js';
 
 export const PROTOCOL_VERSION = '1.0';
@@ -215,11 +223,19 @@ export interface RecoveredToolResultLineage {
   result: SignedToolResult;
 }
 
+export interface RecoveredToolLineageCollections {
+  decisions: readonly SignedToolDecision[];
+  grants: readonly SignedToolGrant[];
+  proposals: readonly SignedToolProposal[];
+}
+
 export type RecoveryCollectionName =
   | 'activeGrants'
   | 'decisions'
+  | 'grants'
   | 'operations'
   | 'pendingProposals'
+  | 'proposals'
   | 'results';
 
 export interface RecoveryCollectionBoundary {
@@ -1262,7 +1278,7 @@ export function verifyToolProposal(
   assertEqual(proposal.projection.descriptorDigest, descriptor.descriptorDigest, 'proposal descriptorDigest');
   assertEqual(
     proposal.projection.argumentsDigest,
-    digestCanonicalJson(proposal.arguments),
+    digestCanonicalJson(proposal.arguments, TOOL_ARGUMENTS_CANONICAL_LIMITS),
     'proposal argumentsDigest',
   );
   assertToolArguments(descriptor.projection.inputSchema, proposal.arguments);
@@ -1274,6 +1290,7 @@ export function verifyToolProposal(
     authorities.proposal.publicKey,
     authorities.proposal.expectedKeyId,
   );
+  validateBoundedCanonicalJson(proposal, RECOVERY_ITEM_CANONICAL_LIMITS);
 }
 
 export function verifyToolDecision(
@@ -1283,9 +1300,10 @@ export function verifyToolDecision(
 ): void {
   assertEqual(
     proposal.projection.argumentsDigest,
-    digestCanonicalJson(proposal.arguments),
+    digestCanonicalJson(proposal.arguments, TOOL_ARGUMENTS_CANONICAL_LIMITS),
     'proposal argumentsDigest',
   );
+  validateBoundedCanonicalJson(proposal, RECOVERY_ITEM_CANONICAL_LIMITS);
   assertAuthorization(
     TOOL_PROPOSAL_DOMAIN,
     proposal.projection,
@@ -1310,6 +1328,7 @@ export function verifyToolDecision(
     authorities.decision.publicKey,
     authorities.decision.expectedKeyId,
   );
+  validateBoundedCanonicalJson(decision, RECOVERY_ITEM_CANONICAL_LIMITS);
 }
 
 export function verifyToolGrant(
@@ -1349,6 +1368,7 @@ export function verifyToolGrant(
     authorities.grant.publicKey,
     authorities.grant.expectedKeyId,
   );
+  validateBoundedCanonicalJson(grant, RECOVERY_ITEM_CANONICAL_LIMITS);
 }
 
 function assertGrantLimits(budget: JsonValue, allowed: JsonValue): void {
@@ -1452,15 +1472,27 @@ export function verifyToolResult(
   assertUuid(result.projection.executionLedgerId, 'executionLedgerId');
   parseTimestamp(result.projection.completedAt, 'result completedAt');
   if (options.output !== undefined) {
-    assertEqual(result.projection.outputDigest, digestCanonicalJson(options.output), 'result outputDigest');
+    assertEqual(
+      result.projection.outputDigest,
+      digestCanonicalJson(options.output, TOOL_RESULT_VALUE_CANONICAL_LIMITS),
+      'result outputDigest',
+    );
   }
 
   if (options.evidence !== undefined) {
-    assertEqual(result.projection.evidenceDigest, digestCanonicalJson(options.evidence), 'result evidenceDigest');
+    assertEqual(
+      result.projection.evidenceDigest,
+      digestCanonicalJson(options.evidence, TOOL_RESULT_VALUE_CANONICAL_LIMITS),
+      'result evidenceDigest',
+    );
   }
 
   if (options.error !== undefined) {
-    assertEqual(result.projection.errorDigest, digestCanonicalJson(options.error), 'result errorDigest');
+    assertEqual(
+      result.projection.errorDigest,
+      digestCanonicalJson(options.error, TOOL_RESULT_VALUE_CANONICAL_LIMITS),
+      'result errorDigest',
+    );
   }
 
   if (result.projection.status === 'succeeded' && result.projection.errorDigest !== null) {
@@ -1482,13 +1514,16 @@ export function verifyToolResult(
     authorities.result.publicKey,
     authorities.result.expectedKeyId,
   );
+  validateBoundedCanonicalJson(result, RECOVERY_ITEM_CANONICAL_LIMITS);
 }
 
 const SNAPSHOT_COLLECTIONS: readonly RecoveryCollectionName[] = [
   'activeGrants',
   'decisions',
+  'grants',
   'operations',
   'pendingProposals',
+  'proposals',
   'results',
 ];
 
@@ -1720,9 +1755,7 @@ function snapshotItemId(collection: RecoveryCollectionName, item: unknown): stri
   const projection =
     collection === 'operations'
       ? (record.operation as Record<string, unknown> | undefined)
-      : collection === 'results'
-        ? (record.result as Record<string, unknown> | undefined)?.projection
-        : record.projection;
+      : record.projection;
   if (typeof projection !== 'object' || projection === null || Array.isArray(projection)) {
     fail('snapshot_integrity_failed', `${collection} item projection is missing`);
   }
@@ -1730,8 +1763,10 @@ function snapshotItemId(collection: RecoveryCollectionName, item: unknown): stri
   const idFields: Record<RecoveryCollectionName, string> = {
     activeGrants: 'grantId',
     decisions: 'decisionId',
+    grants: 'grantId',
     operations: 'requestId',
     pendingProposals: 'proposalId',
+    proposals: 'proposalId',
     results: 'resultId',
   };
   const id = (projection as Record<string, unknown>)[idFields[collection]];
@@ -1787,14 +1822,6 @@ function assertSnapshotItemScope(
       break;
     }
 
-    case 'results': {
-      for (const lineagePart of ['proposal', 'decision', 'grant', 'result'] as const) {
-        assertProjectionScope(record[lineagePart], `recovered result ${lineagePart}`);
-      }
-
-      break;
-    }
-
     default: {
       assertProjectionScope(record, `${collection} item`);
     }
@@ -1811,7 +1838,7 @@ function advanceSnapshotCollectionHash(
   item: unknown,
 ): string {
   const itemId = snapshotItemId(collection, item);
-  const itemDigest = digestCanonicalJson(item);
+  const itemDigest = digestCanonicalJson(item, RECOVERY_ITEM_CANONICAL_LIMITS);
   return sha256Bytes(
     Buffer.from(
       `${SNAPSHOT_COLLECTION_DOMAIN}\n${collection}\n${previousHash}\n${itemId}\n${itemDigest}\n`,
@@ -1827,6 +1854,7 @@ export function snapshotCollectionBoundary(
   let collectionDigest = snapshotCollectionGenesis(collection);
   let previousId: string | undefined;
   for (const item of items) {
+    validateBoundedCanonicalJson(item, RECOVERY_ITEM_CANONICAL_LIMITS);
     const itemId = snapshotItemId(collection, item);
     if (previousId !== undefined && itemId <= previousId) {
       fail('snapshot_integrity_failed', `${collection} items are not strictly ordered`);
@@ -1837,6 +1865,66 @@ export function snapshotCollectionBoundary(
   }
 
   return {collectionDigest, itemCount: items.length};
+}
+
+export function selectSnapshotPageItems<T>(
+  records: readonly T[],
+  pageStart: number,
+  buildPage: (items: readonly T[], nextOffset: number) => unknown,
+): readonly T[] {
+  if (
+    !Number.isSafeInteger(pageStart) ||
+    pageStart < 0 ||
+    pageStart > records.length
+  ) {
+    fail('snapshot_integrity_failed', 'snapshot page start is invalid');
+  }
+
+  const selected: T[] = [];
+  const pageEnd = Math.min(records.length, pageStart + MAX_RECOVERY_PAGE_ITEMS);
+  for (let index = pageStart; index < pageEnd; index += 1) {
+    const item = records[index];
+    validateBoundedCanonicalJson(item, RECOVERY_ITEM_CANONICAL_LIMITS);
+    const candidate = [...selected, item];
+    try {
+      const pageValidation = validateBoundedCanonicalJson(
+        buildPage(candidate, pageStart + candidate.length),
+      );
+      const itemArrayValidation = validateBoundedCanonicalJson(candidate);
+      const payloadOverhead =
+        pageValidation.payloadBytes - itemArrayValidation.payloadBytes + 2;
+      const nodeOverhead = pageValidation.nodeCount - itemArrayValidation.nodeCount + 1;
+      if (
+        payloadOverhead > MAX_RECOVERY_PAGE_OVERHEAD_BYTES ||
+        nodeOverhead > MAX_RECOVERY_PAGE_OVERHEAD_NODES
+      ) {
+        fail(
+          'snapshot_integrity_failed',
+          'snapshot page envelope exceeds its reserved recovery overhead',
+        );
+      }
+
+      selected.push(item);
+    } catch (error) {
+      if (
+        error instanceof CanonicalJsonError &&
+        ['payload_too_large', 'too_many_nodes'].includes(error.code)
+      ) {
+        break;
+      }
+
+      throw error;
+    }
+  }
+
+  if (selected.length === 0 && pageStart < records.length) {
+    fail(
+      'snapshot_integrity_failed',
+      'accepted recovery item does not fit the schema-bounded page envelope',
+    );
+  }
+
+  return selected;
 }
 
 function assertSnapshotBoundaries(boundaries: RecoveryCollectionBoundaries): void {
@@ -1881,6 +1969,7 @@ function assertSnapshotPageItemOrderAndScope(
 ): void {
   let previousId: string | undefined;
   for (const item of page.items) {
+    validateBoundedCanonicalJson(item, RECOVERY_ITEM_CANONICAL_LIMITS);
     assertSnapshotItemScope(page.collection, item, context.tenantId, context.sessionId);
     const itemId = snapshotItemId(page.collection, item);
     if (previousId !== undefined && itemId <= previousId) {
@@ -1897,6 +1986,7 @@ export function verifySnapshotPage(
   authority: SigningAuthority,
   now: number = Date.now(),
 ): void {
+  validateBoundedCanonicalJson(page);
   assertEqual(page.protocolVersion, PROTOCOL_VERSION, 'snapshot protocolVersion');
   assertUuid(page.tenantId, 'snapshot tenantId');
   assertUuid(page.sessionId, 'snapshot sessionId');
@@ -1933,7 +2023,7 @@ export function verifySnapshotPage(
   if (
     !Number.isSafeInteger(page.pageStart) ||
     page.pageStart < 0 ||
-    page.items.length > 128
+    page.items.length > MAX_RECOVERY_PAGE_ITEMS
   ) {
     fail('snapshot_integrity_failed', 'snapshot page bounds are invalid');
   }
@@ -2059,13 +2149,64 @@ export function assembleSnapshotCollection(
   return items;
 }
 
+function uniqueRecoveredRecord<T>(
+  records: readonly T[],
+  predicate: (record: T) => boolean,
+  label: string,
+): T {
+  const matches = records.filter((record) => predicate(record));
+  if (matches.length !== 1) {
+    fail(
+      'snapshot_integrity_failed',
+      `recovered result requires exactly one matching ${label}`,
+    );
+  }
+
+  return matches[0];
+}
+
+export function recoverToolResultLineage(
+  result: SignedToolResult,
+  collections: RecoveredToolLineageCollections,
+): RecoveredToolResultLineage {
+  const proposal = uniqueRecoveredRecord(
+    collections.proposals,
+    (candidate) =>
+      candidate.projection.proposalId === result.projection.proposalId &&
+      candidate.proposalDigest === result.projection.proposalDigest,
+    'proposal',
+  );
+  const decision = uniqueRecoveredRecord(
+    collections.decisions,
+    (candidate) =>
+      candidate.projection.proposalId === result.projection.proposalId &&
+      candidate.projection.proposalDigest === result.projection.proposalDigest &&
+      candidate.decisionDigest === result.projection.decisionDigest,
+    'decision',
+  );
+  const grant = uniqueRecoveredRecord(
+    collections.grants,
+    (candidate) =>
+      candidate.projection.proposalId === result.projection.proposalId &&
+      candidate.projection.proposalDigest === result.projection.proposalDigest &&
+      candidate.projection.decisionDigest === result.projection.decisionDigest &&
+      candidate.projection.grantId === result.projection.grantId &&
+      candidate.grantDigest === result.projection.grantDigest,
+    'grant',
+  );
+
+  return {decision, grant, proposal, result};
+}
+
 export function verifyRecoveredToolResult(
-  recovered: RecoveredToolResultLineage,
+  result: SignedToolResult,
+  collections: RecoveredToolLineageCollections,
   authorities: Pick<
     ToolLifecycleAuthorities,
     'decision' | 'grant' | 'proposal' | 'result'
   >,
 ): void {
+  const recovered = recoverToolResultLineage(result, collections);
   verifyToolResult(
     recovered.result,
     recovered.proposal,
