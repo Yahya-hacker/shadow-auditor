@@ -66,6 +66,7 @@
         "operation-recovery",
         "snapshot-pagination-v1",
         "normalized-recovery-lineage-v1",
+        "negotiated-limit-profile-v1",
         "pinned-server-event-keys",
         "signed-hash-chain-sse",
         "tool-authority-v1",
@@ -84,13 +85,17 @@
             "$ref": "#/$defs/Feature"
           },
           "maxItems": 16,
-          "minItems": 10,
+          "minItems": 11,
           "type": "array",
           "uniqueItems": true
         },
+        "limitProfileDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest",
+          "description": "SHA-256 over canonical JSON of the complete semantically validated effective limits object. The client independently recomputes this value and pins it to the token family and every session."
+        },
         "limits": {
           "$ref": "common.schema.json#/$defs/PayloadLimits",
-          "description": "Each negotiated value is the minimum of the server hard maximum and client-advertised maximum."
+          "description": "Each value is the deterministic fieldwise minimum of the client and server offers. The complete result MUST pass the exported semantic negotiateProtocolLimits helper before enrollment or session creation; incompatible combinations fail with incompatible_limit_profile."
         },
         "protocolVersion": {
           "$ref": "common.schema.json#/$defs/ProtocolVersion"
@@ -156,6 +161,7 @@
         "features",
         "compression",
         "limits",
+        "limitProfileDigest",
         "serverManifestDigest",
         "serverEventSigningKeys",
         "serverToolSigningKeys"

@@ -59,6 +59,7 @@
         "authentication_failed",
         "body_digest_mismatch",
         "capability_mismatch",
+        "incompatible_limit_profile",
         "cursor_expired",
         "event_chain_gap",
         "grant_expired",

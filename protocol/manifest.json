@@ -1,5 +1,19 @@
 {
   "canonicalJson": {
+    "limitInvariants": {
+      "minimumArrayItems": 7,
+      "minimumObjectKeys": 32,
+      "minimumRecoveryPageOverheadBytes": 16384,
+      "minimumRecoveryPageOverheadNodes": 256,
+      "minimumStringBytes": 128,
+      "profileDigestSemantics": "SHA-256 over strict canonical JSON of the complete effective limits object.",
+      "recoveryPageDepthOverhead": 2,
+      "semanticValidator": "negotiateProtocolLimits",
+      "toolProposalEventOverheadBytes": 16384,
+      "toolProposalEventOverheadNodes": 256,
+      "toolProposalItemOverheadBytes": 4096,
+      "toolProposalItemOverheadNodes": 64
+    },
     "limits": {
       "maxArrayItems": 1024,
       "maxBodyBytes": 1048576,
@@ -14,7 +28,7 @@
       "maxRecoveryPageOverheadBytes": 262144,
       "maxRecoveryPageOverheadNodes": 256,
       "maxStringBytes": 65536,
-      "maxToolArgumentsBytes": 524288,
+      "maxToolArgumentsBytes": 245760,
       "maxToolDescriptors": 128,
       "maxToolResultValueBytes": 524288
     },
@@ -30,9 +44,9 @@
   "fileDigestSemantics": "SHA-256 over UTF-8 text after CRLF and CR normalization to LF; manifest.json is excluded to avoid self-reference.",
   "files": [
     {
-      "bytes": 52183,
+      "bytes": 54361,
       "path": "protocol/openapi.json",
-      "sha256": "sha256:b5859912c6683e26bc1289b09f65ba0a5a2c0f7e76cfa6c5702e516439e0ed33"
+      "sha256": "sha256:17242ff1bedc2fd443caa0ba2e994fa81929a61a98b3e78be2a8d9fa9b310255"
     },
     {
       "bytes": 8522,
@@ -40,14 +54,14 @@
       "sha256": "sha256:18a6df02c0c7fe7726c0de7661b74a35a496223be3580a8ad9fc7501431855b5"
     },
     {
-      "bytes": 6750,
+      "bytes": 7313,
       "path": "protocol/schemas/capabilities.schema.json",
-      "sha256": "sha256:df75d751c604f7bf80ce495306e7f4074d1963c67b415b9eb2cd389c2fcbbe80"
+      "sha256": "sha256:22ac8dca350a393bc594249e8083361b47e6c3f693d43bccd37edfb972778047"
     },
     {
-      "bytes": 5959,
+      "bytes": 7047,
       "path": "protocol/schemas/common.schema.json",
-      "sha256": "sha256:19a13cb62415452fa46540f9265c74a4c299f5ccc75f59ed218007dceffc9b59"
+      "sha256": "sha256:59f1d0f13c8a15161864e6b5ef05c490275348efd14620e4f52886a44fe33ef5"
     },
     {
       "bytes": 9468,
@@ -55,9 +69,9 @@
       "sha256": "sha256:b6c3fc6f29aa73f33bf9319938ecc9d06709d4cce16f10e5646c533ec4da1ad1"
     },
     {
-      "bytes": 11266,
+      "bytes": 13766,
       "path": "protocol/schemas/manifest.schema.json",
-      "sha256": "sha256:fc9cd67973f6f114b3f0a93560a358d78c7194e4d0f8fd8340515f30f3b117a7"
+      "sha256": "sha256:3eec37f9bdffd001ca0302fdc5b6b54d736a1dddc7bd53d83124b1dc86cf387b"
     },
     {
       "bytes": 5405,
@@ -65,9 +79,9 @@
       "sha256": "sha256:08260c43dbbf1ca73ae9de3be8500fc4b0829ac7bf9db0c20b3da3f79ce09a32"
     },
     {
-      "bytes": 2419,
+      "bytes": 2457,
       "path": "protocol/schemas/problem.schema.json",
-      "sha256": "sha256:9053d3979d09d1b21fe78f673abe29c1ce2c5d09b36c7382b838914a2b3afb34"
+      "sha256": "sha256:c4592025056304ecff777437183e6bb2fdc2ac553fa93d0721fd63c00aa4c7aa"
     },
     {
       "bytes": 4296,
@@ -80,9 +94,9 @@
       "sha256": "sha256:042240a395f715da06f3df6cc2c19225486617636a603d03adbb15e83531fdbd"
     },
     {
-      "bytes": 16736,
+      "bytes": 16993,
       "path": "protocol/schemas/sessions.schema.json",
-      "sha256": "sha256:1bc8886e12fcef83dadaa667244a5b53540160f0846b7d2fbcdb3a0f1109a133"
+      "sha256": "sha256:f04c8a570939fe7f39aa7299a9f26759da79fafd18cd14b4ef2814a614e578b3"
     },
     {
       "bytes": 16897,
@@ -95,37 +109,42 @@
       "sha256": "sha256:2e500bb4f504dee362af9dfad703bb8bfe4d85e5830a7fd4b75e199d979b064b"
     },
     {
-      "bytes": 16640,
+      "bytes": 16969,
       "path": "protocol/signing-vectors.json",
-      "sha256": "sha256:8cac893a118d6a797b0796cbc400d9529ba5006c77ba2ac7950308042f6d59eb"
+      "sha256": "sha256:5cc93a1d1bee881097a8b6ffd74e359e8cac4b81aa3c71074df20cbb07d7854e"
     },
     {
-      "bytes": 25901,
+      "bytes": 27161,
       "path": "scripts/generate-protocol.mjs",
-      "sha256": "sha256:c4c18d405d78d57b8a3948a032efe364b23e3048913861f1af3bf588e7241175"
+      "sha256": "sha256:0b446b60af2f99c44cbd89766b15ec6a5889f4f9af5c1c6da31f648c51d44add"
     },
     {
-      "bytes": 15359,
+      "bytes": 15292,
       "path": "src/protocol/canonical-json.ts",
-      "sha256": "sha256:86068dcd8c6c50ab3a6de77e436b0b85cec783fb0655a5269fb092e4964f8bec"
+      "sha256": "sha256:fa20da538c609b5bc5eabec6f7332f9331d5520b4d9f61552903b9927bb833e0"
     },
     {
-      "bytes": 35299,
+      "bytes": 36593,
       "path": "src/protocol/generated/dtos.ts",
-      "sha256": "sha256:e0e24c9ea53c2e400317086c33a8c1d658ebafea1e980e7f101ae0f3a6540888"
+      "sha256": "sha256:89fcb0810f7c080174936dec3771f81f8a18a1aa68037a0d7c082c84f59beb97"
     },
     {
-      "bytes": 104,
+      "bytes": 144,
       "path": "src/protocol/index.ts",
-      "sha256": "sha256:e4b34beca49d073fc4210c6ed2b593188bb67ed3569987dd659477e166d3e694"
+      "sha256": "sha256:e9fe8d9e27cc9f202e49ea4d957521b40d6a7e988d16c01e7b2e0ae5528867b5"
     },
     {
-      "bytes": 80046,
+      "bytes": 9076,
+      "path": "src/protocol/negotiated-limits.ts",
+      "sha256": "sha256:e5e3a8aeb67e018e2eea35acfd7255c11cfc7d8c1f88073a037a2c23147d162f"
+    },
+    {
+      "bytes": 86814,
       "path": "src/protocol/signing.ts",
-      "sha256": "sha256:fa83a18152573ce7aa6203a45e6978f5da665aea36bb81f02cf57c5d2a2d58d4"
+      "sha256": "sha256:11f05578bb427099b84c168a0e44d16e40f4a03231d1770ca94d320ccddb130d"
     }
   ],
-  "protocolDigest": "sha256:e7d13cf33d2b198e2421f1951a51578b59f7882271b90e7c9ca1377c70a67484",
+  "protocolDigest": "sha256:872f7b0ebcddbcdef4b6529d4ec3bedfb6296c67ed91ce5eb2e72d042f737ac2",
   "protocolDigestSemantics": "SHA-256 over strict canonical JSON of every manifest member except protocolDigest.",
   "protocolVersion": "1.0",
   "release": "1.0.0",
@@ -136,6 +155,7 @@
     "operation-recovery",
     "snapshot-pagination-v1",
     "normalized-recovery-lineage-v1",
+    "negotiated-limit-profile-v1",
     "pinned-server-event-keys",
     "signed-hash-chain-sse",
     "tool-authority-v1",

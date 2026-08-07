@@ -534,6 +534,9 @@
         "expiresAt": {
           "$ref": "common.schema.json#/$defs/Timestamp"
         },
+        "limitProfileDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
         "nextOffset": {
           "$ref": "common.schema.json#/$defs/PositiveSafeInteger"
         },
@@ -561,6 +564,7 @@
         "snapshotVersion",
         "collection",
         "collectionDigest",
+        "limitProfileDigest",
         "nextOffset",
         "expiresAt"
       ],
@@ -574,7 +578,7 @@
       "type": "string"
     },
     "SnapshotPageBase": {
-      "description": "Every complete page MUST pass bounded canonical validation. The server selects the longest ordered prefix, up to maxRecoveryPageItems, whose complete canonical page fits maxBodyBytes and maxCanonicalNodes; if records remain it MUST include at least one. Each item is independently bounded by maxRecoveryItemBytes, maxRecoveryItemDepth, and maxRecoveryItemNodes. The schema-bounded non-item envelope reserves maxRecoveryPageOverheadBytes and maxRecoveryPageOverheadNodes, while the page adds at most two depth levels, guaranteeing progress.",
+      "description": "Every complete page MUST pass bounded canonical validation under the immutable effective profile identified by limitProfileDigest. The server selects the longest ordered prefix, up to effective maxRecoveryPageItems, whose complete canonical page fits effective maxBodyBytes and maxCanonicalNodes; if records remain it MUST include at least one. Each item is independently bounded by the effective recovery item limits. Cross-limit semantic validation reserves the effective page overhead and two depth levels, guaranteeing progress.",
       "properties": {
         "collectionBoundaries": {
           "$ref": "#/$defs/SnapshotCollectionBoundaries"
@@ -584,6 +588,9 @@
         },
         "eventHead": {
           "$ref": "#/$defs/EventHead"
+        },
+        "limitProfileDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
         },
         "nextCursor": {
           "oneOf": [
@@ -638,6 +645,7 @@
         "createdAt",
         "updatedAt",
         "eventHead",
+        "limitProfileDigest",
         "collectionBoundaries",
         "pageStart",
         "nextCursor"

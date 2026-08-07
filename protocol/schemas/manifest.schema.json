@@ -30,6 +30,74 @@
     "canonicalJson": {
       "additionalProperties": false,
       "properties": {
+        "limitInvariants": {
+          "additionalProperties": false,
+          "properties": {
+            "minimumArrayItems": {
+              "const": 7,
+              "type": "integer"
+            },
+            "minimumObjectKeys": {
+              "const": 32,
+              "type": "integer"
+            },
+            "minimumRecoveryPageOverheadBytes": {
+              "const": 16384,
+              "type": "integer"
+            },
+            "minimumRecoveryPageOverheadNodes": {
+              "const": 256,
+              "type": "integer"
+            },
+            "minimumStringBytes": {
+              "const": 128,
+              "type": "integer"
+            },
+            "profileDigestSemantics": {
+              "const": "SHA-256 over strict canonical JSON of the complete effective limits object.",
+              "type": "string"
+            },
+            "recoveryPageDepthOverhead": {
+              "const": 2,
+              "type": "integer"
+            },
+            "semanticValidator": {
+              "const": "negotiateProtocolLimits",
+              "type": "string"
+            },
+            "toolProposalEventOverheadBytes": {
+              "const": 16384,
+              "type": "integer"
+            },
+            "toolProposalEventOverheadNodes": {
+              "const": 256,
+              "type": "integer"
+            },
+            "toolProposalItemOverheadBytes": {
+              "const": 4096,
+              "type": "integer"
+            },
+            "toolProposalItemOverheadNodes": {
+              "const": 64,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "minimumArrayItems",
+            "minimumObjectKeys",
+            "minimumRecoveryPageOverheadBytes",
+            "minimumRecoveryPageOverheadNodes",
+            "minimumStringBytes",
+            "profileDigestSemantics",
+            "recoveryPageDepthOverhead",
+            "semanticValidator",
+            "toolProposalEventOverheadBytes",
+            "toolProposalEventOverheadNodes",
+            "toolProposalItemOverheadBytes",
+            "toolProposalItemOverheadNodes"
+          ],
+          "type": "object"
+        },
         "limits": {
           "additionalProperties": false,
           "properties": {
@@ -86,7 +154,7 @@
               "type": "integer"
             },
             "maxToolArgumentsBytes": {
-              "const": 524288,
+              "const": 245760,
               "type": "integer"
             },
             "maxToolDescriptors": {
@@ -145,6 +213,7 @@
         }
       },
       "required": [
+        "limitInvariants",
         "limits",
         "profile",
         "unitSemantics",
@@ -162,8 +231,8 @@
     },
     "files": {
       "items": false,
-      "maxItems": 19,
-      "minItems": 19,
+      "maxItems": 20,
+      "minItems": 20,
       "prefixItems": [
         {
           "$ref": "#/$defs/ManifestFile",
@@ -331,6 +400,15 @@
           "$ref": "#/$defs/ManifestFile",
           "properties": {
             "path": {
+              "const": "src/protocol/negotiated-limits.ts"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
               "const": "src/protocol/signing.ts"
             }
           },
@@ -355,8 +433,8 @@
     },
     "requiredFeatures": {
       "items": false,
-      "maxItems": 10,
-      "minItems": 10,
+      "maxItems": 11,
+      "minItems": 11,
       "prefixItems": [
         {
           "const": "bound-ed25519-auth"
@@ -375,6 +453,9 @@
         },
         {
           "const": "normalized-recovery-lineage-v1"
+        },
+        {
+          "const": "negotiated-limit-profile-v1"
         },
         {
           "const": "pinned-server-event-keys"

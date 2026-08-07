@@ -25,6 +25,7 @@ const REQUIRED_FEATURES = [
   'operation-recovery',
   'snapshot-pagination-v1',
   'normalized-recovery-lineage-v1',
+  'negotiated-limit-profile-v1',
   'pinned-server-event-keys',
   'signed-hash-chain-sse',
   'tool-authority-v1',
@@ -407,10 +408,29 @@ function generateVectors() {
   const snapshotCollectionDigest = sha256(
     Buffer.from('shadow-auditor/snapshot-collection/v1\noperations\n', 'ascii'),
   );
+  const limitProfileDigest = digestJson({
+    maxArrayItems: 1024,
+    maxBodyBytes: 1_048_576,
+    maxCanonicalDepth: 32,
+    maxCanonicalNodes: 10_000,
+    maxEventBytes: 262_144,
+    maxObjectKeys: 256,
+    maxRecoveryItemBytes: 786_432,
+    maxRecoveryItemDepth: 30,
+    maxRecoveryItemNodes: 9744,
+    maxRecoveryPageItems: 128,
+    maxRecoveryPageOverheadBytes: 262_144,
+    maxRecoveryPageOverheadNodes: 256,
+    maxStringBytes: 65_536,
+    maxToolArgumentsBytes: 245_760,
+    maxToolDescriptors: 128,
+    maxToolResultValueBytes: 524_288,
+  });
   const snapshotCursorProjection = {
     collection: 'operations',
     collectionDigest: snapshotCollectionDigest,
     expiresAt: '2026-01-02T03:24:08.000Z',
+    limitProfileDigest,
     nextOffset: 128,
     protocolVersion: '1.0',
     sessionId,
@@ -655,6 +675,7 @@ async function collectManifestFiles(schemaNames) {
     'src/protocol/canonical-json.ts',
     'src/protocol/generated/dtos.ts',
     'src/protocol/index.ts',
+    'src/protocol/negotiated-limits.ts',
     'src/protocol/signing.ts',
   ].sort();
 }
@@ -717,6 +738,20 @@ async function main() {
 
   const manifestProjection = {
     canonicalJson: {
+      limitInvariants: {
+        minimumArrayItems: 7,
+        minimumObjectKeys: 32,
+        minimumRecoveryPageOverheadBytes: 16_384,
+        minimumRecoveryPageOverheadNodes: 256,
+        minimumStringBytes: 128,
+        profileDigestSemantics: 'SHA-256 over strict canonical JSON of the complete effective limits object.',
+        recoveryPageDepthOverhead: 2,
+        semanticValidator: 'negotiateProtocolLimits',
+        toolProposalEventOverheadBytes: 16_384,
+        toolProposalEventOverheadNodes: 256,
+        toolProposalItemOverheadBytes: 4096,
+        toolProposalItemOverheadNodes: 64,
+      },
       limits: {
         maxArrayItems: 1024,
         maxBodyBytes: 1_048_576,
@@ -731,7 +766,7 @@ async function main() {
         maxRecoveryPageOverheadBytes: 262_144,
         maxRecoveryPageOverheadNodes: 256,
         maxStringBytes: 65_536,
-        maxToolArgumentsBytes: 524_288,
+        maxToolArgumentsBytes: 245_760,
         maxToolDescriptors: 128,
         maxToolResultValueBytes: 524_288,
       },

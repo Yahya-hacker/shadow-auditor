@@ -314,6 +314,9 @@
           "413": {
             "$ref": "#/components/responses/Problem"
           },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
           "426": {
             "$ref": "#/components/responses/Problem"
           }
@@ -672,6 +675,9 @@
             "$ref": "#/components/responses/Problem"
           },
           "413": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
             "$ref": "#/components/responses/Problem"
           },
           "426": {
@@ -1241,6 +1247,23 @@
       "An exact committed retry may replay the byte-identical KeyRotationResponse after validating the historical old-key request signature and embedded new-key proof; altered reuse and all other old-key requests fail closed."
     ]
   },
+  "x-shadow-limit-negotiation": {
+    "algorithm": "Compute the fieldwise minimum of the complete client and server PayloadLimits offers, then call the exported negotiateProtocolLimits semantic validator. The operation is symmetric and deterministic.",
+    "failure": "Any violated cross-limit invariant fails before enrollment or session creation with RFC 9457 code incompatible_limit_profile, status 422, retryable false, and no token, session, or partial authority.",
+    "invariants": [
+      "maxBodyBytes >= maxRecoveryItemBytes + maxRecoveryPageOverheadBytes",
+      "maxCanonicalNodes >= maxRecoveryItemNodes + maxRecoveryPageOverheadNodes",
+      "maxCanonicalDepth >= maxRecoveryItemDepth + 2",
+      "maxArrayItems >= maxRecoveryPageItems and maxToolDescriptors",
+      "maxEventBytes <= maxBodyBytes",
+      "maxRecoveryItemBytes >= maxToolArgumentsBytes + 4096",
+      "maxEventBytes >= maxToolArgumentsBytes + 16384",
+      "maxToolResultValueBytes <= maxBodyBytes",
+      "maxStringBytes >= 128, maxObjectKeys >= 32, maxArrayItems >= 7, maxRecoveryItemNodes >= 65"
+    ],
+    "pinning": "Both peers recompute SHA-256 over strict canonical JSON of the effective limits object. NegotiatedCapabilities.limitProfileDigest is pinned to the enrollment token family and every session. It is bound into every recovery page and signed cursor; substitution or restart under a different profile fails closed.",
+    "use": "After negotiation, original body/event/tool acceptance, canonical hashing, snapshot item hashing, longest-prefix packing, cursor/page verification, assembly, and recovery-only lineage verification MUST use the pinned effective profile. Server defaults are never substituted into a negotiated session."
+  },
   "x-shadow-protocol-manifest": {
     "protocolDigest": "SHA-256 over strict canonical JSON of every manifest member except protocolDigest. This binds the exact file inventory and digests, canonical limits, version, release, frozen required-feature set, signing domains, digest semantics, and frozen status without circular self-inclusion."
   },
@@ -1269,9 +1292,9 @@
   },
   "x-shadow-snapshot-recovery": {
     "boundary": "At snapshot creation the server freezes state, eventHead, all seven collection item counts, and each terminal collection hash. A collection hash starts from SHA-256 of the ASCII snapshot collection domain plus collection name and advances once per ordered record over the previous hash, stable record UUID, and a record digest computed only after enforcing maxRecoveryItemBytes, maxRecoveryItemDepth, and maxRecoveryItemNodes.",
-    "cursor": "The opaque cursor is unpadded base64url of exact canonical JSON matching SnapshotCursor. Its Ed25519 signature uses the enrollment-pinned server event-signing key and the shadow-auditor/snapshot-cursor/v1 domain. The projection binds protocol, tenant, session, snapshot ID/version, collection, collection digest, next offset, and exact snapshot expiry.",
+    "cursor": "The opaque cursor is unpadded base64url of exact canonical JSON matching SnapshotCursor. Its Ed25519 signature uses the enrollment-pinned server event-signing key and the shadow-auditor/snapshot-cursor/v1 domain. The projection binds protocol, tenant, session, pinned limit-profile digest, snapshot ID/version, collection, collection digest, next offset, and exact snapshot expiry.",
     "expiry": "The server retains an immutable snapshot for at least 15 minutes and advertises its exact snapshotExpiresAt. At or after expiry, every page or cursor request returns 410 snapshot_expired. The client discards all partial collections and restarts without snapshotId or cursor; pages from different snapshots must never be combined.",
-    "integrity": "Pages begin at the requested exact offset and never overlap. The server deterministically selects the longest ordered prefix of at most maxRecoveryPageItems records whose complete canonical page satisfies maxBodyBytes and maxCanonicalNodes; if records remain, at least one record is returned. Each record is independently bounded by maxRecoveryItemBytes, maxRecoveryItemDepth, and maxRecoveryItemNodes. The schema-bounded non-item envelope reserves maxRecoveryPageOverheadBytes and maxRecoveryPageOverheadNodes, and the page adds at most two depth levels, so every accepted record can make progress in a page. The final page has null nextCursor. Clients run schema plus bounded canonical validation on every item and complete page, validate even terminal pages against trusted authenticated request scope and the frozen identity established by the first accepted page, require every record to match that tenant and session, and require contiguous offsets, globally strict UUID ordering, no duplicate IDs, exact item counts, and matching terminal hashes across every collection before accepting recovery.",
+    "integrity": "Pages begin at the requested exact offset and never overlap. Under the pinned effective limit profile, the server deterministically selects the longest ordered prefix of at most maxRecoveryPageItems records whose complete canonical page satisfies maxBodyBytes, maxCanonicalNodes, and maxCanonicalDepth; if records remain, at least one record is returned. Each record is independently bounded by the effective recovery-item limits. Semantically validated reserves cover the non-item envelope, and the page adds at most two depth levels, so every accepted record can make progress. The final page has null nextCursor. Clients require the same limitProfileDigest on pages and cursors, run schema plus bounded canonical validation with that profile, validate even terminal pages against trusted authenticated request scope and the frozen identity established by the first accepted page, require every record to match that tenant and session, and require contiguous offsets, globally strict UUID ordering, no duplicate IDs, exact item counts, and matching terminal hashes across every collection before accepting recovery.",
     "lineage": "The proposals, decisions, and grants collections retain complete signed history; results contains compact signed ToolResult records. For every result, the client requires exactly one proposal, decision, and grant whose signed IDs and digests match the result, then verifies the complete existing signature/digest chain. Recovery therefore uses only authenticated recovery artifacts without composite-size amplification. pendingProposals and activeGrants are separate live-state views and are not lineage sources.",
     "retry": "Until expiry, repeating the same snapshotId, collection, and cursor returns the identical status, selected headers, media type, and body bytes. Altered, cross-collection, cross-snapshot, stale-version, foreign-tenant/session, or skipped-offset cursor use fails closed with snapshot_cursor_mismatch."
   },
@@ -1288,7 +1311,7 @@
   "x-shadow-tool-authority": {
     "descriptor": "Each bounded local tool descriptor is signed by the enrollment-pinned device key and includes an object-root input schema from the Protocol 1.0 closed, recursive subset: every node has exactly one supported type; object nodes declare bounded properties, required, maxProperties, and additionalProperties:false; array and string nodes declare hard maxima; unsupported keywords fail closed. Its schemaDigest covers canonical JSON of that schema, descriptorDigest covers the non-circular descriptor signing projection, and authorization signs that exact projection in the tool-descriptor domain.",
     "grant": "A grant is valid only for an approved, timely decision. It binds the proposal and decision digests, expires only according to its own signed expiry after issuance, carries a one-use nonce, and cannot increase any proposed budget estimate or any Protocol 1.0 hard maximum. Immediately before atomic one-use consumption, the client MUST revalidate the device-signed descriptor/schema digest and the canonical arguments digest against the exact local descriptor and arguments to be executed.",
-    "proposalAndDecision": "A proposal binds tenant, session, proposal ID, tool name, descriptor digest, canonical arguments digest, risk, budget estimate, and expiry. Before original proposal acceptance, arguments MUST pass bounded canonical validation with maxToolArgumentsBytes and the complete signed proposal MUST pass maxRecoveryItemBytes; oversize fails here, never during recovery. Every proposal-chain verifier recomputes argumentsDigest under that same argument limit. The human decision binds the complete proposal digest and must be recorded no later than proposal expiry.",
+    "proposalAndDecision": "A proposal binds tenant, session, proposal ID, tool name, descriptor digest, canonical arguments digest, risk, budget estimate, and expiry. Before original proposal acceptance, arguments MUST pass bounded canonical validation with the pinned effective tool-argument byte/node/depth limits; the complete signed proposal MUST pass the effective recovery-item limits; and its signed SSE envelope MUST pass effective event limits. Semantic negotiation reserves 4096 item bytes, 64 item nodes, 16384 event bytes, and 256 event nodes so oversize fails at original acceptance, never during recovery. Every proposal-chain verifier recomputes argumentsDigest under that same pinned profile. The human decision binds the complete proposal digest and must be recorded no later than proposal expiry.",
     "result": "A result binds the proposal, decision, and consumed grant plus execution ledger ID, status, and canonical JSON output/evidence/error digests. Each supplied output, evidence, or error value MUST pass maxToolResultValueBytes before its digest is accepted; the signed result carries only those digests and MUST pass maxRecoveryItemBytes. succeeded forbids an error digest; failed, timeout, and ambiguous require one. cancelled and denied remain explicit outcomes. Durable normalized proposal, decision, grant, and result histories preserve recovery-only verification without embedding large artifacts.",
     "transport": "Signed projections exclude their own digest, signature, and authorization fields. Descriptor, decision, and result signatures use the applicable enrollment-pinned device authority. NegotiatedCapabilities provisions exactly two distinct serverToolSigningKeys: the proposal role signs only proposals and the grant role signs only grants. Before accepting enrollment, clients semantically validate the complete set. Clients pin the enrollment-authenticated key IDs, public-key thumbprints, key material, and roles to the token family and every session it creates; duplicate key IDs/material, unknown keys, and cross-role signatures fail closed. The set is immutable in-band, so replacement requires re-enrollment and new sessions. Retries provide at-least-once transport safety while durable idempotency and atomic one-use grant consumption preserve exactly-once local execution authority."
   },

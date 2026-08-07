@@ -87,50 +87,51 @@
     },
     "PayloadLimits": {
       "additionalProperties": false,
+      "description": "A syntactically valid offer is not necessarily compatible. Before enrollment or session creation, both peers MUST call the Protocol 1.0 semantic negotiation helper, select the fieldwise minima, enforce every x-shadow-limit-invariants relation, and pin the resulting profile digest. JSON Schema does not enforce these cross-field relations.",
       "properties": {
         "maxArrayItems": {
           "maximum": 1024,
-          "minimum": 1,
+          "minimum": 7,
           "type": "integer"
         },
         "maxBodyBytes": {
           "maximum": 1048576,
-          "minimum": 1024,
+          "minimum": 21504,
           "type": "integer"
         },
         "maxCanonicalDepth": {
           "maximum": 32,
-          "minimum": 1,
+          "minimum": 4,
           "type": "integer"
         },
         "maxCanonicalNodes": {
           "maximum": 10000,
-          "minimum": 1,
+          "minimum": 321,
           "type": "integer"
         },
         "maxEventBytes": {
           "maximum": 262144,
-          "minimum": 1024,
+          "minimum": 17408,
           "type": "integer"
         },
         "maxObjectKeys": {
           "maximum": 256,
-          "minimum": 1,
+          "minimum": 32,
           "type": "integer"
         },
         "maxRecoveryItemBytes": {
           "maximum": 786432,
-          "minimum": 1024,
+          "minimum": 5120,
           "type": "integer"
         },
         "maxRecoveryItemDepth": {
           "maximum": 30,
-          "minimum": 1,
+          "minimum": 2,
           "type": "integer"
         },
         "maxRecoveryItemNodes": {
           "maximum": 9744,
-          "minimum": 1,
+          "minimum": 65,
           "type": "integer"
         },
         "maxRecoveryPageItems": {
@@ -140,17 +141,17 @@
         },
         "maxRecoveryPageOverheadBytes": {
           "maximum": 262144,
-          "minimum": 1024,
+          "minimum": 16384,
           "type": "integer"
         },
         "maxRecoveryPageOverheadNodes": {
           "maximum": 256,
-          "minimum": 1,
+          "minimum": 256,
           "type": "integer"
         },
         "maxStringBytes": {
           "maximum": 65536,
-          "minimum": 1,
+          "minimum": 128,
           "type": "integer"
         },
         "maxToolArgumentsBytes": {
@@ -187,7 +188,21 @@
         "maxToolDescriptors",
         "maxToolResultValueBytes"
       ],
-      "type": "object"
+      "type": "object",
+      "x-shadow-limit-invariants": [
+        "maxBodyBytes >= maxRecoveryItemBytes + maxRecoveryPageOverheadBytes",
+        "maxCanonicalNodes >= maxRecoveryItemNodes + maxRecoveryPageOverheadNodes",
+        "maxCanonicalDepth >= maxRecoveryItemDepth + 2",
+        "maxArrayItems >= maxRecoveryPageItems",
+        "maxArrayItems >= maxToolDescriptors",
+        "maxBodyBytes >= maxEventBytes",
+        "maxRecoveryItemBytes >= maxToolArgumentsBytes + 4096",
+        "maxEventBytes >= maxToolArgumentsBytes + 16384",
+        "maxBodyBytes >= maxToolResultValueBytes",
+        "maxRecoveryItemNodes >= 65",
+        "maxCanonicalNodes >= 257"
+      ],
+      "x-shadow-semantic-validator": "negotiateProtocolLimits"
     },
     "PositiveSafeInteger": {
       "maximum": 9007199254740991,
