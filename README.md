@@ -2,108 +2,323 @@
   <img src="https://github.com/user-attachments/assets/df96b04f-7324-4a07-9100-ff81526e0d31" alt="Shadow Auditor">
 </div>
 
-> [!IMPORTANT]
-> Shadow Auditor 1.0 is a release candidate. Its release gate covers Node 24,
-> native Tree-sitter loading, the complete test/lint/build pipeline, clean
-> tarball installation, and CLI smoke tests. Pin the version in automated
-> environments and validate the selected external model provider before rollout.
-
-# 🌑 Shadow Auditor: Autonomous AI-Powered Security Analysis
+# 🌑 Shadow Auditor: The Next Generation of Autonomous Security Testing
 
 > *In the realm of application security, silence is dangerous. Shadow Auditor hunts in the silence—mapping vast codebases, finding the vulnerabilities your static tools missed, and delivering evidence-backed findings that prove beyond doubt where the risk lies.*
 
 ---
 
-## What Is Shadow Auditor?
+## The Legend
 
-**Shadow Auditor** is an autonomous AI-powered SAST CLI built on LangGraph. It
-deploys specialized agents that inspect code, challenge vulnerability
-candidates, and produce evidence-backed findings for CI and human review.
+**Shadow Auditor** is an autonomous, AI-powered Static Application Security Testing (SAST) CLI engineered for security teams who demand rigor, reproducibility, and results. It is not a generic chatbot. It is a specialized security operative—one that understands code architecture, knows attack patterns, and hunts vulnerabilities with methodical precision.
 
-### Core Capabilities
+### What It Does
 
-| Capability | Description |
-|------------|-------------|
-| **Codebase Mapping** | Tree-sitter AST parsing indexes supported structural declarations plus resolved import and call relationships; unavailable grammars are reported explicitly |
-| **Deterministic Audit Pipeline** | LangGraph executes Codebase Intelligence → SAST Audit → Devil's Advocate → Reporting with validated handoffs |
-| **Hybrid Retrieval** | Semantic + lexical + knowledge-graph search via `context_retrieval`, followed by targeted line-range reads |
-| **Multi-Agent Swarm** | 5 specialized roles (Recon, TaintTracer, ExploitAnalyst, Verifier, Reporter) with shared Blackboard |
-| **Patch Competition** | In swarm `patch-only` mode, 3 perspective-specific agents propose fixes → orchestrator detects conflicts → synthesizes a unified candidate patch |
-| **Human-in-the-Loop** | Policy-gated tools, per-operation approval, and timeout auto-deny |
-| **CI Integration** | SARIF, JSON, Markdown reports with stable `SHADOW-<CWE>-<HEX8>` finding IDs |
+Shadow Auditor automates the entire offensive security workflow:
+
+1. **Sees the whole picture** — Maps your entire codebase using Tree-sitter, building a compressed structural intelligence map
+2. **Hunts with intent** — Launches an AI security agent into an interactive shell to investigate code flows, search for patterns, and identify attack surfaces
+3. **Gathers evidence** — Every finding is traceable, linked to concrete code, backed by reasoning, and validated
+4. **Proposes remediation** — Generates patches and fixes with your explicit approval
+5. **Fits into your CI** — Produces structured artifacts (JSON reports, SARIF for GitHub Advanced Security, Markdown for humans)
+6. **Respects boundaries** — Human-in-the-loop controls and policy gates ensure responsible, auditable execution
 
 ---
 
-## Quick Start
+## Why Shadow Auditor Exists
 
-### Install from npm
+### The Problem It Solves
 
-```bash
-npm install --global shadow-auditor --allow-scripts=@tree-sitter-grammars/tree-sitter-markdown,@tree-sitter-grammars/tree-sitter-toml,@tree-sitter-grammars/tree-sitter-yaml,tree-sitter,tree-sitter-c,tree-sitter-c-sharp,tree-sitter-cpp,tree-sitter-elixir,tree-sitter-go,tree-sitter-haskell,tree-sitter-html,tree-sitter-java,tree-sitter-javascript,tree-sitter-json,tree-sitter-php,tree-sitter-python,tree-sitter-ruby,tree-sitter-rust,tree-sitter-scala,tree-sitter-typescript,unrs-resolver
+- **Generic AI chat tools** don't understand security context or codebases
+- **Traditional SAST tools** are noisy, hard to tune, and produce findings you can't act on
+- **Manual security reviews** don't scale and require expert knowledge
+- **Automation without governance** is risky—you need proof of what was audited and why
+
+### The Solution Shadow Auditor Provides
+
+- **Security-specialized AI** — Built around security analysis, not chat
+- **Architectural understanding** — Knows your code structure before diving into details
+- **Agentic capability** — Can read files, search patterns, execute commands (with your approval)
+- **Structured evidence** — Every finding is deterministic, reproducible, and auditable
+- **Governance by design** — Policy controls and human-in-the-loop gates for sensitive actions
+- **Built for operations** — Ready for CI pipelines, incremental scans, and team workflows
+
+---
+
+## The Arsenal: Core Capabilities
+
+### 🏗️ Intelligent Codebase Mapping
+
+Shadow Auditor doesn't dive blind. On startup, it:
+- **Parses your entire codebase** using Tree-sitter (with support for JavaScript, TypeScript, and expanding language support)
+- **Builds a compressed architecture map** showing file structure, dependencies, and code patterns
+- **Indexes key entities**: functions, classes, imports, exports—everything the agent needs to understand your system
+
+This map stays in memory during your session, giving the AI instant context about where everything lives.
+
+### 🔍 Interactive Security Shell
+
+Once the map is built, you drop into an **interactive analyst shell**:
+
+```
+Shadow Auditor ❯ _
 ```
 
-The package is release-ready but is **not currently published** on the public
-npm registry. The command above will work after a maintainer publishes the
-first release. Node.js 24 and npm 11 are required. npm intentionally makes the
-installer choose which dependency lifecycle scripts may run; the explicit
-allowlist permits only Shadow Auditor's native parsers and resolver. A
-dependency cannot silently weaken the consuming project's install policy.
+Here you can:
+- **Issue natural-language security queries** — `"Find all injection vulnerabilities"`, `"Analyze authentication flow"`
+- **Trigger tool-assisted investigations** — The agent reads files, searches patterns, cross-references code
+- **Get real-time streaming responses** — See the reasoning unfold as the agent hunts
+- **Review and approve findings** — Every proposed patch, file edit, or command execution requires explicit approval
 
-### Installation from source
+### 📊 Evidence-Backed Findings
+
+Every vulnerability Shadow Auditor reports comes with:
+
+- **Concrete code references** — File paths, line numbers, code snippets
+- **Clear reasoning** — Why the code is vulnerable, what attack it enables
+- **CVSS v3.1 scoring** — Validated severity assessments
+- **Stable vulnerability IDs** — Deterministic `SHADOW-<CWE>-<HEX8>` identifiers that never change for the same finding in the same commit
+- **Deduplication** — Multiple instances of the same root-cause vulnerability are grouped into a single finding
+
+### 🛠️ Remediation Proposals
+
+For each finding, Shadow Auditor can:
+
+- **Propose code patches** — Concrete fixes you can review before applying
+- **Run validation tests** — Verify the patch doesn't break existing functionality
+- **Suggest secure patterns** — Recommend better approaches based on the codebase context
+
+You are always in control—patches are never applied without your explicit approval.
+
+### 🚀 Multi-Mode Audit Strategies
+
+Run Shadow Auditor in different modes depending on your needs:
 
 ```bash
-git clone https://github.com/Yahya-hacker/shadow-auditor.git
-cd shadow-auditor
-npm ci
-npm link
+shadow-auditor --mode triage        # Fast pass — highest-confidence findings only
+shadow-auditor --mode deep-sast     # Full SAST analysis (default)
+shadow-auditor --mode full-report   # deep-sast + enriched remediation + executive summary
+shadow-auditor --mode patch-only    # Produce code patches, minimal narrative
 ```
 
-To refresh an existing source checkout and its global link, use:
+### 🔄 Incremental / Diff Scanning
+
+Security in CI doesn't mean auditing the whole codebase every time:
 
 ```bash
-npm run relink
+shadow-auditor --diff                 # Only files changed since HEAD~1
+shadow-auditor --diff --since main    # Only files changed since 'main' branch
 ```
 
-This installs with the committed lifecycle policy, runs a real AST parse across
-every guaranteed production grammar, and then refreshes the global link.
+This keeps CI fast while still catching vulnerabilities in newly changed code.
 
-Do not use `npm unlink shadow-auditor` for this workflow. npm treats that
-command as a local package uninstall, not as removal of the global link, and
-npm 11 may consequently print misleading `allow-scripts` warnings while it
-reifies the local dependency tree. The following `npm install` still applies
-the committed `package.json#allowScripts` policy, but the uninstall step is
-unnecessary. To remove the global link intentionally, use
-`npm unlink --global shadow-auditor` with a user-owned npm prefix or the
-permissions required by your global npm directory.
+### 📋 CI/CD Integration
 
-### Publish the prepared package
+Run in automated pipelines with:
 
-Production publication is performed only by
-`.github/workflows/release.yml`. A maintainer creates a protected GitHub
-release from protected `main` whose tag exactly matches
-`v<package.json version>` (for example, `v1.0.0`). The unprivileged verification
-job audits and tests the source, builds one tarball, and uploads it before any
-packaged code executes. A separate unprivileged job downloads and smoke-tests
-that immutable artifact in a clean consumer with the native parser allowlist.
-The publication job has no checkout, dependency install, or package lifecycle
-execution; it verifies the artifact digest, package identity, version, and
-registry, then publishes that same tarball to npmjs.org with npm provenance.
+```bash
+shadow-auditor --ci --fail-on high    # Exit 1 if High or Critical findings exist
+shadow-auditor --ci --fail-on none    # Report-only, always exit 0
+```
 
-Configure npm trusted publishing for this repository, workflow, and the
-protected `npm` GitHub environment. For the first publication only, when npm
-cannot yet associate a trusted publisher with the unpublished package, place a
-granular publish-only `NPM_TOKEN` in that environment. Remove the token after
-trusted publishing is configured; subsequent releases use GitHub OIDC.
+Every run produces:
+- **`report.json`** — Structured findings with stable IDs, deduplicated
+- **`report.sarif`** — SARIF format for GitHub Code Scanning, GitLab, and other platforms
+- **`report.md`** — Human-readable Markdown summary
+- **`messages.jsonl`** — Full conversation history with the AI
+- **`tool-events.jsonl`** — Log of all tool calls, approvals, and commands
 
-### First Run
+All artifacts are stored in `.shadow-auditor/runs/<timestamp>/` for audit trails and historical analysis.
+
+---
+
+## The Provider Ecosystem
+
+Shadow Auditor is provider-agnostic. Use **any** supported AI provider:
+
+- **Anthropic** — Claude models, security-optimized
+- **OpenAI** — GPT-4, GPT-4o, and latest models
+- **Google Gemini** — High-performance analysis
+- **Mistral** — Fast, cost-effective alternative
+- **Ollama** — Run local models (open-source, privacy-first)
+- **Custom OpenAI-compatible** — Any endpoint that speaks the API
+
+Choose your provider. Shadow Auditor adapts.
+
+---
+
+## The Workflow: From Code to Confidence
+
+### 1. **Boot & Configure**
 
 ```bash
 shadow-auditor
 ```
 
-The setup wizard guides you through provider selection, API key configuration, and target directory. After initialization, you enter the interactive security shell.
+On first run:
+- Welcome sequence
+- Config wizard (API key, model selection, preferences)
+- Config saved to `~/.shadow-auditor.json` for future runs
 
-### Interactive Shell
+### 2. **Map the Territory**
+
+Select your target directory, and Shadow Auditor:
+- Parses the codebase
+- Builds the architecture map
+- Compresses it for the AI context window
+- Stores metadata for incremental queries
+
+### 3. **Enter the Shell**
+
+Interactive mode: issue queries, review findings, approve patches.
+
+```bash
+Shadow Auditor ❯ Analyze authentication flow
+```
+
+The agent investigates, gathering evidence in real-time. You see the reasoning unfold.
+
+### 4. **Review & Decide**
+
+For each proposed finding, patch, or command:
+- Review the evidence
+- Approve, reject, or refine
+- Commands are executed only with your consent
+
+### 5. **Collect Artifacts**
+
+When done, artifacts are written to `.shadow-auditor/runs/`:
+- Structured findings (JSON, SARIF)
+- Full conversation history
+- Tool execution logs
+
+These artifacts are:
+- **Persistent** — Never auto-deleted, full audit trail
+- **Reproducible** — Same codebase + commit = same findings
+- **Verifiable** — Every step is traceable
+
+---
+
+## Safety & Governance: The Human-in-the-Loop Model
+
+Shadow Auditor is autonomous, but never reckless.
+
+### Command Execution Policy
+
+By default, command execution is **policy-limited** to safe families:
+- `git status`, `git diff`, `git log`
+- `npm test`, `npm run lint`, `npm run build`
+- (and pnpm/yarn equivalents)
+
+Destructive patterns are explicitly denied:
+- No `rm -rf`, no `mv`, no `git reset --hard`
+- No installing packages without approval
+- No arbitrary shell execution
+
+For advanced users, **expert mode** enables broader capabilities:
+
+```bash
+shadow-auditor --expert-unsafe
+```
+
+Even in expert mode, sensitive actions are flagged and require confirmation.
+
+### Explicit Approval Gates
+
+- **File edits** — Proposed patches are shown before application
+- **Command execution** — Each command requires confirmation
+- **Finding generation** — High-risk findings go through additional validation
+
+This ensures Shadow Auditor stays within your security policy.
+
+---
+
+## The Roadmap: From SAST to Full Security Operations
+
+### Version 1 (Current): SAST Foundation ✅
+
+- Structural codebase mapping
+- Interactive security shell
+- Stateful analysis sessions
+- Tool-assisted vulnerability hunting
+- Evidence-backed findings with stable IDs
+- SARIF output for CI integration
+
+### Version 2+: The Multi-Agent Security Mesh
+
+The vision extends far beyond SAST:
+
+1. **Performance & Scale**
+   - Faster codebase mapping
+   - Larger repository support
+   - Lower latency responses
+
+2. **Enhanced UX**
+   - Improved interaction flow
+   - Better operator ergonomics
+   - Visual findings summary
+
+3. **Expanded Security Domains**
+   - Active pentesting workflows
+   - DAST (Dynamic Application Security Testing)
+   - Supply chain analysis
+
+4. **Full Multi-Agent Orchestration**
+   - Specialized roles: recon, dataflow analysis, exploit-chain validation, remediation, verification
+   - Parallel agent execution with synchronized evidence
+   - Shared blackboard for findings and reasoning
+   - Anti-hallucination verification gates
+   - Independent verification before findings are promoted to reports
+
+The roadmap reflects a core truth: **complex security operations require coordinated specialists, not a single generalist**.
+
+---
+
+## Getting Started
+
+### Installation
+
+#### Global Install
+```bash
+npm install -g shadow-auditor
+```
+
+#### Local Development
+```bash
+git clone https://github.com/Yahya-hacker/shadow-auditor.git
+cd shadow-auditor
+npm install
+npm run build
+```
+
+### Requirements
+- **Node.js 24.14.1+** (LTS)
+- **npm**
+
+### Quick Start
+
+```bash
+shadow-auditor
+```
+
+This starts the interactive shell. No arguments needed for first run.
+
+### Advanced Options
+
+```bash
+shadow-auditor --reconfigure      # Reconfigure API key or model
+shadow-auditor --mode triage      # Fast security pass
+shadow-auditor --mode deep-sast   # Full analysis (default)
+shadow-auditor --ci --fail-on high  # CI mode
+shadow-auditor --diff --since main  # Incremental scan
+shadow-auditor --expert-unsafe     # Expert mode with broader capabilities
+```
+
+---
+
+## Inside the Shell: Example Queries
+
+Once you're in the interactive shell, try:
 
 ```
 Shadow Auditor ❯ Find all SQL injection vulnerabilities
@@ -113,407 +328,137 @@ Shadow Auditor ❯ Review file validation logic
 Shadow Auditor ❯ Run a full audit
 ```
 
-Exit with `exit`, `quit`, or `Ctrl+C`.
+Exit with: `exit`, `quit`, or `Ctrl+C`
 
 ---
 
-## CLI Options
+## The Architecture: Designed for Evidence
 
-```bash
-shadow-auditor [flags]
+### Session Artifacts
 
-FLAGS
-  --mode=<mode>           Audit mode: triage|deep-sast|full-report|patch-only|balanced
-  --diff                  Incremental scan: only files changed since --since ref
-  --since=<ref>           Git ref for incremental base (default: HEAD~1)
-  --ci                    CI mode: deterministic output, exit code on severity
-  --fail-on=<severity>    Minimum severity for non-zero CI exit (critical|high|medium|low|none)
-  --resume-run=<id>       Resume a persisted LangGraph run
-  --prompt=<text>         CI mission, or explicit answer for a paused resumed run
-  --target=<path>         Repository to audit (default: current directory)
-  --expert-unsafe         Permit broader command and MCP tool execution surface
-  --swarm                 Enable multi-agent swarm mode for parallel analysis
-  --watch                 Monitor source changes and run serialized incremental audits
-  --reconfigure           Force the configuration wizard to run again
-```
-
-### Examples
-
-```bash
-# Interactive shell with full analysis
-shadow-auditor --mode deep-sast
-
-# Fast triage pass
-shadow-auditor --mode triage
-
-# CI pipeline: incremental scan, fail on high+
-shadow-auditor --ci --diff --since main --fail-on high
-
-# Resume a paused headless run with its required confirmation
-shadow-auditor --ci --resume-run <run-id> --prompt yes
-
-# Multi-agent swarm mode
-shadow-auditor --swarm
-
-# Continuously audit security-relevant source changes
-shadow-auditor --watch
-
-# Expert mode with broader tool access
-shadow-auditor --expert-unsafe
-```
-
----
-
-## Architecture
-
-### LangGraph Workflow
-
-```
-START
-  │
-  ▼
-Codebase Intelligence ── repository map + architecture report
-  │
-  ▼
-SAST Audit ────────────── evidence-backed candidate findings
-  │
-  ▼
-Devil's Advocate ──────── confirmed/rejected findings with rationale
-  │
-  ▼
-Reporting ─────────────── final Markdown and bug-bounty reports
-  │
-  ▼
-END
-```
-
-**Key nodes:**
-- **Codebase Intelligence** — Maps architecture, trust boundaries, entry points, and data flows.
-- **SAST Audit** — Traces vulnerability sources to sinks and records code evidence.
-- **Devil's Advocate** — Challenges exploitability and rejects unsupported claims.
-- **Reporting** — Produces the only public model response, with clear impact, reproduction steps, and PoC evidence.
-
-Each stage has scoped tools and a finite runtime budget. Handoffs are schema-validated
-and checkpointed. Invalid handoffs fail closed after a bounded repair policy: two
-repair attempts by default, configurable from 0 to 4 with
-`reportValidation.maxRepairRetries`.
-
-### Agent Intelligence System
-
-| Feature | Description |
-|---------|-------------|
-| **Working Memory** | Auto-updating summary of findings, files examined, and hypotheses — survives context trimming |
-| **Typed Handoffs** | Each downstream stage consumes the validated, persisted artifact from its predecessor |
-| **Evidence Review** | Devil's Advocate independently confirms or rejects every candidate finding |
-| **Durable Resume** | Checkpoints preserve artifacts and confirmation identity across interrupted runs |
-| **Bounded Execution** | Duplicate-call detection and model-aware tool budgets force a final synthesis |
-
-Tool autonomy is configurable without bypassing host policy. Enter `/tools` in the
-interactive shell to open the dedicated tool screen, select an agent, enable or
-disable optional tools, and set its tool-step budget from 8 to 1024. Mandatory
-handoff and completion tools remain enabled. A step is one model/tool-loop
-iteration; parallel calls emitted by one model response consume one step.
-
-### Tool Intelligence
-
-The agent tools expose bounded, composable operations:
-
-| Tool | Enhancement |
-|------|-------------|
-| `context_retrieval` | Hybrid semantic+lexical+graph search. Clean output format with chaining hints |
-| `search_codebase` | Results grouped by file with match counts. Shows top matches, hides noise |
-| `read_file_content` | Line-range reads (`startLine`/`endLine`) and an automatic structural overview for large files |
-| `list_directory` | Structured output: directories first, file counts, chaining hints |
-| `execute_command` | Policy-gated host command execution with approval, timeout, and output limits |
-| `edit_file` | Exact-match validation, confirmation flow, line-change summary |
-| `finish_task` | Pre-call checklist, structured summary format |
-
-### Multi-Agent Swarm
-
-```
-┌──────────┐  ┌──────────────┐  ┌───────────────┐  ┌──────────┐  ┌──────────┐
-│  RECON   │  │ TAINT TRACER │  │EXPLOIT ANALYST│  │ VERIFIER │  │ REPORTER │
-│ discover │  │  trace data  │  │  classify CWE │  │ validate │  │ compile  │
-│ entries  │  │  source→sink │  │  assess risk  │  │ findings │  │  report  │
-└────┬─────┘  └──────┬───────┘  └───────┬───────┘  └────┬─────┘  └────┬─────┘
-     │               │                  │               │            │
-     └───────────────┴──────────────────┴───────────────┴────────────┘
-                                    │
-                          ┌─────────▼─────────┐
-                          │    BLACKBOARD     │
-                          │ claims · conflicts│
-                          │ consensus · tasks │
-                          └───────────────────┘
-```
-
-Each role has a **recommended tool workflow** to minimize thrashing:
-- Recon: `list_directory` → `context_retrieval` → `execute_command` → `submit_claim`
-- TaintTracer: `query_claims` → `context_retrieval` per entry → `search_codebase` → `submit_claim`
-- ExploitAnalyst: `query_claims` → `read_file_content` → `context_retrieval` mitigations → classify CWE
-- Verifier: `query_claims` → `read_file_content` → `context_retrieval` → `verify_claim`/`contest_claim`
-- Reporter: `query_claims` → organize by severity → `finish_task`
-
-### Patch Competition & Orchestrator Engine
-
-With `--swarm --mode patch-only`, three co-equal agents produce competing
-patch proposals from security-boundary, language-pattern, and TUI-state-machine
-perspectives. The orchestrator resolves conflicts:
-
-```
-Agent A (Security)  ──► PatchProposal ──┐
-Agent B (Language)  ──► PatchProposal ──┼──► OrchestratorEngine
-Agent C (TUI Logic) ──► PatchProposal ──┘      │
-                                               ├─ detectConflicts()
-                                               ├─ synthesizePatches()
-                                               ├─ verifySynthesizedPatch()
-                                               │
-                                               ▼
-                                          Super Patch
-                                     (unified git diff)
-```
-
-**Conflict detection** parses unified diffs into structured hunks, detects 5 conflict types (`same_line_edit`, `adjacent_edit`, `semantic_conflict`, `import_header_conflict`, `test_conflict`), and assigns resolution strategies.
-
-**Patch synthesis** merges non-conflicting hunks. For conflicts, applies resolution strategies: `merge_both`, `prefer_security`, `prefer_performance`, `combine_alternating`, or `manual_required` (with conflict markers).
-
-**Logical verification** runs 7 static checks: syntax validity, import completeness, type consistency, control flow integrity, idiom preservation, interface bridge integrity, and test compatibility.
-
-### Human-in-the-Loop
-
-| Feature | Behavior |
-|---------|----------|
-| **Single-use Decisions** | Every side-effecting operation requires a fresh approval |
-| **Timeout** | 5-minute auto-deny for unanswered confirmations |
-| **Signature Tracking** | A signature binds one pending operation to its resume response; it is cleared after that decision |
-| **LangGraph Command** | Tools throw `Command` → graph pauses at `HumanIntervention` → TUI shows question |
-
----
-
-## Provider Ecosystem
-
-Shadow Auditor supports the providers below. Model names are setup-wizard
-examples, not a guarantee that a provider account has access to that model;
-custom model names are accepted where the provider API supports them.
-
-| Provider | Models | Notes |
-|----------|--------|-------|
-| **Anthropic** | Claude Sonnet 4, Claude Opus 4, Claude Haiku/Sonnet 3.5 | Native Anthropic API |
-| **Azure / Microsoft Foundry** | GPT-5.6 Sol, GPT-5.4, GPT-5.x, GPT-4.1 | API key or Entra authentication; deployment names are configurable |
-| **OpenAI** | GPT-4o, GPT-4o mini, GPT-4.1, o1, o3-mini | Native OpenAI API |
-| **Google** | Gemini 3.6/3.5 Flash, Gemini 2.5 Pro | Native Google API |
-| **Mistral** | Mistral Large/Medium/Small, Codestral | Native Mistral API |
-| **DeepSeek** | DeepSeek V4 Pro/Flash | OpenAI-compatible transport with reasoning normalization |
-| **Qwen** | Qwen Plus/Turbo/Max/Coder Plus | DashScope OpenAI-compatible transport |
-| **Moonshot** | Kimi K3, Kimi K2.7 Code, Kimi K2.6 | OpenAI-compatible transport |
-| **NVIDIA** | Llama 3.1, Nemotron 4 | NVIDIA OpenAI-compatible transport |
-| **OpenRouter** | OpenRouter Auto and routed vendor models | OpenAI-compatible transport |
-| **Ollama** | Llama 3.1, Qwen 2.5 Coder | Local, privacy-first |
-| **Custom** | Any OpenAI-compatible endpoint | Bring your own |
-
-Perplexity Sonar is intentionally not offered by the setup wizard because its
-chat API does not expose the external tool contract required by the
-deterministic pipeline.
-
-Provider payload, schema, tool-loop, replay, and error contracts are covered by
-the automated test suite. Microsoft Foundry with Entra authentication has also
-been exercised live against `gpt-5.6-sol`; other hosted providers require
-customer credentials and should be smoke-tested in the deployment environment.
-
-### Streaming, reasoning, and token accounting
-
-- LangGraph `messages` and `updates` are the runtime stream contract. Provider
-  chunks are normalized before they reach the TUI.
-- The Reporting stage is the only source of public report text. Private chain of
-  thought is not rendered. Azure/Foundry reasoning summaries are shown only when
-  `azure.reasoningSummary` explicitly enables the endpoint's public summary
-  feature; DeepSeek, OpenRouter, and Ollama reasoning channels remain private.
-- Native Anthropic signed thinking blocks and Google thought signatures are
-  preserved for valid provider replay without exposing them in the transcript.
-- Token counters use provider-reported usage metadata when available. A total is
-  derived only when the provider supplies prompt/completion counts but no total.
-  Provider totals that include cached, reasoning, or otherwise unclassified
-  tokens are preserved rather than rewritten, and the TUI labels their
-  provenance.
-
----
-
-## Output & Artifacts
-
-Every started run creates a persistent artifact folder and
-`session-meta.json`. Message and tool-event logs are appended when those events
-occur. Pipeline handoffs and final reports are written only after their
-respective stages complete; cancelled or failed runs intentionally retain
-partial recovery evidence without masquerading as completed reports.
-
+Every run produces a persistent artifact folder:
 ```
 <target>/.shadow-auditor/runs/<ISO-timestamp>-<id>/
-├── session-meta.json      # Provider/model, target, budgets, warnings, timestamps
-├── messages.jsonl         # Messages recorded so far (when present)
-├── tool-events.jsonl      # Tool calls/results recorded so far (when present)
-├── pipeline/              # Completed typed stage handoffs (when present)
-├── report.json            # Completed structured findings
-├── report.sarif           # Completed SARIF export
-├── report.md              # Completed human-readable report
-└── langgraph-checkpoints/ # Persisted LangGraph state
 ```
 
-**Stable Finding IDs:** `SHADOW-<CWE>-<HEX8>` — deterministic and derived
-from normalized title, CWE, primary file, symbol, and line numbers.
+Inside:
+- **`session-meta.json`** — Run metadata, mode, config, timing
+- **`messages.jsonl`** — Complete conversation history
+- **`tool-events.jsonl`** — Log of all tool invocations
+- **`report.json`** — Structured findings (deduplicated, stable IDs)
+- **`report.sarif`** — SARIF format for CI integration
+- **`report.md`** — Human-readable Markdown report
 
----
+### Stable Vulnerability IDs
 
-## Configuration
+Every finding gets a deterministic ID: `SHADOW-<CWE>-<HEX8>`
 
-Saved to `~/.shadow-auditor.json`:
+Derived from:
+- Normalized title and CWE
+- Primary file path
+- Key evidence line numbers
 
-```json
-{
-  "provider": "anthropic",
-  "model": "claude-3-5-sonnet-20241022",
-  "apiKey": "",
-  "auditMode": "deep-sast",
-  "indexing": {
-    "enabled": true,
-    "embeddingProvider": "openai",
-    "embeddingModel": "text-embedding-3-small"
-  }
-}
-```
+**Same codebase + same commit = same finding ID.** This makes results reproducible and comparable.
 
-For private local indexing, set `embeddingProvider` to `ollama`. The index honors
-`OLLAMA_HOST`; `indexing.embeddingBaseUrl` can override it, and
-`indexing.embeddingDimension` must match the selected embedding model (768 for
-the default `nomic-embed-text`). Ollama requests are batched and response vectors
-are validated before the active index is replaced.
+### Deduplication & CVSS Consistency
 
-OpenAI-compatible cloud embeddings are currently verified for OpenAI and NVIDIA.
-Other chat providers do not imply an embeddings API; configure an explicit
-OpenAI-compatible embedding endpoint or use Ollama. Startup probes validate the
-selected provider. If embeddings are unavailable, Shadow Auditor reports the
-degradation and continues with Tree-sitter, lexical, and knowledge-graph
-retrieval. Cancellation is never converted into a fallback.
-
-The content-addressed semantic index is stored under
-`<target>/.shadow-auditor/semantic-index` and reuses unchanged vectors. Supported
-Tree-sitter grammars provide structural chunks, imports, and conservative call
-edges. Missing or failed grammars are visible in indexing diagnostics and fall
-back to bounded whole-file lexical chunks; relationships are never guessed
-between ambiguous symbols.
-
-API keys are stored in the OS keychain (via `keychain` adapter). For backward compatibility, keys may also be read from the config file.
-
----
-
-## Requirements
-
-- **Node.js** >= 24 and < 25
-- **npm 11** (the lockfile and native-install allowlist are npm-managed)
-- Optional: **Ollama** for local embeddings (`ollama pull nomic-embed-text`)
+- Multiple instances of the same root-cause vulnerability are grouped into one finding
+- CVSS v3.1 vectors are validated
+- Inconsistencies between reported and computed scores are flagged
 
 ---
 
 ## Development
 
 ```bash
-git clone https://github.com/Yahya-hacker/shadow-auditor.git
-cd shadow-auditor
-npm install
-npm run build        # Compile TypeScript
-npm test             # Run tests, then lint
-npm run lint         # ESLint
-```
-
-### Project Structure
-
-```
-src/
-├── commands/shell.tsx         # CLI entry point (oclif)
-├── core/
-│   ├── agent.ts               # AgentSession — runtime composition
-│   ├── system-prompt.ts       # System prompt builder with working memory
-│   ├── services/              # Tool assembly, execution, persistence
-│   ├── model-router.ts        # LangChain provider instantiation
-│   ├── model-capabilities.ts  # Runtime setting resolution
-│   ├── graph/
-│   │   ├── workflow.ts        # Deterministic four-stage LangGraph pipeline
-│   │   ├── state.ts           # AgentState annotations
-│   │   ├── tool-retriever.ts  # Dynamic top-K tool selection
-│   │   └── tools/
-│   │       └── langchain-wrapper.ts  # AI SDK → LangChain adapter
-│   ├── tools/                 # Policy-scoped agent tools
-│   │   ├── context-retrieval.ts
-│   │   ├── edit-file.ts
-│   │   ├── execute-command.ts
-│   │   ├── finish-task.ts
-│   │   ├── list-directory.ts
-│   │   ├── read-file.ts
-│   │   └── search-codebase.ts
-│   ├── hivemind/              # Multi-agent swarm
-│   │   ├── swarm-supervisor.ts
-│   │   ├── swarm-coordinator.ts
-│   │   ├── agent-worker.ts
-│   │   ├── blackboard.ts
-│   │   ├── task-graph.ts
-│   │   ├── consensus.ts
-│   │   ├── worker-prompts.ts
-│   │   └── worker-toolsets.ts
-│   ├── orchestrator/          # Patch competition engine
-│   │   ├── orchestrator-engine.ts
-│   │   ├── patch-competition-schema.ts
-│   │   ├── patch-conflict-detector.ts
-│   │   ├── patch-synthesizer.ts
-│   │   └── patch-logical-verifier.ts
-│   ├── memory/                # Hybrid retrieval + knowledge graph
-│   │   ├── hybrid-retriever.ts
-│   │   ├── knowledge-graph.ts
-│   │   ├── semantic-index.ts
-│   │   └── vector-store.ts
-│   ├── output/                # Report generation
-│   │   ├── report-builder.ts
-│   │   ├── sarif.ts
-│   │   ├── dedup.ts
-│   │   └── ci-exit.ts
-│   └── policy/                # Safety guardrails
-│       ├── command-policy.ts
-│       └── path-guard.ts
-├── ui/                        # Ink React TUI
-│   ├── App.tsx
-│   ├── screens/               # ShellScreen, BootScreen, SetupScreen
-│   ├── components/            # OutputArea, InputArea, Header, etc.
-│   └── store/appStore.ts      # Zustand state management
-└── utils/
-    ├── human-in-loop.ts       # Confirmation flow with timeout
-    ├── config.ts              # Configuration persistence
-    └── keychain.ts            # OS keychain adapter
+npm run lint      # Lint the codebase
+npm run build     # Compile TypeScript
+npm test          # Run full test suite
 ```
 
 ---
 
-## Safety & Governance
+## The Vision: Rigorous, Defensible Security
 
-- **Review Boundary**: Model output can miss vulnerabilities; treat reports as
-  decision support and retain human review for release-critical findings.
-- **Command Policy**: Safe families by default (`git status`, `npm test`). Destructive patterns denied.
-- **Expert Mode** (`--expert-unsafe`): Broader capabilities with explicit warnings.
-- **Confirmation Gates**: File edits and every host command execution require explicit approval.
-- **Timeouts**: Unanswered confirmations auto-deny after 5 minutes.
-- **Single-use Decisions**: A resumed approval authorizes exactly the pending operation; identical later operations prompt again.
+### What Makes Shadow Auditor Different
+
+**Evidence-backed findings, by design**
+
+Every vulnerability comes with concrete code references, reasoning paths, and actionable remediation. Security engineers get output they can act on immediately—and stand behind in audits.
+
+**Human-in-the-loop safety**
+
+Autonomous analysis only works when bounded by policy. Shadow Auditor gates risky actions through explicit policies and operator confirmation, suitable for professional environments where auditability is non-negotiable.
+
+**Structured outputs for CI pipelines**
+
+Persistent artifacts under `.shadow-auditor/runs/`, deterministic finding IDs, and SARIF output mean results are:
+- Reproducible across runs
+- Comparable across commits
+- Integrable with GitHub, GitLab, and other platforms
+
+**Context management that scales**
+
+Large codebases exceed any single context window. The roadmap targets hybrid retrieval—combining lexical search, semantic embeddings, and a knowledge graph of entities and flows—so the agent retains relevant context across long sessions.
+
+**A multi-agent mesh for complex operations**
+
+The future is specialized roles operating in parallel: recon, dataflow analysis, exploit-chain validation, remediation, and independent verification. Each writes to a shared evidence blackboard. A verifier enforces anti-hallucination gates before any finding reaches the report.
+
+---
+
+## The Goal
+
+Shadow Auditor aims to be the tool security engineers and developers reach for when results genuinely matter:
+
+✅ **Rigorous** — Evidence-backed, reproducible, auditable
+✅ **Governance-friendly** — Policy controls and human approval gates
+✅ **CI-integrated** — Structured outputs, stable IDs, SARIF support
+✅ **Scaled** — From single repos to full engineering organizations
+
+---
+
+## Configuration
+
+On first run, configuration is saved to:
+```
+~/.shadow-auditor.json
+```
+
+Includes:
+- `provider` — Which AI provider to use
+- `model` — Model name (e.g., `gpt-4`, `claude-3-sonnet`)
+- `apiKey` — Your API key (not required for Ollama)
+- `customBaseUrl` — For custom OpenAI-compatible endpoints
+- `maxOutputTokens` — Output token limit (optional)
+- `maxToolSteps` — Max tool calls per query (optional)
+
+⚠️ **Note:** API keys are stored in plaintext for backward compatibility. A secure secret-store extension hook is planned for future releases.
+
+---
+
+## Disclaimer
+
+**Shadow Auditor is a cybersecurity tool.** Use only on codebases and systems you are authorized to assess. You are responsible for lawful and ethical usage.
 
 ---
 
 ## License
 
-The source code is distributed under the [MIT License](LICENSE).
-
-Paid feature licenses are validated through Polar. Distributors enabling paid
-tiers must set `SHADOW_POLAR_ORG_ID` to the issuing Polar organization ID;
-without it, paid modes fail closed with an explicit configuration error.
+MIT
 
 ---
 
-## Repository
+## Join the Mission
 
-[Yahya-hacker/shadow-auditor](https://github.com/Yahya-hacker/shadow-auditor)
+Shadow Auditor is being built for teams that take security seriously. If you want to:
+- **Use it** — Install and start hunting vulnerabilities
+- **Contribute** — Help build the multi-agent mesh
+- **Report issues** — Found a bug? Open an issue on GitHub
+- **Share feedback** — Your workflow insights shape the roadmap
+
+**Repository:** [Yahya-hacker/shadow-auditor](https://github.com/Yahya-hacker/shadow-auditor)
+**Issues & Feedback:** [GitHub Issues](https://github.com/Yahya-hacker/shadow-auditor/issues)
 
 ---
 

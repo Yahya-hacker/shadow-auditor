@@ -11,18 +11,6 @@ import type { SecurityFinding } from './report-schema.js';
 import { computeRootCauseFingerprint, computeVulnId } from './vuln-fingerprint.js';
 
 // ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Compute a grouping key that ignores file paths so findings with the same
- * CWE and title in different files are merged under one canonical finding.
- */
-function groupingKey(cwe: string, title: string): string {
-  return computeRootCauseFingerprint({ cwe, filePaths: [], title });
-}
-
-// ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
 
@@ -52,10 +40,12 @@ export function deduplicateFindings(findings: SecurityFinding[]): SecurityFindin
   const groups = new Map<string, FindingGroup>();
 
   for (const finding of findings) {
-    // Group by CWE + title + primary file path. Same CWE+title in
-    // different files may be independent instances of the same vulnerability
-    // class; we merge them but preserve all affected file paths below.
-    const key = groupingKey(finding.cwe, finding.title);
+    const key = computeRootCauseFingerprint({
+      cwe: finding.cwe,
+      // Root-cause fingerprint intentionally excludes file paths:
+      // same CWE + same title = same root cause even across different files.
+      title: finding.title,
+    });
 
     const existing = groups.get(key);
     if (existing) {
@@ -64,11 +54,9 @@ export function deduplicateFindings(findings: SecurityFinding[]): SecurityFindin
         existing.filePaths.add(fp);
       }
 
-      // Keep the higher CVSS score as representative.
-      // Preserve the original file_paths on the primary so vulnId remains
-      // stable — file_paths is reset after vulnId computation below.
+      // Keep the higher CVSS score as representative
       if ((finding.cvss_v31_score ?? 0) > (existing.primary.cvss_v31_score ?? 0)) {
-        existing.primary = { ...finding };
+        existing.primary = { ...finding, file_paths: [] }; // file_paths merged below
       }
     } else {
       groups.set(key, {
@@ -85,12 +73,10 @@ export function deduplicateFindings(findings: SecurityFinding[]): SecurityFindin
     // Deterministic file path ordering
     const sortedPaths = [...group.filePaths].sort();
 
-    // Recompute stable vuln_id for the merged finding using the primary
-    // finding's file paths only (not the merged set) so the ID does not
-    // change when new occurrences are discovered in different files.
+    // Recompute stable vuln_id for the merged finding
     const stableVulnId = computeVulnId({
       cwe: group.primary.cwe,
-      filePaths: group.primary.file_paths,
+      filePaths: sortedPaths,
       title: group.primary.title,
     });
 

@@ -9,8 +9,6 @@
 import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 
-import type { PatchReviewDecision, PatchReviewRequest } from './types.js';
-
 import { RemediationLoop } from './remediation-loop.js';
 import { type TestRunner } from './test-runner.js';
 
@@ -19,7 +17,6 @@ import { type TestRunner } from './test-runner.js';
 // =============================================================================
 
 export interface RemediationToolsOptions {
-  confirmPatch?: (request: PatchReviewRequest) => Promise<PatchReviewDecision>;
   projectRoot: string;
   remediationLoop: RemediationLoop;
   testRunner: TestRunner;
@@ -29,7 +26,7 @@ export interface RemediationToolsOptions {
  * Create agent-facing remediation tools for the patch-engineer role.
  */
 export function createRemediationTools(options: RemediationToolsOptions): ToolSet {
-  const { confirmPatch, remediationLoop, testRunner } = options;
+  const { remediationLoop, testRunner } = options;
 
   return {
     apply_and_test_patch: tool({
@@ -40,88 +37,22 @@ export function createRemediationTools(options: RemediationToolsOptions): ToolSe
         'Returns a JSON result with status, test output, and baseline comparison.',
       ].join(' '),
 
-      async execute({ diff, findingId }, executionOptions) {
+      async execute({ diff, findingId }) {
         try {
-          const validation = await remediationLoop.validatePatch(
-            findingId,
-            diff,
-            executionOptions.abortSignal,
-          );
-          if (validation.testResult.degraded || !validation.testResult.passed) {
-            await remediationLoop.recordDecision({
-              action: 'rejected_by_validation',
-              findingId,
-              patchHash: validation.patchHash,
-              testResult: summarizeTestResult(validation.testResult),
-              timestamp: new Date().toISOString(),
-            });
-            return JSON.stringify({
-              findingId,
-              status: 'rejected_by_validation',
-              testNewFailures: validation.testResult.newFailures,
-              testPassed: validation.testResult.passed,
-              testStderr: validation.testResult.stderr.slice(0, 2000),
-              testStdout: validation.testResult.stdout.slice(0, 4000),
-            }, null, 2);
-          }
-
-          const decision = confirmPatch
-            ? await confirmPatch({ diff, findingId, testResult: validation.testResult })
-            : { action: 'reject' as const };
-
-          if (decision.action === 'revise') {
-            remediationLoop.discardValidation(validation.token);
-            await remediationLoop.recordDecision({
-              action: decision.action,
-              findingId,
-              instructions: decision.instructions,
-              patchHash: validation.patchHash,
-              testResult: summarizeTestResult(validation.testResult),
-              timestamp: new Date().toISOString(),
-            });
-
-            return JSON.stringify({
-              findingId,
-              revisionInstructions: decision.instructions,
-              status: 'revision_requested',
-            }, null, 2);
-          }
-
-          if (decision.action === 'reject') {
-            remediationLoop.discardValidation(validation.token);
-            await remediationLoop.recordDecision({
-              action: decision.action,
-              findingId,
-              patchHash: validation.patchHash,
-              testResult: summarizeTestResult(validation.testResult),
-              timestamp: new Date().toISOString(),
-            });
-
-            return JSON.stringify({ findingId, status: 'rejected_by_user' }, null, 2);
-          }
-
-          await remediationLoop.applyValidatedPatch(
-            validation.token,
-            diff,
-            executionOptions.abortSignal,
-          );
-          await remediationLoop.recordDecision({
-            action: 'apply',
-            findingId,
-            patchHash: validation.patchHash,
-            testResult: summarizeTestResult(validation.testResult),
-            timestamp: new Date().toISOString(),
-          });
+          const result = await remediationLoop.execute(findingId, diff);
 
           return JSON.stringify({
-            findingId,
-            status: 'applied',
-            testExitCode: validation.testResult.exitCode,
-            testNewFailures: validation.testResult.newFailures,
-            testPassed: validation.testResult.passed,
+            baselineComparison: result.baselineComparison,
+            findingId: result.findingId,
+            reverted: result.reverted,
+            status: result.status,
+            testExitCode: result.testResult?.exitCode,
+            testNewFailures: result.testResult?.newFailures,
+            testPassed: result.testResult?.passed,
+            testStderr: result.testResult?.stderr.slice(0, 2000),
+            testStdout: result.testResult?.stdout.slice(0, 4000),
           }, null, 2);
         } catch (error) {
-          executionOptions.abortSignal?.throwIfAborted();
           return `[ERROR] Remediation failed: ${error instanceof Error ? error.message : String(error)}`;
         }
       },
@@ -193,17 +124,5 @@ export function createRemediationTools(options: RemediationToolsOptions): ToolSe
 
       inputSchema: z.object({}),
     }),
-  };
-}
-
-function summarizeTestResult(result: Awaited<ReturnType<TestRunner['run']>>) {
-  return {
-    command: result.command,
-    degraded: result.degraded,
-    durationMs: result.durationMs,
-    exitCode: result.exitCode,
-    newFailures: result.newFailures,
-    passed: result.passed,
-    resolvedFailures: result.resolvedFailures,
   };
 }
