@@ -4,5 +4,3 @@ build/
 .env
 .shadow-auditor/
 shadow-prompt.md
-.aider*
-.serena/

@@ -7,8 +7,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
-import { recoverAtomicWrite, writeFileAtomic } from '../../utils/fs-atomic.js';
-
 export interface VectorEntry {
   id: string;
   metadata: Record<string, unknown>;
@@ -21,9 +19,7 @@ export interface VectorSearchResult {
 }
 
 export interface VectorStoreState {
-  embeddingFingerprint: string;
   entries: VectorEntry[];
-  generation?: string;
   schemaVersion: string;
   snapshotAt: string;
 }
@@ -59,45 +55,21 @@ function cosineSimilarity(a: number[], b: number[]): number {
  * Supports cosine similarity search and metadata filtering.
  */
 export class VectorStore {
-  readonly restoredCompatibleSnapshot: boolean;
-  readonly snapshotGeneration?: string;
-  private readonly embeddingFingerprint: string;
   private entries: Map<string, VectorEntry> = new Map();
   private readonly snapshotPath: string;
 
-  private constructor(
-    storagePath: string,
-    embeddingFingerprint: string,
-    restoredCompatibleSnapshot = false,
-    snapshotGeneration?: string,
-  ) {
-    this.embeddingFingerprint = embeddingFingerprint;
-    this.restoredCompatibleSnapshot = restoredCompatibleSnapshot;
-    this.snapshotGeneration = snapshotGeneration;
+  private constructor(storagePath: string) {
     this.snapshotPath = path.join(storagePath, 'vector-index.json');
   }
 
   /**
    * Create or load a vector store.
    */
-  static async create(storagePath: string, embeddingFingerprint: string): Promise<VectorStore> {
+  static async create(storagePath: string): Promise<VectorStore> {
     await fs.mkdir(storagePath, { recursive: true });
-    const snapshotPath = path.join(storagePath, 'vector-index.json');
-    try {
-      await recoverAtomicWrite(snapshotPath);
-      const content = await fs.readFile(snapshotPath, 'utf8');
-      const state = JSON.parse(content) as Partial<VectorStoreState>;
-      const compatible = state.embeddingFingerprint === embeddingFingerprint;
-      const store = new VectorStore(storagePath, embeddingFingerprint, compatible, state.generation);
-      if (compatible && Array.isArray(state.entries)) {
-        for (const entry of state.entries) store.entries.set(entry.id, entry);
-      }
-
-      return store;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      return new VectorStore(storagePath, embeddingFingerprint);
-    }
+    const store = new VectorStore(storagePath);
+    await store.loadSnapshot();
+    return store;
   }
 
   /**
@@ -146,16 +118,14 @@ export class VectorStore {
   /**
    * Save store to disk.
    */
-  async saveSnapshot(generation?: string): Promise<void> {
+  async saveSnapshot(): Promise<void> {
     const state: VectorStoreState = {
-      embeddingFingerprint: this.embeddingFingerprint,
       entries: [...this.entries.values()],
-      generation,
-      schemaVersion: '3.0.0',
+      schemaVersion: '1.0.0',
       snapshotAt: new Date().toISOString(),
     };
 
-    await writeFileAtomic(this.snapshotPath, JSON.stringify(state));
+    await fs.writeFile(this.snapshotPath, JSON.stringify(state), 'utf8');
   }
 
   /**
@@ -166,7 +136,6 @@ export class VectorStore {
     options: {
       filter?: Record<string, unknown>;
       minScore?: number;
-      predicate?: (metadata: Record<string, unknown>) => boolean;
       topK?: number;
     } = {},
   ): VectorSearchResult[] {
@@ -179,8 +148,6 @@ export class VectorStore {
       if (options.filter && !this.matchesFilter(entry.metadata, options.filter)) {
         continue;
       }
-
-      if (options.predicate && !options.predicate(entry.metadata)) continue;
 
       const score = cosineSimilarity(queryVector, entry.vector);
       if (score >= minScore) {
@@ -206,6 +173,26 @@ export class VectorStore {
   upsertBatch(entries: VectorEntry[]): void {
     for (const entry of entries) {
       this.entries.set(entry.id, entry);
+    }
+  }
+
+  /**
+   * Load store from disk.
+   */
+  private async loadSnapshot(): Promise<void> {
+    try {
+      const content = await fs.readFile(this.snapshotPath, 'utf8');
+      const state = JSON.parse(content) as VectorStoreState;
+
+      for (const entry of state.entries) {
+        this.entries.set(entry.id, entry);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return;
+      }
+
+      throw error;
     }
   }
 

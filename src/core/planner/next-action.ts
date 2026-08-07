@@ -6,7 +6,7 @@ import * as crypto from 'node:crypto';
 
 import type { KnowledgeGraph } from '../memory/knowledge-graph.js';
 import type { AttackChainManager, AttackStepManager } from './attack-chain.js';
-import type { AttackChain, AttackStep, PlannerAction } from './planner-schema.js';
+import type { AttackChain, AttackStep, PlannerAction, PlannerActionType } from './planner-schema.js';
 
 export interface ActionRecommendation {
   action: PlannerAction;

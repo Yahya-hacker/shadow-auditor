@@ -2,13 +2,15 @@
  * Chain Builder - Constructs attack chains from knowledge graph analysis.
  */
 
+import * as crypto from 'node:crypto';
+
 import type { KnowledgeGraph } from '../memory/knowledge-graph.js';
 import type { BaseEntity, VulnerabilityEntity } from '../memory/memory-schema.js';
 import type { Retrieval } from '../memory/retrieval.js';
-import type { AttackCategory, AttackChain } from './planner-schema.js';
+import type { AttackCategory, AttackChain, AttackStep } from './planner-schema.js';
 
 import { err, ok, type Result } from '../schema/base.js';
-import { AttackChainManager, AttackStepManager } from './attack-chain.js';
+import { AttackChainManager, type AttackStepInput, AttackStepManager } from './attack-chain.js';
 
 /**
  * CWE to attack category mapping.
@@ -33,62 +35,6 @@ const CWE_CATEGORY_MAP: Record<string, AttackCategory> = {
   'CWE-918': 'ssrf',          // SSRF
   'CWE-1104': 'components',    // Vulnerable Components
 };
-
-/**
- * Consolidated sink-category mapping.
- *
- * Maps each sink category to its default CWE, attack category, and estimated
- * impact score — replacing the three separate switch statements that were
- * `estimateImpact`, `getCweForSinkCategory`, and `sinkCategoryToAttackCategory`.
- */
-interface SinkCategoryInfo {
-  attackCategory: AttackCategory;
-  cwe: string;
-  impact: number;
-}
-
-const SINK_CATEGORY_MAP: Record<string, SinkCategoryInfo> = {
-  dom:        { attackCategory: 'xss',            cwe: 'CWE-79',  impact: 0.6 },
-  execution:  { attackCategory: 'injection',      cwe: 'CWE-94',  impact: 0.9 },
-  file:       { attackCategory: 'access_control', cwe: 'CWE-22',  impact: 0.8 },
-  network:    { attackCategory: 'ssrf',           cwe: 'CWE-918', impact: 0.7 },
-  sql:        { attackCategory: 'injection',      cwe: 'CWE-89',  impact: 0.9 },
-};
-
-/** Default entry used when a sink category is not in SINK_CATEGORY_MAP. */
-const SINK_CATEGORY_DEFAULT: SinkCategoryInfo = {
-  attackCategory: 'other',
-  cwe: 'CWE-20', // Improper Input Validation
-  impact: 0.5,
-};
-
-/**
- * Impact scores indexed by AttackCategory.
- * Covers all categories — including those that have no sink mapping
- * (e.g., deserialization, logging, components).
- */
-const IMPACT_MAP: Record<string, number> = {
-  access_control: 0.8,
-  broken_auth: 0.85,
-  components: 0.6,
-  deserialization: 0.9,
-  injection: 0.9,
-  logging: 0.3,
-  other: 0.5,
-  security_misconfig: 0.5,
-  sensitive_data: 0.7,
-  ssrf: 0.7,
-  xss: 0.6,
-  xxe: 0.7,
-};
-
-function estimateImpactForCategory(category: AttackCategory): number {
-  return IMPACT_MAP[category] ?? 0.5;
-}
-
-function getSinkInfo(sinkCategory: string): SinkCategoryInfo {
-  return SINK_CATEGORY_MAP[sinkCategory] ?? SINK_CATEGORY_DEFAULT;
-}
 
 /**
  * Get attack category from CWE.
@@ -143,7 +89,7 @@ export class ChainBuilder {
       description: `Exploit vulnerability: ${props.title}`,
       entityIds: [vuln.canonicalId],
       feasibility: vuln.confidence,
-      impact: estimateImpactForCategory(category),
+      impact: this.estimateImpact(category),
       title: props.title,
     });
 
@@ -177,17 +123,13 @@ export class ChainBuilder {
 
       if (sourceStep.ok) {
         stepIds.unshift(sourceStep.value.stepId);
-        // Main step depends on source step — use the manager API so the
-        // update is properly tracked (updatedAt, cycle detection).
-        const prereqResult = this.stepManager.addPrerequisite(mainStep.stepId, sourceStep.value.stepId);
-        if (!prereqResult.ok) {
-          return err(prereqResult.error);
-        }
+        // Main step depends on source step
+        this.stepManager.getStep(mainStep.stepId)!.prerequisites.push(sourceStep.value.stepId);
       }
     }
 
     // Add post-exploitation step if high impact
-    if (estimateImpactForCategory(category) >= 0.7) {
+    if (this.estimateImpact(category) >= 0.7) {
       const postExploitStep = this.stepManager.createStep({
         attackCategory: category,
         cwe,
@@ -299,10 +241,9 @@ export class ChainBuilder {
     const sinkProps = sink.properties as { category: string; name: string };
     const sourceProps = source.properties as { category: string; name: string };
 
-    // Determine attack category, CWE, and impact from the consolidated map
-    const sinkInfo = getSinkInfo(sinkProps.category);
-    const category = sinkInfo.attackCategory;
-    const cwe = sinkInfo.cwe;
+    // Determine attack category from sink
+    const category = this.sinkCategoryToAttackCategory(sinkProps.category);
+    const cwe = this.getCweForSinkCategory(sinkProps.category);
 
     const stepIds: string[] = [];
 
@@ -352,7 +293,7 @@ export class ChainBuilder {
       description: `Exploit ${category} at ${sinkProps.name}`,
       entityIds: [sink.canonicalId],
       feasibility: path.confidence,
-      impact: estimateImpactForCategory(category),
+      impact: this.estimateImpact(category),
       prerequisites: previousStepId ? [previousStepId] : [],
       title: `Exploit: ${sinkProps.name}`,
     });
@@ -378,4 +319,120 @@ export class ChainBuilder {
     return chainResult.ok ? ok(chainResult.value) : err(chainResult.error);
   }
 
+  /**
+   * Estimate impact score for attack category.
+   */
+  private estimateImpact(category: AttackCategory): number {
+    switch (category) {
+      case 'access_control': {
+        return 0.8;
+      }
+
+      case 'broken_auth': {
+        return 0.85;
+      }
+
+      case 'components': {
+        return 0.6;
+      }
+
+      case 'deserialization': {
+        return 0.9;
+      }
+
+      case 'injection': {
+        return 0.9;
+      }
+
+      case 'logging': {
+        return 0.3;
+      }
+
+      case 'security_misconfig': {
+        return 0.5;
+      }
+
+      case 'sensitive_data': {
+        return 0.7;
+      }
+
+      case 'ssrf': {
+        return 0.7;
+      }
+
+      case 'xss': {
+        return 0.6;
+      }
+
+      case 'xxe': {
+        return 0.7;
+      }
+
+      default: {
+        return 0.5;
+      }
+    }
+  }
+
+  /**
+   * Get CWE for sink category.
+   */
+  private getCweForSinkCategory(sinkCategory: string): string {
+    switch (sinkCategory) {
+      case 'dom': {
+        return 'CWE-79';
+      }
+
+      case 'execution': {
+        return 'CWE-94';
+      }
+
+      case 'file': {
+        return 'CWE-22';
+      }
+
+      case 'network': {
+        return 'CWE-918';
+      }
+
+      case 'sql': {
+        return 'CWE-89';
+      }
+
+      default: {
+        return 'CWE-20';
+      } // Improper Input Validation
+    }
+  }
+
+  /**
+   * Map sink category to attack category.
+   */
+  private sinkCategoryToAttackCategory(sinkCategory: string): AttackCategory {
+    switch (sinkCategory) {
+      case 'dom': {
+        return 'xss';
+      }
+
+      case 'execution': {
+        return 'injection';
+      }
+
+      case 'file': {
+        return 'access_control';
+      }
+
+      case 'network': {
+        return 'ssrf';
+      }
+
+      case 'sql': {
+        return 'injection';
+      }
+
+      default: {
+        return 'other';
+      }
+    }
+  }
 }

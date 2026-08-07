@@ -23,21 +23,6 @@ export const sandboxExecResultSchema = z.object({
 });
 export type SandboxExecResult = z.infer<typeof sandboxExecResultSchema>;
 
-export const signedExecutionEvidenceSchema = z.object({
-  artifactId: z.string().uuid(),
-  auditRunId: z.string().min(1).max(500),
-  capturedAt: z.string().datetime({offset: true}),
-  digest: z.string().regex(/^[a-f0-9]{64}$/),
-  findingId: z.string().min(1).max(200),
-  kind: z.literal('sandbox_execution'),
-  payload: sandboxExecResultSchema,
-  publicKeyFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-  schemaVersion: z.string().min(1),
-  signature: z.string().min(1),
-  signatureAlgorithm: z.literal('Ed25519'),
-});
-export type SignedExecutionEvidence = z.infer<typeof signedExecutionEvidenceSchema>;
-
 // =============================================================================
 // OAST Callbacks
 // =============================================================================

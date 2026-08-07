@@ -111,36 +111,6 @@ export function executeQuery(sql: string): void {
       expect(results[0].provenance.some((p) => p.strategy === 'lexical')).to.be.true;
     });
 
-    it('keeps lexical retrieval available when semantic embeddings are disabled', async () => {
-      await writeFile('src/command.ts', `
-export function runCommand(input: string): void {
-  exec(input);
-}
-`);
-      const semanticIndex = new SemanticIndex({
-        provider: new NullEmbeddingProvider(64),
-        rootPath: repoDir,
-        semanticSearchEnabled: false,
-        storagePath: path.join(storageDir, 'semantic'),
-      });
-      await semanticIndex.initialize();
-      await semanticIndex.indexRepository();
-      const graph = await KnowledgeGraph.create({
-        runId: 'lexical-degradation',
-        storagePath: path.join(storageDir, 'graph'),
-      });
-      const retrieval = new Retrieval(graph);
-      const retriever = new HybridRetriever(graph, retrieval, semanticIndex, {rootPath: repoDir});
-
-      const results = await retriever.search('command exec', {
-        strategies: ['semantic', 'lexical'],
-      });
-
-      expect(results).not.to.be.empty;
-      expect(results[0]?.provenance.map(({strategy}) => strategy)).to.deep.equal(['lexical']);
-      expect(await semanticIndex.search('command exec')).to.deep.equal([]);
-    });
-
     it('should fuse results from multiple strategies', async () => {
       await writeFile('src/api.ts', `
 export function processUserInput(input: string): string {

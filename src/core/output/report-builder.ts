@@ -8,12 +8,12 @@ import * as path from 'node:path';
 
 import type { VerificationGates, VerificationResult } from '../verify/gates.js';
 
-import { writeFileAtomic } from '../../utils/fs-atomic.js';
 import { SCHEMA_VERSION } from '../schema/base.js';
 import {
   type EnhancedFinding,
   enhancedFindingSchema,
   type EnhancedReport,
+  enhancedReportSchema,
   type ReportMetadata,
   type ReportSummary,
 } from './finding-schema.js';
@@ -39,9 +39,6 @@ export interface ReportBuilderOptions {
   /** Whether to generate SARIF report */
   generateSarif?: boolean;
   
-  /** Runtime capabilities enabled for this audit */
-  modes?: ReportMetadata['modes'];
-
   /** Output directory */
   outputDir: string;
   
@@ -69,7 +66,7 @@ export class ReportBuilder {
   private filesTotal = 0;
   private readonly findingIds = new Set<string>();
   private readonly findings: EnhancedFinding[] = [];
-  private readonly options: ReportBuilderOptions;
+  private readonly options: Required<ReportBuilderOptions>;
   private readonly rejectedFindings: Array<{
     finding: Partial<EnhancedFinding>;
     reason: string;
@@ -89,7 +86,7 @@ export class ReportBuilder {
       toolVersion: '1.0.0',
       verificationGates: undefined,
       ...options,
-    };
+    } as Required<ReportBuilderOptions>;
   }
 
   /**
@@ -151,30 +148,6 @@ export class ReportBuilder {
   }
   
   /**
-   * Validate and commit a complete finding batch without exposing partial state.
-   */
-  addFindingsAtomically(
-    findings: readonly EnhancedFinding[],
-  ): { added: boolean; reason?: string } {
-    const findingCount = this.findings.length;
-    const rejectedCount = this.rejectedFindings.length;
-    const findingIds = new Set(this.findingIds);
-
-    for (const finding of findings) {
-      const result = this.addFinding(finding);
-      if (!result.added) {
-        this.findings.splice(findingCount);
-        this.rejectedFindings.splice(rejectedCount);
-        this.findingIds.clear();
-        for (const findingId of findingIds) this.findingIds.add(findingId);
-        return result;
-      }
-    }
-
-    return { added: true };
-  }
-
-  /**
    * Build the complete report.
    */
   build(): EnhancedReport {
@@ -189,17 +162,16 @@ export class ReportBuilder {
         filesTotal: this.filesTotal,
         percentComplete: this.filesTotal > 0 
           ? Math.round((this.filesAnalyzed / this.filesTotal) * 100)
-          : 0,
+          : 100,
       },
       durationMs: duration,
       generatedAt: now.toISOString(),
-      modes: this.options.modes,
       reportId: this.generateReportId(),
       runId: this.options.runId,
       scanMode: this.options.scanMode,
       schemaVersion: SCHEMA_VERSION,
       targetName: this.options.targetName,
-      toolVersion: this.options.toolVersion ?? '1.0.0',
+      toolVersion: this.options.toolVersion,
     };
     
     const summary = this.computeSummary();
@@ -240,7 +212,7 @@ export class ReportBuilder {
     // Generate JSON report
     if (this.options.generateJson) {
       const jsonPath = path.join(this.options.outputDir, 'report.json');
-      await writeFileAtomic(jsonPath, JSON.stringify(report, null, 2));
+      await fs.writeFile(jsonPath, JSON.stringify(report, null, 2), 'utf-8');
       result.jsonPath = jsonPath;
     }
     
@@ -248,7 +220,7 @@ export class ReportBuilder {
     if (this.options.generateSarif) {
       const sarif = generateEnhancedSarifReport(report);
       const sarifPath = path.join(this.options.outputDir, 'report.sarif');
-      await writeFileAtomic(sarifPath, JSON.stringify(sarif, null, 2));
+      await fs.writeFile(sarifPath, JSON.stringify(sarif, null, 2), 'utf-8');
       result.sarifPath = sarifPath;
     }
     
@@ -256,7 +228,7 @@ export class ReportBuilder {
     if (this.options.generateMarkdown) {
       const markdown = this.generateMarkdown(report);
       const mdPath = path.join(this.options.outputDir, 'report.md');
-      await writeFileAtomic(mdPath, markdown);
+      await fs.writeFile(mdPath, markdown, 'utf-8');
       result.markdownPath = mdPath;
     }
     
@@ -270,21 +242,12 @@ export class ReportBuilder {
     return [...this.rejectedFindings];
   }
   
-  reset(): void {
-    this.filesAnalyzed = 0;
-    this.filesTotal = 0;
-    this.findingIds.clear();
-    this.findings.length = 0;
-    this.rejectedFindings.length = 0;
-    this.startTime = Date.now();
-  }
-
   /**
    * Set coverage statistics.
    */
   setCoverage(analyzed: number, total?: number): this {
     this.filesAnalyzed = analyzed;
-    this.filesTotal = total ?? 0;
+    this.filesTotal = total ?? analyzed;
     return this;
   }
   
@@ -349,19 +312,16 @@ export class ReportBuilder {
       // CWE count
       cweCount.set(finding.cwe, (cweCount.get(finding.cwe) ?? 0) + 1);
       
-      // Risk score contribution (defensive NaN guard)
-      const score = finding.cvssV31Score;
-      if (Number.isNaN(score)) continue;
-      const severityMultiplier: number = {
+      // Risk score contribution
+      const severityMultiplier = {
         Critical: 10,
         High: 7,
         Info: 0.5,
         Low: 2,
         Medium: 4,
-      }[finding.severityLabel] ?? 1; // fallback: treat unknown severity as weight 1
+      }[finding.severityLabel];
 
-      if (Number.isNaN(severityMultiplier)) continue;
-      totalRisk += score * severityMultiplier * finding.confidence;
+      totalRisk += finding.cvssV31Score * severityMultiplier * finding.confidence;
     }
     
     // Top CWEs
