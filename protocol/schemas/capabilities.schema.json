@@ -1,0 +1,238 @@
+{
+  "$defs": {
+    "ClientCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "compression": {
+          "items": {
+            "$ref": "#/$defs/Compression"
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "limits": {
+          "$ref": "common.schema.json#/$defs/PayloadLimits"
+        },
+        "optionalFeatures": {
+          "items": {
+            "$ref": "#/$defs/Feature"
+          },
+          "maxItems": 16,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "requiredFeatures": {
+          "items": {
+            "$ref": "#/$defs/Feature"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "supportedVersions": {
+          "items": {
+            "$ref": "common.schema.json#/$defs/ProtocolVersion"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "supportedVersions",
+        "requiredFeatures",
+        "optionalFeatures",
+        "compression",
+        "limits"
+      ],
+      "type": "object"
+    },
+    "Compression": {
+      "enum": [
+        "identity",
+        "gzip"
+      ],
+      "type": "string"
+    },
+    "Feature": {
+      "enum": [
+        "bound-ed25519-auth",
+        "canonical-request-signing",
+        "durable-idempotency",
+        "operation-recovery",
+        "pinned-server-event-keys",
+        "signed-hash-chain-sse",
+        "tool-authority-v1",
+        "usage-reconciliation-v1"
+      ],
+      "type": "string"
+    },
+    "NegotiatedCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "compression": {
+          "$ref": "#/$defs/Compression"
+        },
+        "features": {
+          "items": {
+            "$ref": "#/$defs/Feature"
+          },
+          "maxItems": 16,
+          "minItems": 8,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "limits": {
+          "$ref": "common.schema.json#/$defs/PayloadLimits",
+          "description": "Each negotiated value is the minimum of the server hard maximum and client-advertised maximum."
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "serverEventSigningKeys": {
+          "description": "Enrollment-authenticated, pre-provisioned event-signing keys. Key IDs and public-key material MUST be pairwise distinct under semantic enrollment validation. The set is immutable for the enrollment token family and every session created by it.",
+          "items": {
+            "$ref": "#/$defs/ServerEventSigningKey"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "serverManifestDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "serverToolSigningKeys": {
+          "allOf": [
+            {
+              "contains": {
+                "properties": {
+                  "role": {
+                    "const": "proposal"
+                  }
+                },
+                "required": [
+                  "role"
+                ],
+                "type": "object"
+              },
+              "maxContains": 1,
+              "minContains": 1
+            },
+            {
+              "contains": {
+                "properties": {
+                  "role": {
+                    "const": "grant"
+                  }
+                },
+                "required": [
+                  "role"
+                ],
+                "type": "object"
+              },
+              "maxContains": 1,
+              "minContains": 1
+            }
+          ],
+          "description": "Enrollment-authenticated server tool-authority trust anchors. Exactly one distinct key is provisioned for each server role; key IDs and public-key material MUST also be distinct under semantic enrollment validation. The set is immutable for the enrollment token family and every session created by it.",
+          "items": {
+            "$ref": "#/$defs/ServerToolSigningKey"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "features",
+        "compression",
+        "limits",
+        "serverManifestDigest",
+        "serverEventSigningKeys",
+        "serverToolSigningKeys"
+      ],
+      "type": "object"
+    },
+    "ServerEventSigningKey": {
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "const": "Ed25519",
+          "type": "string"
+        },
+        "keyId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "keyThumbprint": {
+          "$ref": "common.schema.json#/$defs/Base64Url32"
+        },
+        "publicKey": {
+          "$ref": "common.schema.json#/$defs/Base64Url32"
+        },
+        "retainUntil": {
+          "$ref": "common.schema.json#/$defs/Timestamp",
+          "description": "The server retains this key and its event history through this instant; clients retain pinned keys for at least as long."
+        },
+        "validFrom": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "validUntil": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "algorithm",
+        "keyId",
+        "publicKey",
+        "keyThumbprint",
+        "validFrom",
+        "validUntil",
+        "retainUntil"
+      ],
+      "type": "object"
+    },
+    "ServerToolSigningKey": {
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "const": "Ed25519",
+          "type": "string"
+        },
+        "keyId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "keyThumbprint": {
+          "$ref": "common.schema.json#/$defs/Base64Url32"
+        },
+        "publicKey": {
+          "$ref": "common.schema.json#/$defs/Base64Url32"
+        },
+        "role": {
+          "enum": [
+            "proposal",
+            "grant"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "algorithm",
+        "keyId",
+        "publicKey",
+        "keyThumbprint",
+        "role"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/capabilities.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Protocol Capability Negotiation"
+}

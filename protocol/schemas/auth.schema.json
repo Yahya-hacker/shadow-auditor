@@ -1,0 +1,319 @@
+{
+  "$defs": {
+    "BoundTokenClaims": {
+      "additionalProperties": false,
+      "properties": {
+        "cnf": {
+          "$ref": "#/$defs/TokenConfirmation"
+        },
+        "deviceId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "expiresAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "issuedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "keyId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "tenantId",
+        "deviceId",
+        "keyId",
+        "issuedAt",
+        "expiresAt",
+        "cnf"
+      ],
+      "type": "object"
+    },
+    "BoundTokenSet": {
+      "additionalProperties": false,
+      "properties": {
+        "accessClaims": {
+          "$ref": "#/$defs/BoundTokenClaims"
+        },
+        "accessToken": {
+          "maxLength": 8192,
+          "minLength": 32,
+          "pattern": "^[A-Za-z0-9._~-]+$",
+          "type": "string"
+        },
+        "refreshExpiresAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "refreshToken": {
+          "maxLength": 8192,
+          "minLength": 32,
+          "pattern": "^[A-Za-z0-9._~-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "accessToken",
+        "refreshToken",
+        "accessClaims",
+        "refreshExpiresAt"
+      ],
+      "type": "object"
+    },
+    "EnrollmentRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "bootstrapToken": {
+          "maxLength": 512,
+          "minLength": 32,
+          "pattern": "^[A-Za-z0-9._~-]+$",
+          "type": "string"
+        },
+        "clientCapabilities": {
+          "$ref": "capabilities.schema.json#/$defs/ClientCapabilities"
+        },
+        "deviceId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "deviceLabel": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "keyId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "keyThumbprint": {
+          "$ref": "common.schema.json#/$defs/Base64Url32"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "publicKey": {
+          "$ref": "common.schema.json#/$defs/Base64Url32"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "deviceId",
+        "keyId",
+        "publicKey",
+        "keyThumbprint",
+        "bootstrapToken",
+        "deviceLabel",
+        "clientCapabilities"
+      ],
+      "type": "object"
+    },
+    "EnrollmentResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "$ref": "capabilities.schema.json#/$defs/NegotiatedCapabilities"
+        },
+        "deviceId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "keyId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "pinnedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "tokens": {
+          "$ref": "#/$defs/BoundTokenSet"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "deviceId",
+        "keyId",
+        "pinnedAt",
+        "tokens",
+        "capabilities"
+      ],
+      "type": "object"
+    },
+    "KeyRotationProjection": {
+      "additionalProperties": false,
+      "description": "Non-circular projection signed by the new Ed25519 key under the key-rotation domain. The enclosing HTTP request is independently signed by the currently pinned key.",
+      "properties": {
+        "currentKeyId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "deviceId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "newKeyId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "newKeyThumbprint": {
+          "$ref": "common.schema.json#/$defs/Base64Url32"
+        },
+        "newPublicKey": {
+          "$ref": "common.schema.json#/$defs/Base64Url32"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "deviceId",
+        "currentKeyId",
+        "newKeyId",
+        "newPublicKey",
+        "newKeyThumbprint"
+      ],
+      "type": "object"
+    },
+    "KeyRotationResponse": {
+      "additionalProperties": false,
+      "description": "Durably committed rotation outcome and the new-key-bound credentials. Exact idempotent retries replay this response byte-for-byte.",
+      "properties": {
+        "deviceId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "newKeyId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "operation": {
+          "$ref": "operations.schema.json#/$defs/CommittedOperation"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "tokens": {
+          "$ref": "#/$defs/BoundTokenSet"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "deviceId",
+        "newKeyId",
+        "operation",
+        "tokens"
+      ],
+      "type": "object"
+    },
+    "RefreshRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "deviceId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "keyId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "refreshToken": {
+          "maxLength": 8192,
+          "minLength": 32,
+          "pattern": "^[A-Za-z0-9._~-]+$",
+          "type": "string"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "deviceId",
+        "keyId",
+        "refreshToken"
+      ],
+      "type": "object"
+    },
+    "RevokeKeyRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "deviceId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "keyId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "reason": {
+          "enum": [
+            "compromised",
+            "device-retired",
+            "rotation-complete",
+            "user-request"
+          ],
+          "type": "string"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "deviceId",
+        "keyId",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "RotateKeyRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "newKeyProof": {
+          "$ref": "common.schema.json#/$defs/DetachedSignature",
+          "description": "Proof by the new private key over projection under shadow-auditor/key-rotation/v1. Its keyId must exactly equal projection.newKeyId."
+        },
+        "projection": {
+          "$ref": "#/$defs/KeyRotationProjection"
+        }
+      },
+      "required": [
+        "projection",
+        "newKeyProof"
+      ],
+      "type": "object"
+    },
+    "TokenConfirmation": {
+      "additionalProperties": false,
+      "properties": {
+        "jkt": {
+          "$ref": "common.schema.json#/$defs/Base64Url32",
+          "description": "RFC 7638 SHA-256 JWK thumbprint of the pinned Ed25519 public key."
+        }
+      },
+      "required": [
+        "jkt"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/auth.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Enrollment-Pinned Authentication"
+}

@@ -1,0 +1,273 @@
+{
+  "$defs": {
+    "AuthoritativeBillingRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "authoritative": {
+          "const": true,
+          "type": "boolean"
+        },
+        "billingRecordId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "meters": {
+          "items": {
+            "$ref": "#/$defs/UsageMeter"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": "array"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "reconciliationId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "sessionId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "settledAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "sourceUsageIds": {
+          "items": {
+            "$ref": "common.schema.json#/$defs/Uuid"
+          },
+          "maxItems": 1024,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "sessionId",
+        "billingRecordId",
+        "reconciliationId",
+        "authoritative",
+        "sourceUsageIds",
+        "settledAt",
+        "meters"
+      ],
+      "type": "object"
+    },
+    "ByteMeter": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "$ref": "common.schema.json#/$defs/SafeNonNegativeInteger"
+        },
+        "meter": {
+          "enum": [
+            "bytes_received",
+            "bytes_sent"
+          ],
+          "type": "string"
+        },
+        "unit": {
+          "const": "bytes",
+          "type": "string"
+        }
+      },
+      "required": [
+        "meter",
+        "unit",
+        "amount"
+      ],
+      "type": "object"
+    },
+    "CostMeter": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "$ref": "common.schema.json#/$defs/CanonicalDecimal"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        },
+        "meter": {
+          "const": "cost",
+          "type": "string"
+        },
+        "unit": {
+          "const": "currency",
+          "type": "string"
+        }
+      },
+      "required": [
+        "meter",
+        "unit",
+        "amount",
+        "currency"
+      ],
+      "type": "object"
+    },
+    "LatencyMeter": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "$ref": "common.schema.json#/$defs/SafeNonNegativeInteger"
+        },
+        "meter": {
+          "const": "latency",
+          "type": "string"
+        },
+        "unit": {
+          "const": "milliseconds",
+          "type": "string"
+        }
+      },
+      "required": [
+        "meter",
+        "unit",
+        "amount"
+      ],
+      "type": "object"
+    },
+    "ProviderUsageRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "authoritative": {
+          "const": false,
+          "type": "boolean"
+        },
+        "meters": {
+          "items": {
+            "$ref": "#/$defs/UsageMeter"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": "array"
+        },
+        "model": {
+          "$ref": "common.schema.json#/$defs/Identifier"
+        },
+        "observedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "provider": {
+          "$ref": "common.schema.json#/$defs/Identifier"
+        },
+        "providerRecordId": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "reconciliationId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "sessionId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "usageId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "sessionId",
+        "usageId",
+        "reconciliationId",
+        "authoritative",
+        "provider",
+        "model",
+        "observedAt",
+        "meters"
+      ],
+      "type": "object"
+    },
+    "RequestMeter": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "$ref": "common.schema.json#/$defs/SafeNonNegativeInteger"
+        },
+        "meter": {
+          "const": "requests",
+          "type": "string"
+        },
+        "unit": {
+          "const": "count",
+          "type": "string"
+        }
+      },
+      "required": [
+        "meter",
+        "unit",
+        "amount"
+      ],
+      "type": "object"
+    },
+    "TokenMeter": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "$ref": "common.schema.json#/$defs/SafeNonNegativeInteger"
+        },
+        "meter": {
+          "enum": [
+            "input_tokens",
+            "output_tokens",
+            "cached_input_tokens"
+          ],
+          "type": "string"
+        },
+        "unit": {
+          "const": "tokens",
+          "type": "string"
+        }
+      },
+      "required": [
+        "meter",
+        "unit",
+        "amount"
+      ],
+      "type": "object"
+    },
+    "UsageMeter": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TokenMeter"
+        },
+        {
+          "$ref": "#/$defs/RequestMeter"
+        },
+        {
+          "$ref": "#/$defs/LatencyMeter"
+        },
+        {
+          "$ref": "#/$defs/ByteMeter"
+        },
+        {
+          "$ref": "#/$defs/CostMeter"
+        }
+      ]
+    },
+    "UsageRecord": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ProviderUsageRecord"
+        },
+        {
+          "$ref": "#/$defs/AuthoritativeBillingRecord"
+        }
+      ]
+    }
+  },
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/usage.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Usage and Billing Reconciliation"
+}

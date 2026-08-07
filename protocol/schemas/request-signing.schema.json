@@ -1,0 +1,163 @@
+{
+  "$defs": {
+    "RequestSigningProjection": {
+      "additionalProperties": false,
+      "properties": {
+        "accessTokenDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest",
+          "description": "SHA-256 of the exact ASCII access-token bytes. Enrollment uses the SHA-256 digest of zero bytes."
+        },
+        "bodyDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest",
+          "description": "SHA-256 of canonical JSON UTF-8 bytes, or sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 for an absent body."
+        },
+        "bodyMediaType": {
+          "enum": [
+            "application/json",
+            "application/problem+json",
+            "none"
+          ],
+          "type": "string"
+        },
+        "canonicalPath": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "pattern": "^/(?:[A-Za-z0-9._~!$&'()*+,;=:@%-]+(?:/[A-Za-z0-9._~!$&'()*+,;=:@%-]+)*)?/?$",
+          "type": "string"
+        },
+        "canonicalQuery": {
+          "maxLength": 4096,
+          "pattern": "^(?:[A-Za-z0-9._~%-]+=[A-Za-z0-9._~%-]*(?:&[A-Za-z0-9._~%-]+=[A-Za-z0-9._~%-]*)*)?$",
+          "type": "string"
+        },
+        "deviceId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "idempotencyKey": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "keyId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "method": {
+          "enum": [
+            "DELETE",
+            "GET",
+            "PATCH",
+            "POST",
+            "PUT"
+          ],
+          "type": "string"
+        },
+        "nonce": {
+          "$ref": "common.schema.json#/$defs/Nonce"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "requestId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "sessionId": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "timestamp": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "method",
+        "canonicalPath",
+        "canonicalQuery",
+        "tenantId",
+        "deviceId",
+        "keyId",
+        "sessionId",
+        "accessTokenDigest",
+        "bodyMediaType",
+        "bodyDigest",
+        "timestamp",
+        "nonce",
+        "requestId",
+        "idempotencyKey"
+      ],
+      "type": "object"
+    },
+    "SignedRequestHeaders": {
+      "additionalProperties": false,
+      "properties": {
+        "Idempotency-Key": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "X-Shadow-Access-Token-Digest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "X-Shadow-Body-Digest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "X-Shadow-Device-Id": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "X-Shadow-Key-Id": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "X-Shadow-Nonce": {
+          "$ref": "common.schema.json#/$defs/Nonce"
+        },
+        "X-Shadow-Protocol-Version": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "X-Shadow-Request-Id": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "X-Shadow-Session-Id": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "X-Shadow-Signature": {
+          "$ref": "common.schema.json#/$defs/Base64Url64"
+        },
+        "X-Shadow-Tenant-Id": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "X-Shadow-Timestamp": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "X-Shadow-Protocol-Version",
+        "X-Shadow-Tenant-Id",
+        "X-Shadow-Device-Id",
+        "X-Shadow-Key-Id",
+        "X-Shadow-Access-Token-Digest",
+        "X-Shadow-Body-Digest",
+        "X-Shadow-Timestamp",
+        "X-Shadow-Nonce",
+        "X-Shadow-Request-Id",
+        "X-Shadow-Signature"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/request-signing.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The signature is transported in X-Shadow-Signature and never appears in this projection or the body. The signed bytes are UTF-8('shadow-auditor/request-signature/v1\\n' + JCS(projection)).",
+  "title": "Request Signing"
+}

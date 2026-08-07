@@ -1,0 +1,365 @@
+{
+  "$defs": {
+    "ManifestFile": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "$ref": "common.schema.json#/$defs/SafeNonNegativeInteger"
+        },
+        "path": {
+          "maxLength": 256,
+          "pattern": "^(?!.*(?:^|/)\\.{1,2}(?:/|$))(?:protocol/[A-Za-z0-9._/-]+|scripts/generate-protocol\\.mjs|src/protocol/[A-Za-z0-9._/-]+)$",
+          "type": "string"
+        },
+        "sha256": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "bytes",
+        "path",
+        "sha256"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/manifest.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "canonicalJson": {
+      "additionalProperties": false,
+      "properties": {
+        "limits": {
+          "additionalProperties": false,
+          "properties": {
+            "maxArrayItems": {
+              "const": 1024,
+              "type": "integer"
+            },
+            "maxBodyBytes": {
+              "const": 1048576,
+              "type": "integer"
+            },
+            "maxCanonicalDepth": {
+              "const": 32,
+              "type": "integer"
+            },
+            "maxCanonicalNodes": {
+              "const": 10000,
+              "type": "integer"
+            },
+            "maxEventBytes": {
+              "const": 262144,
+              "type": "integer"
+            },
+            "maxObjectKeys": {
+              "const": 256,
+              "type": "integer"
+            },
+            "maxStringBytes": {
+              "const": 65536,
+              "type": "integer"
+            },
+            "maxToolDescriptors": {
+              "const": 128,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "maxArrayItems",
+            "maxBodyBytes",
+            "maxCanonicalDepth",
+            "maxCanonicalNodes",
+            "maxEventBytes",
+            "maxObjectKeys",
+            "maxStringBytes",
+            "maxToolDescriptors"
+          ],
+          "type": "object"
+        },
+        "profile": {
+          "const": "RFC 8785 JCS over strict I-JSON",
+          "type": "string"
+        }
+      },
+      "required": [
+        "limits",
+        "profile"
+      ],
+      "type": "object"
+    },
+    "digestAlgorithm": {
+      "const": "sha256",
+      "type": "string"
+    },
+    "fileDigestSemantics": {
+      "const": "SHA-256 over UTF-8 text after CRLF and CR normalization to LF; manifest.json is excluded to avoid self-reference.",
+      "type": "string"
+    },
+    "files": {
+      "items": false,
+      "maxItems": 19,
+      "minItems": 19,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/openapi.json"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/schemas/auth.schema.json"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/schemas/capabilities.schema.json"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/schemas/common.schema.json"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/schemas/events.schema.json"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/schemas/manifest.schema.json"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/schemas/operations.schema.json"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/schemas/problem.schema.json"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/schemas/protocol.schema.json"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/schemas/request-signing.schema.json"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/schemas/sessions.schema.json"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/schemas/tools.schema.json"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/schemas/usage.schema.json"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/signing-vectors.json"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "scripts/generate-protocol.mjs"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "src/protocol/canonical-json.ts"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "src/protocol/generated/dtos.ts"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "src/protocol/index.ts"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "src/protocol/signing.ts"
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "type": "array"
+    },
+    "protocolDigest": {
+      "$ref": "common.schema.json#/$defs/Sha256Digest"
+    },
+    "protocolDigestSemantics": {
+      "const": "SHA-256 over strict canonical JSON of every manifest member except protocolDigest.",
+      "type": "string"
+    },
+    "protocolVersion": {
+      "$ref": "common.schema.json#/$defs/ProtocolVersion"
+    },
+    "release": {
+      "const": "1.0.0",
+      "type": "string"
+    },
+    "requiredFeatures": {
+      "items": false,
+      "maxItems": 8,
+      "minItems": 8,
+      "prefixItems": [
+        {
+          "const": "bound-ed25519-auth"
+        },
+        {
+          "const": "canonical-request-signing"
+        },
+        {
+          "const": "durable-idempotency"
+        },
+        {
+          "const": "operation-recovery"
+        },
+        {
+          "const": "pinned-server-event-keys"
+        },
+        {
+          "const": "signed-hash-chain-sse"
+        },
+        {
+          "const": "tool-authority-v1"
+        },
+        {
+          "const": "usage-reconciliation-v1"
+        }
+      ],
+      "type": "array",
+      "uniqueItems": true
+    },
+    "signingDomains": {
+      "items": {
+        "enum": [
+          "shadow-auditor/event-envelope/v1",
+          "shadow-auditor/key-rotation/v1",
+          "shadow-auditor/request-signature/v1",
+          "shadow-auditor/tool-decision/v1",
+          "shadow-auditor/tool-descriptor/v1",
+          "shadow-auditor/tool-grant/v1",
+          "shadow-auditor/tool-proposal/v1",
+          "shadow-auditor/tool-result/v1"
+        ],
+        "type": "string"
+      },
+      "maxItems": 8,
+      "minItems": 8,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "status": {
+      "const": "frozen",
+      "type": "string"
+    }
+  },
+  "required": [
+    "canonicalJson",
+    "digestAlgorithm",
+    "fileDigestSemantics",
+    "files",
+    "protocolDigest",
+    "protocolDigestSemantics",
+    "protocolVersion",
+    "release",
+    "requiredFeatures",
+    "signingDomains",
+    "status"
+  ],
+  "title": "Shadow Auditor protocol manifest",
+  "type": "object"
+}

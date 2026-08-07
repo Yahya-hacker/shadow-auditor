@@ -1,0 +1,316 @@
+{
+  "algorithm": "Ed25519",
+  "eventChain": {
+    "eventHash": "sha256:220d182e20aa07a0a07de2d8d98d87c95f775842f23129535bb9144e72c154eb",
+    "negative": [
+      "sequence-gap",
+      "cursor-sequence-mismatch",
+      "wrong-previous-hash",
+      "payload-digest-mismatch",
+      "event-hash-mismatch",
+      "event-type-payload-mismatch",
+      "unknown-event-type"
+    ],
+    "payload": {
+      "snapshotId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "snapshotVersion": 1
+    },
+    "projection": {
+      "cursor": 1,
+      "eventId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "eventType": "session.created",
+      "occurredAt": "2026-01-02T03:04:08.000Z",
+      "payloadDigest": "sha256:2957fe4be133024a7a6b324dc19f946c1ff24f175bd259dc8bd057f3c391aed0",
+      "previousEventHash": null,
+      "protocolVersion": "1.0",
+      "sequence": 1,
+      "sessionId": "44444444-4444-4444-8444-444444444444",
+      "tenantId": "11111111-1111-4111-8111-111111111111"
+    },
+    "serverSigningKey": {
+      "algorithm": "Ed25519",
+      "keyId": "13131313-1313-4131-8131-131313131313",
+      "keyThumbprint": "1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y",
+      "publicKey": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+      "retainUntil": "2027-02-01T00:00:00.000Z",
+      "validFrom": "2026-01-01T00:00:00.000Z",
+      "validUntil": "2027-01-01T00:00:00.000Z"
+    },
+    "signature": "N8uS10PKZg6HqmatirV1wYIR29zIqBI_Ctej022uFCciT437JOSvkmqdLIGw7-zXo_tW-HQ8kUSTH_kUSEzQDw"
+  },
+  "invalidCanonicalJson": [
+    {
+      "expectedCode": "duplicate_key",
+      "name": "duplicate-key",
+      "source": "{\"a\":1,\"a\":2}"
+    },
+    {
+      "expectedCode": "unsafe_integer",
+      "name": "unsafe-integer",
+      "source": "9007199254740992"
+    },
+    {
+      "expectedCode": "invalid_number",
+      "name": "negative-zero",
+      "source": "-0"
+    },
+    {
+      "expectedCode": "invalid_unicode",
+      "name": "unpaired-surrogate",
+      "source": "\"\\ud800\""
+    }
+  ],
+  "jcs": [
+    {
+      "canonical": "{\"a\":1,\"nested\":{\"a\":true,\"z\":null},\"z\":\"last\"}",
+      "digest": "sha256:d8e868a86c6ebd9b2b51b3be30affc56596a06f3225f4e9028f849e116573684",
+      "name": "object-order-and-number",
+      "value": {
+        "a": 1,
+        "nested": {
+          "a": true,
+          "z": null
+        },
+        "z": "last"
+      }
+    },
+    {
+      "canonical": "\"snowman ☃\"",
+      "digest": "sha256:3fce572b141a71a8dad0fdfcdcea2b5409da975d45cb01ec54380cbd5ff8f511",
+      "name": "json-string-is-quoted",
+      "value": "snowman ☃"
+    }
+  ],
+  "keyRotation": {
+    "domain": "shadow-auditor/key-rotation/v1",
+    "negative": [
+      "proof-key-id-mismatch",
+      "new-key-thumbprint-mismatch",
+      "new-public-key-mismatch",
+      "projection-tampering",
+      "malformed-new-key-proof"
+    ],
+    "newPrivateSeed": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+    "newPublicKey": "Kay64UG8yvCyLhqU000LxzYeUm0L_hLIl5S8kyKWbdc",
+    "projection": {
+      "currentKeyId": "33333333-3333-4333-8333-333333333333",
+      "deviceId": "22222222-2222-4222-8222-222222222222",
+      "newKeyId": "12121212-1212-4121-8121-121212121212",
+      "newKeyThumbprint": "AkXIZFzonb59ZmGwyKgi3H3BwMi6amevqdKQiLZhdtc",
+      "newPublicKey": "Kay64UG8yvCyLhqU000LxzYeUm0L_hLIl5S8kyKWbdc",
+      "protocolVersion": "1.0",
+      "tenantId": "11111111-1111-4111-8111-111111111111"
+    },
+    "proof": {
+      "algorithm": "Ed25519",
+      "keyId": "12121212-1212-4121-8121-121212121212",
+      "signature": "Z76BqpIHdursbmorqDBOLKuwRMxn_rRPcRCmF6oso5hNuI6tdPe9XTyK2aUuvXRZclQIWcb18CHHPqeXJZR2AQ"
+    },
+    "signingInput": "shadow-auditor/key-rotation/v1\n{\"currentKeyId\":\"33333333-3333-4333-8333-333333333333\",\"deviceId\":\"22222222-2222-4222-8222-222222222222\",\"newKeyId\":\"12121212-1212-4121-8121-121212121212\",\"newKeyThumbprint\":\"AkXIZFzonb59ZmGwyKgi3H3BwMi6amevqdKQiLZhdtc\",\"newPublicKey\":\"Kay64UG8yvCyLhqU000LxzYeUm0L_hLIl5S8kyKWbdc\",\"protocolVersion\":\"1.0\",\"tenantId\":\"11111111-1111-4111-8111-111111111111\"}"
+  },
+  "privateSeed": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "protocolVersion": "1.0",
+  "publicKey": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+  "request": {
+    "accessToken": "bound.access.token",
+    "body": {
+      "deviceId": "22222222-2222-4222-8222-222222222222",
+      "protocolVersion": "1.0",
+      "requestId": "55555555-5555-4555-8555-555555555555",
+      "sessionId": "44444444-4444-4444-8444-444444444444",
+      "tenantId": "11111111-1111-4111-8111-111111111111"
+    },
+    "canonicalProjection": "{\"accessTokenDigest\":\"sha256:cb3c5a8b4068ad81caf995d90e6017ae19ac5d1d3e9e1ad23690a4b2349a65f0\",\"bodyDigest\":\"sha256:b2c25cffbf89ca78a9ea18bdbbbda67aedffb376f14eb19e8f43fc87a18fd96e\",\"bodyMediaType\":\"application/json\",\"canonicalPath\":\"/v1/sessions/44444444-4444-4444-8444-444444444444/tool-decisions\",\"canonicalQuery\":\"a=first&z=last\",\"deviceId\":\"22222222-2222-4222-8222-222222222222\",\"idempotencyKey\":\"66666666-6666-4666-8666-666666666666\",\"keyId\":\"33333333-3333-4333-8333-333333333333\",\"method\":\"POST\",\"nonce\":\"MDEyMzQ1Njc4OWFiY2RlZg\",\"protocolVersion\":\"1.0\",\"requestId\":\"55555555-5555-4555-8555-555555555555\",\"sessionId\":\"44444444-4444-4444-8444-444444444444\",\"tenantId\":\"11111111-1111-4111-8111-111111111111\",\"timestamp\":\"2026-01-02T03:04:05.000Z\"}",
+    "domain": "shadow-auditor/request-signature/v1",
+    "negative": [
+      {
+        "expectedCode": "binding_mismatch",
+        "mutation": "body.requestId",
+        "name": "tampered-body"
+      },
+      {
+        "expectedCode": "ambiguous_path",
+        "mutation": "path.percent-encoded-separator",
+        "name": "altered-path"
+      },
+      {
+        "expectedCode": "noncanonical_url",
+        "mutation": "query.unsorted",
+        "name": "altered-query-order"
+      },
+      {
+        "expectedCode": "stale_request",
+        "mutation": "timestamp.minus-301-seconds",
+        "name": "stale-time"
+      },
+      {
+        "expectedCode": "nonce_reuse",
+        "mutation": "nonce.reuse",
+        "name": "nonce-replay"
+      },
+      {
+        "expectedCode": "binding_mismatch",
+        "mutation": "idempotencyKey",
+        "name": "altered-idempotency-key"
+      }
+    ],
+    "projection": {
+      "accessTokenDigest": "sha256:cb3c5a8b4068ad81caf995d90e6017ae19ac5d1d3e9e1ad23690a4b2349a65f0",
+      "bodyDigest": "sha256:b2c25cffbf89ca78a9ea18bdbbbda67aedffb376f14eb19e8f43fc87a18fd96e",
+      "bodyMediaType": "application/json",
+      "canonicalPath": "/v1/sessions/44444444-4444-4444-8444-444444444444/tool-decisions",
+      "canonicalQuery": "a=first&z=last",
+      "deviceId": "22222222-2222-4222-8222-222222222222",
+      "idempotencyKey": "66666666-6666-4666-8666-666666666666",
+      "keyId": "33333333-3333-4333-8333-333333333333",
+      "method": "POST",
+      "nonce": "MDEyMzQ1Njc4OWFiY2RlZg",
+      "protocolVersion": "1.0",
+      "requestId": "55555555-5555-4555-8555-555555555555",
+      "sessionId": "44444444-4444-4444-8444-444444444444",
+      "tenantId": "11111111-1111-4111-8111-111111111111",
+      "timestamp": "2026-01-02T03:04:05.000Z"
+    },
+    "signature": "6XbnXHWRkJq8AxcWBPNG-aUJnv0aFsjCmMjRzIpL812ASGVeUaREiwde1JgErTcLJtBsVd7yuIfGXAGFLb61CQ",
+    "signingInput": "shadow-auditor/request-signature/v1\n{\"accessTokenDigest\":\"sha256:cb3c5a8b4068ad81caf995d90e6017ae19ac5d1d3e9e1ad23690a4b2349a65f0\",\"bodyDigest\":\"sha256:b2c25cffbf89ca78a9ea18bdbbbda67aedffb376f14eb19e8f43fc87a18fd96e\",\"bodyMediaType\":\"application/json\",\"canonicalPath\":\"/v1/sessions/44444444-4444-4444-8444-444444444444/tool-decisions\",\"canonicalQuery\":\"a=first&z=last\",\"deviceId\":\"22222222-2222-4222-8222-222222222222\",\"idempotencyKey\":\"66666666-6666-4666-8666-666666666666\",\"keyId\":\"33333333-3333-4333-8333-333333333333\",\"method\":\"POST\",\"nonce\":\"MDEyMzQ1Njc4OWFiY2RlZg\",\"protocolVersion\":\"1.0\",\"requestId\":\"55555555-5555-4555-8555-555555555555\",\"sessionId\":\"44444444-4444-4444-8444-444444444444\",\"tenantId\":\"11111111-1111-4111-8111-111111111111\",\"timestamp\":\"2026-01-02T03:04:05.000Z\"}"
+  },
+  "toolLifecycle": {
+    "decision": {
+      "digest": "sha256:d504079aaa4fe3a60a98146d787d805b16cbd2e6a8f07f447657757c09de572e",
+      "projection": {
+        "decidedAt": "2026-01-02T03:04:06.000Z",
+        "decision": "approved",
+        "decisionId": "88888888-8888-4888-8888-888888888888",
+        "proposalDigest": "sha256:a8693050a7126175a000a6fbb189d0a819dc2d62c6c61ecb4dbc2826bb1aa77d",
+        "proposalId": "77777777-7777-4777-8777-777777777777",
+        "protocolVersion": "1.0",
+        "reason": null,
+        "sessionId": "44444444-4444-4444-8444-444444444444",
+        "tenantId": "11111111-1111-4111-8111-111111111111"
+      },
+      "signature": "a8OXc5b3zJroUQx8-xP97ezFtwgKVYLJ0G3BaGcKXwUCEs-E-m0gvF9WdXSsyA3pQ21APHCvjBn3hvk7mRhQBg"
+    },
+    "descriptor": {
+      "digest": "sha256:d458f42bfcc2322c2709a25b7b8348acc2cfd186557f55ca3c4d036f0388d8e6",
+      "projection": {
+        "description": "Read a bounded local file range",
+        "inputSchema": {
+          "additionalProperties": false,
+          "maxProperties": 1,
+          "properties": {
+            "pathDigest": {
+              "maxLength": 71,
+              "minLength": 71,
+              "type": "string"
+            }
+          },
+          "required": [
+            "pathDigest"
+          ],
+          "type": "object"
+        },
+        "name": "local.read-file",
+        "protocolVersion": "1.0",
+        "schemaDigest": "sha256:a62d9c287cead629cfb8e9a7690a6eedcd96e365e67a9fcd8da5f418fb868632",
+        "tenantId": "11111111-1111-4111-8111-111111111111",
+        "version": "1.0.0"
+      },
+      "signature": "XQl8OTa2QuZJobHmvV6zS0FefJczcxRqtsR4WSjUOAMRMPdXigrzkdgWkcneIF2jv97A_4zjEi4HlxDeRtq_AA"
+    },
+    "grant": {
+      "digest": "sha256:dc83bb61c30ba01ec9080546551a917806a2b3acfc7c90f722053898681be6ce",
+      "projection": {
+        "allowedLimits": {
+          "networkRequests": 0,
+          "outputBytes": 4096,
+          "wallClockMs": 1000
+        },
+        "decision": "approved",
+        "decisionDigest": "sha256:d504079aaa4fe3a60a98146d787d805b16cbd2e6a8f07f447657757c09de572e",
+        "expiresAt": "2026-01-02T03:09:06.000Z",
+        "grantId": "99999999-9999-4999-8999-999999999999",
+        "oneUseNonce": "Z3JhbnQtb25lLXVzZS0wMQ",
+        "proposalDigest": "sha256:a8693050a7126175a000a6fbb189d0a819dc2d62c6c61ecb4dbc2826bb1aa77d",
+        "proposalId": "77777777-7777-4777-8777-777777777777",
+        "protocolVersion": "1.0",
+        "sessionId": "44444444-4444-4444-8444-444444444444",
+        "tenantId": "11111111-1111-4111-8111-111111111111"
+      },
+      "signature": "gco0dJq9qeh41_mWZ4fGTiCP6a_7kWZcMk7Q7GpWW927dX-FMHbpHAjPuohPYLqkH1RxiSTAhWUfaotYb3JUDA"
+    },
+    "grantPrivateSeed": "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8",
+    "negative": [
+      "arguments-digest-mismatch",
+      "denied-decision-grant",
+      "expired-grant",
+      "reused-grant-nonce",
+      "proposal-digest-mismatch",
+      "decision-digest-mismatch",
+      "output-digest-mismatch",
+      "ambiguous-result-without-error-digest",
+      "cross-role-signature",
+      "duplicate-server-key-id-or-material"
+    ],
+    "proposal": {
+      "arguments": {
+        "pathDigest": "sha256:5d37297cbe5b4756da49c9b31a48bbd98dde814391111d02e58f6f6cb5c2aa1a"
+      },
+      "digest": "sha256:a8693050a7126175a000a6fbb189d0a819dc2d62c6c61ecb4dbc2826bb1aa77d",
+      "projection": {
+        "argumentsDigest": "sha256:27121abfcd04a8dc8696a3d89e8c5042842d73941396a90fcf2781f89f307e92",
+        "budgetEstimate": {
+          "networkRequests": 0,
+          "outputBytes": 4096,
+          "wallClockMs": 1000
+        },
+        "descriptorDigest": "sha256:d458f42bfcc2322c2709a25b7b8348acc2cfd186557f55ca3c4d036f0388d8e6",
+        "expiresAt": "2026-01-02T03:09:05.000Z",
+        "proposalId": "77777777-7777-4777-8777-777777777777",
+        "protocolVersion": "1.0",
+        "risk": "low",
+        "sessionId": "44444444-4444-4444-8444-444444444444",
+        "tenantId": "11111111-1111-4111-8111-111111111111",
+        "toolName": "local.read-file"
+      },
+      "signature": "60-hMRrOn8cQPoupZzZyqJODwDHBTpLgiQA53WonvNwdAqg833MzAz9QrplFLuW15_4cwTTkPK1w3kGdGaSgAA"
+    },
+    "proposalPrivateSeed": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+    "result": {
+      "digest": "sha256:421d38a714e7b80ea4c2dbf8dc798e1dc22216a53d9f2f7f775cf0bb97349ade",
+      "projection": {
+        "completedAt": "2026-01-02T03:04:07.000Z",
+        "decisionDigest": "sha256:d504079aaa4fe3a60a98146d787d805b16cbd2e6a8f07f447657757c09de572e",
+        "errorDigest": null,
+        "evidenceDigest": "sha256:8285bb2a11b08cb64b6995fb548374e43c50f77bed12f8d6959a2ee5978ce26c",
+        "executionLedgerId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "grantDigest": "sha256:dc83bb61c30ba01ec9080546551a917806a2b3acfc7c90f722053898681be6ce",
+        "grantId": "99999999-9999-4999-8999-999999999999",
+        "outputDigest": "sha256:2f4f61ff878b8fc3cc72dbb78477e664595480bde369fe50dd0e4bb93c2cee68",
+        "proposalDigest": "sha256:a8693050a7126175a000a6fbb189d0a819dc2d62c6c61ecb4dbc2826bb1aa77d",
+        "proposalId": "77777777-7777-4777-8777-777777777777",
+        "protocolVersion": "1.0",
+        "resultId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "sessionId": "44444444-4444-4444-8444-444444444444",
+        "status": "succeeded",
+        "tenantId": "11111111-1111-4111-8111-111111111111"
+      },
+      "signature": "QDGeSawKQ1IWa2LlAPc9QF_qvKlUhBhQnml-z8Zth8rolQaHD-EvXg0BXtjAB_zFnAjayiNxyAGQA1rIbgvLDA"
+    },
+    "serverSigningKeys": [
+      {
+        "algorithm": "Ed25519",
+        "keyId": "14141414-1414-4141-8141-141414141414",
+        "keyThumbprint": "WeVHjIQTOLKu-P74oC-WL-MNn_sLM5CvrzuMjDFC3-s",
+        "publicKey": "JUO5L_EJVRFHatyDadtt3JM2ZaEZeN2hQE7hBmypVZ0",
+        "role": "proposal"
+      },
+      {
+        "algorithm": "Ed25519",
+        "keyId": "15151515-1515-4151-8151-151515151515",
+        "keyThumbprint": "HlHgCcjrhbeyw80VMef51yPwhyRqjiwLdwSLRqo7hSI",
+        "publicKey": "F0VTtFbd38aQjsqxwQH-arIeK6oGF3lbfUOmNIKZP9U",
+        "role": "grant"
+      }
+    ]
+  }
+}

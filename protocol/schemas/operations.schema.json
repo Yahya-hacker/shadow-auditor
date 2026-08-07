@@ -1,0 +1,219 @@
+{
+  "$defs": {
+    "CommittedOperation": {
+      "additionalProperties": false,
+      "properties": {
+        "deviceId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "idempotencyKey": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "kind": {
+          "$ref": "#/$defs/OperationKind"
+        },
+        "outcome": {
+          "$ref": "#/$defs/CommittedOutcome"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "requestDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "requestId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "resourceId": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "const": "committed",
+          "type": "string"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "deviceId",
+        "requestId",
+        "idempotencyKey",
+        "kind",
+        "requestDigest",
+        "status",
+        "resourceId",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "CommittedOutcome": {
+      "additionalProperties": false,
+      "properties": {
+        "bodyDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "committedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "httpStatus": {
+          "maximum": 599,
+          "minimum": 200,
+          "type": "integer"
+        },
+        "mediaType": {
+          "enum": [
+            "application/json",
+            "application/problem+json",
+            "none"
+          ],
+          "type": "string"
+        },
+        "replayToken": {
+          "$ref": "common.schema.json#/$defs/Nonce",
+          "description": "Opaque stable token identifying the byte-for-byte stored response."
+        }
+      },
+      "required": [
+        "httpStatus",
+        "mediaType",
+        "bodyDigest",
+        "committedAt",
+        "replayToken"
+      ],
+      "type": "object"
+    },
+    "FailedOperation": {
+      "additionalProperties": false,
+      "properties": {
+        "deviceId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "failedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "idempotencyKey": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "kind": {
+          "$ref": "#/$defs/OperationKind"
+        },
+        "problemDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "requestDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "requestId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "status": {
+          "const": "failed",
+          "type": "string"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "deviceId",
+        "requestId",
+        "idempotencyKey",
+        "kind",
+        "requestDigest",
+        "status",
+        "problemDigest",
+        "failedAt"
+      ],
+      "type": "object"
+    },
+    "Operation": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PendingOperation"
+        },
+        {
+          "$ref": "#/$defs/CommittedOperation"
+        },
+        {
+          "$ref": "#/$defs/FailedOperation"
+        }
+      ]
+    },
+    "OperationKind": {
+      "enum": [
+        "auth.enroll",
+        "auth.refresh",
+        "session.create",
+        "session.control",
+        "tool.decision",
+        "tool.result",
+        "key.rotate",
+        "key.revoke"
+      ],
+      "type": "string"
+    },
+    "PendingOperation": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "deviceId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "idempotencyKey": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "kind": {
+          "$ref": "#/$defs/OperationKind"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "requestDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "requestId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "status": {
+          "const": "pending",
+          "type": "string"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "deviceId",
+        "requestId",
+        "idempotencyKey",
+        "kind",
+        "requestDigest",
+        "status",
+        "acceptedAt"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/operations.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Durable Idempotent Operations"
+}

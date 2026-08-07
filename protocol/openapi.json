@@ -1,0 +1,1237 @@
+{
+  "components": {
+    "parameters": {
+      "AccessTokenDigest": {
+        "in": "header",
+        "name": "X-Shadow-Access-Token-Digest",
+        "required": true,
+        "schema": {
+          "$ref": "./schemas/common.schema.json#/$defs/Sha256Digest"
+        }
+      },
+      "BodyDigest": {
+        "in": "header",
+        "name": "X-Shadow-Body-Digest",
+        "required": true,
+        "schema": {
+          "$ref": "./schemas/common.schema.json#/$defs/Sha256Digest"
+        }
+      },
+      "DeviceId": {
+        "in": "header",
+        "name": "X-Shadow-Device-Id",
+        "required": true,
+        "schema": {
+          "$ref": "./schemas/common.schema.json#/$defs/Uuid"
+        }
+      },
+      "IdempotencyKey": {
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": true,
+        "schema": {
+          "$ref": "./schemas/common.schema.json#/$defs/Uuid"
+        }
+      },
+      "KeyId": {
+        "in": "header",
+        "name": "X-Shadow-Key-Id",
+        "required": true,
+        "schema": {
+          "$ref": "./schemas/common.schema.json#/$defs/Uuid"
+        }
+      },
+      "Nonce": {
+        "in": "header",
+        "name": "X-Shadow-Nonce",
+        "required": true,
+        "schema": {
+          "$ref": "./schemas/common.schema.json#/$defs/Nonce"
+        }
+      },
+      "ProtocolVersion": {
+        "in": "header",
+        "name": "X-Shadow-Protocol-Version",
+        "required": true,
+        "schema": {
+          "$ref": "./schemas/common.schema.json#/$defs/ProtocolVersion"
+        }
+      },
+      "RequestId": {
+        "in": "header",
+        "name": "X-Shadow-Request-Id",
+        "required": true,
+        "schema": {
+          "$ref": "./schemas/common.schema.json#/$defs/Uuid"
+        }
+      },
+      "SessionId": {
+        "in": "header",
+        "name": "X-Shadow-Session-Id",
+        "required": false,
+        "schema": {
+          "$ref": "./schemas/common.schema.json#/$defs/Uuid"
+        }
+      },
+      "SessionIdPath": {
+        "in": "path",
+        "name": "sessionId",
+        "required": true,
+        "schema": {
+          "$ref": "./schemas/common.schema.json#/$defs/Uuid"
+        }
+      },
+      "Signature": {
+        "in": "header",
+        "name": "X-Shadow-Signature",
+        "required": true,
+        "schema": {
+          "$ref": "./schemas/common.schema.json#/$defs/Base64Url64"
+        }
+      },
+      "TenantId": {
+        "in": "header",
+        "name": "X-Shadow-Tenant-Id",
+        "required": true,
+        "schema": {
+          "$ref": "./schemas/common.schema.json#/$defs/Uuid"
+        }
+      },
+      "Timestamp": {
+        "in": "header",
+        "name": "X-Shadow-Timestamp",
+        "required": true,
+        "schema": {
+          "$ref": "./schemas/common.schema.json#/$defs/Timestamp"
+        }
+      }
+    },
+    "responses": {
+      "Problem": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "./schemas/problem.schema.json#/$defs/Problem"
+            }
+          }
+        },
+        "description": "RFC 9457 problem details with stable non-sensitive code"
+      }
+    },
+    "securitySchemes": {
+      "BoundAccessToken": {
+        "bearerFormat": "key-bound-access-token",
+        "description": "Not bearer authority: the token is cryptographically bound to tenant/device/key and is accepted only with a fresh valid Ed25519 request signature from the enrollment-pinned key.",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Interoperable contract between the public local machine-authority client and the private hosted cognitive backend. Protocol 1.0 never transfers system/provider prompts, provider credentials, raw repository contents by default, AgentState, executable functions/classes, private checkpoints, or private workflow state.",
+    "title": "Shadow Auditor Public/Private Protocol",
+    "version": "1.0.0"
+  },
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/auth/refresh": {
+      "post": {
+        "description": "Requires the current access token (expiry ignored only for this endpoint), the refresh credential, and a valid request signature from the pinned non-revoked key. Refresh rotates the refresh credential atomically. An exact request-ID/idempotency-key retry replays the original token response before refresh-token reuse detection; altered or unrelated reuse revokes the token family.",
+        "operationId": "refreshBoundTokens",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ProtocolVersion"
+          },
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "$ref": "#/components/parameters/DeviceId"
+          },
+          {
+            "$ref": "#/components/parameters/KeyId"
+          },
+          {
+            "$ref": "#/components/parameters/SessionId"
+          },
+          {
+            "$ref": "#/components/parameters/AccessTokenDigest"
+          },
+          {
+            "$ref": "#/components/parameters/BodyDigest"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Nonce"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Signature"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/auth.schema.json#/$defs/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/auth.schema.json#/$defs/BoundTokenSet"
+                }
+              }
+            },
+            "description": "Rotated bound token set"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "BoundAccessToken": []
+          }
+        ],
+        "summary": "Rotate a bound access/refresh token pair",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/v1/enrollments": {
+      "post": {
+        "description": "The enrollment body is signed by the private key being enrolled. The key thumbprint MUST match publicKey, bootstrap provenance MUST match tenant/device, and an existing device cannot be silently re-enrolled. The access-token digest is the empty-body SHA-256 value. After a lost response, an exact request-ID/idempotency-key retry replays the original enrollment response before bootstrap-token consumption checks; altered reuse fails closed.",
+        "operationId": "enrollDevice",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ProtocolVersion"
+          },
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "$ref": "#/components/parameters/DeviceId"
+          },
+          {
+            "$ref": "#/components/parameters/KeyId"
+          },
+          {
+            "$ref": "#/components/parameters/AccessTokenDigest"
+          },
+          {
+            "$ref": "#/components/parameters/BodyDigest"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Nonce"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Signature"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/auth.schema.json#/$defs/EnrollmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/auth.schema.json#/$defs/EnrollmentResponse"
+                }
+              }
+            },
+            "description": "Pinned key and cryptographically bound token set"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "413": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "426": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "summary": "Pin a device Ed25519 key using a single-use bootstrap credential",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/v1/keys/revoke": {
+      "post": {
+        "operationId": "revokeDeviceKey",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ProtocolVersion"
+          },
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "$ref": "#/components/parameters/DeviceId"
+          },
+          {
+            "$ref": "#/components/parameters/KeyId"
+          },
+          {
+            "$ref": "#/components/parameters/SessionId"
+          },
+          {
+            "$ref": "#/components/parameters/AccessTokenDigest"
+          },
+          {
+            "$ref": "#/components/parameters/BodyDigest"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Nonce"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Signature"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/auth.schema.json#/$defs/RevokeKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/operations.schema.json#/$defs/CommittedOperation"
+                }
+              }
+            },
+            "description": "Original committed operation outcome"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "BoundAccessToken": []
+          }
+        ],
+        "summary": "Revoke the current device key and every bound token",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/v1/keys/rotate": {
+      "post": {
+        "description": "The HTTP request projection is signed by the current key. newKeyProof is a detached signature by the new key over body.projection under shadow-auditor/key-rotation/v1. Commit atomically pins the new key, invalidates every old-key token, and prevents the old key signing any subsequent request.",
+        "operationId": "rotateDeviceKey",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ProtocolVersion"
+          },
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "$ref": "#/components/parameters/DeviceId"
+          },
+          {
+            "$ref": "#/components/parameters/KeyId"
+          },
+          {
+            "$ref": "#/components/parameters/SessionId"
+          },
+          {
+            "$ref": "#/components/parameters/AccessTokenDigest"
+          },
+          {
+            "$ref": "#/components/parameters/BodyDigest"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Nonce"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Signature"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/auth.schema.json#/$defs/RotateKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/auth.schema.json#/$defs/KeyRotationResponse"
+                }
+              }
+            },
+            "description": "Original committed rotation outcome and new-key-bound token set"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "BoundAccessToken": []
+          }
+        ],
+        "summary": "Atomically rotate the pinned device key",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/v1/operations/{operationRequestId}": {
+      "get": {
+        "operationId": "getOperation",
+        "parameters": [
+          {
+            "description": "Original create/control/decision/result request identity whose durable outcome is being recovered. This resource identifier is path-bound by canonicalPath but is distinct from the fresh recovery request's X-Shadow-Request-Id and signing projection requestId.",
+            "in": "path",
+            "name": "operationRequestId",
+            "required": true,
+            "schema": {
+              "$ref": "./schemas/common.schema.json#/$defs/Uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ProtocolVersion"
+          },
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "$ref": "#/components/parameters/DeviceId"
+          },
+          {
+            "$ref": "#/components/parameters/KeyId"
+          },
+          {
+            "$ref": "#/components/parameters/SessionId"
+          },
+          {
+            "$ref": "#/components/parameters/AccessTokenDigest"
+          },
+          {
+            "$ref": "#/components/parameters/BodyDigest"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Nonce"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Signature"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/operations.schema.json#/$defs/Operation"
+                }
+              }
+            },
+            "description": "Durable pending, committed, or failed operation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "BoundAccessToken": []
+          }
+        ],
+        "summary": "Recover an operation after an ambiguous or lost response",
+        "tags": [
+          "Recovery"
+        ]
+      }
+    },
+    "/v1/protocol/manifest": {
+      "get": {
+        "operationId": "getProtocolManifest",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/manifest.schema.json"
+                }
+              }
+            },
+            "description": "Protocol manifest"
+          }
+        },
+        "summary": "Fetch the immutable protocol manifest"
+      }
+    },
+    "/v1/sessions": {
+      "post": {
+        "description": "The client supplies only structured mission intent, target digest, policy/capability identifiers, and bounded local tool descriptors. It does not send prompts, repository contents, evidence, credentials, executable tools, or AgentState.",
+        "operationId": "createSession",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ProtocolVersion"
+          },
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "$ref": "#/components/parameters/DeviceId"
+          },
+          {
+            "$ref": "#/components/parameters/KeyId"
+          },
+          {
+            "$ref": "#/components/parameters/SessionId"
+          },
+          {
+            "$ref": "#/components/parameters/AccessTokenDigest"
+          },
+          {
+            "$ref": "#/components/parameters/BodyDigest"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Nonce"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Signature"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/sessions.schema.json#/$defs/CreateSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/sessions.schema.json#/$defs/SessionSnapshot"
+                }
+              }
+            },
+            "description": "Original committed session snapshot",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "format": "uri-reference",
+                  "type": "string"
+                }
+              },
+              "Operation-Location": {
+                "schema": {
+                  "format": "uri-reference",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "413": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "426": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "BoundAccessToken": []
+          }
+        ],
+        "summary": "Create a cognitive session without transferring local authority",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/v1/sessions/{sessionId}/control": {
+      "post": {
+        "operationId": "controlSession",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/ProtocolVersion"
+          },
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "$ref": "#/components/parameters/DeviceId"
+          },
+          {
+            "$ref": "#/components/parameters/KeyId"
+          },
+          {
+            "$ref": "#/components/parameters/SessionId"
+          },
+          {
+            "$ref": "#/components/parameters/AccessTokenDigest"
+          },
+          {
+            "$ref": "#/components/parameters/BodyDigest"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Nonce"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Signature"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/sessions.schema.json#/$defs/SessionControlRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/sessions.schema.json#/$defs/SessionSnapshot"
+                }
+              }
+            },
+            "description": "Original committed snapshot"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "BoundAccessToken": []
+          }
+        ],
+        "summary": "Pause, resume, or cancel a session",
+        "tags": [
+          "Sessions"
+        ]
+      }
+    },
+    "/v1/sessions/{sessionId}/events": {
+      "get": {
+        "operationId": "streamSessionEvents",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/ProtocolVersion"
+          },
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "$ref": "#/components/parameters/DeviceId"
+          },
+          {
+            "$ref": "#/components/parameters/KeyId"
+          },
+          {
+            "$ref": "#/components/parameters/SessionId"
+          },
+          {
+            "$ref": "#/components/parameters/AccessTokenDigest"
+          },
+          {
+            "$ref": "#/components/parameters/BodyDigest"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Nonce"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Signature"
+          },
+          {
+            "description": "Last fully verified and durably persisted numeric cursor. Omit or send 0 for genesis.",
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "contentMediaType": "text/event-stream",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Canonical EventEnvelope values framed as SSE; replay bytes are stable",
+            "headers": {
+              "Content-Encoding": {
+                "schema": {
+                  "const": "identity",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "410": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json#/$defs/Problem"
+                }
+              }
+            },
+            "description": "Cursor expired; Location identifies the required snapshot",
+            "headers": {
+              "Location": {
+                "required": true,
+                "schema": {
+                  "format": "uri-reference",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BoundAccessToken": []
+          }
+        ],
+        "summary": "Stream durable signed hash-chained session events",
+        "tags": [
+          "Recovery"
+        ]
+      }
+    },
+    "/v1/sessions/{sessionId}/snapshot": {
+      "get": {
+        "description": "Returns the event head plus every pending proposal, recorded decision, active grant, result, and durable operation needed to recover after a crash or cursor expiry.",
+        "operationId": "getSessionSnapshot",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/ProtocolVersion"
+          },
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "$ref": "#/components/parameters/DeviceId"
+          },
+          {
+            "$ref": "#/components/parameters/KeyId"
+          },
+          {
+            "$ref": "#/components/parameters/SessionId"
+          },
+          {
+            "$ref": "#/components/parameters/AccessTokenDigest"
+          },
+          {
+            "$ref": "#/components/parameters/BodyDigest"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Nonce"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Signature"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/sessions.schema.json#/$defs/SessionSnapshot"
+                }
+              }
+            },
+            "description": "Complete session snapshot"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "BoundAccessToken": []
+          }
+        ],
+        "summary": "Recover complete durable session authority state",
+        "tags": [
+          "Recovery"
+        ]
+      }
+    },
+    "/v1/sessions/{sessionId}/tool-decisions": {
+      "post": {
+        "description": "The decision digest binds the exact proposal digest. Identical retries return the original operation. A grant can be issued only for an approved decision and binds both proposal and decision digests.",
+        "operationId": "recordToolDecision",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/ProtocolVersion"
+          },
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "$ref": "#/components/parameters/DeviceId"
+          },
+          {
+            "$ref": "#/components/parameters/KeyId"
+          },
+          {
+            "$ref": "#/components/parameters/SessionId"
+          },
+          {
+            "$ref": "#/components/parameters/AccessTokenDigest"
+          },
+          {
+            "$ref": "#/components/parameters/BodyDigest"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Nonce"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Signature"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/tools.schema.json#/$defs/ToolDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/operations.schema.json#/$defs/CommittedOperation"
+                }
+              }
+            },
+            "description": "Original committed operation"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "BoundAccessToken": []
+          }
+        ],
+        "summary": "Record the local human authority decision",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/v1/sessions/{sessionId}/tool-results": {
+      "post": {
+        "description": "The client atomically consumes a grant in its durable execution ledger before execution. A consumed grant is never executed again. Result delivery is at-least-once and idempotent. Crash-unknown execution uses status ambiguous and requires operator recovery; it is never synthesized as succeeded or failed.",
+        "operationId": "recordToolResult",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/ProtocolVersion"
+          },
+          {
+            "$ref": "#/components/parameters/TenantId"
+          },
+          {
+            "$ref": "#/components/parameters/DeviceId"
+          },
+          {
+            "$ref": "#/components/parameters/KeyId"
+          },
+          {
+            "$ref": "#/components/parameters/SessionId"
+          },
+          {
+            "$ref": "#/components/parameters/AccessTokenDigest"
+          },
+          {
+            "$ref": "#/components/parameters/BodyDigest"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Nonce"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Signature"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/tools.schema.json#/$defs/ToolResult"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/operations.schema.json#/$defs/CommittedOperation"
+                }
+              }
+            },
+            "description": "Original committed operation"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "BoundAccessToken": []
+          }
+        ],
+        "summary": "Record a local one-use grant execution result",
+        "tags": [
+          "Tools"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.shadow-auditor.dev"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Authentication"
+    },
+    {
+      "name": "Sessions"
+    },
+    {
+      "name": "Recovery"
+    },
+    {
+      "name": "Tools"
+    }
+  ],
+  "x-shadow-authority-boundary": {
+    "client": [
+      "repository-content",
+      "local-tools",
+      "human-approvals",
+      "budgets",
+      "credentials-and-keychain",
+      "semantic-indexing",
+      "tree-sitter",
+      "local-embeddings",
+      "dast",
+      "remediation",
+      "evidence",
+      "sarif-and-reports",
+      "execution-ledger",
+      "ui",
+      "ci-policy"
+    ],
+    "forbidden": [
+      "prompts",
+      "provider-credentials",
+      "raw-repository-content-by-default",
+      "agent-state",
+      "executable-code-objects",
+      "private-workflow-state"
+    ],
+    "server": [
+      "private-prompts",
+      "provider-credentials",
+      "model-invocation",
+      "langgraph-and-swarm-cognition",
+      "planning",
+      "private-checkpoints",
+      "provider-accounting"
+    ]
+  },
+  "x-shadow-compression": {
+    "request": "identity is mandatory; gzip is optional only after negotiation. Body signatures always cover decompressed canonical JSON. Expansion beyond the negotiated body maximum fails before parsing.",
+    "response": "JSON may use negotiated gzip. text/event-stream is always identity to preserve byte-for-byte replay."
+  },
+  "x-shadow-idempotency": {
+    "alteredReuse": "Reuse of either request ID or idempotency key with a different signed request projection fails with idempotency_conflict.",
+    "authority": "The server atomically commits the operation record and outcome before acknowledging.",
+    "durability": "At least the longer of the resource lifetime and 30 days",
+    "identicalRetry": "Returns the original stored HTTP status, selected headers, media type, and body byte-for-byte.",
+    "processingOrder": "Verify the detached signature and canonical URL/body/token/enrollment bindings first. Then resolve both request ID and idempotency key against durable storage and require the entire signed projection digest to be identical. An exact committed operation is replayed before new-authority timestamp, token-expiry, single-use bootstrap/refresh credential, or nonce-consumption checks. Revoked keys fail closed except that an exact committed self-key.rotate or self-key.revoke request may replay its stored outcome only after validating the historical request signature and every body binding; key.rotate also validates the embedded new-key proof. Altered reuse and every other invalid, revoked, or mismatched request fail closed.",
+    "singleUseCredentials": "Enrollment and refresh require idempotency keys. A committed exact retry replays the original secret-bearing response before bootstrap-token consumption or refresh-token reuse handling; an altered retry never receives credentials and refresh-token reuse outside that committed identity revokes the token family."
+  },
+  "x-shadow-key-rotation": {
+    "domain": "shadow-auditor/key-rotation/v1",
+    "projection": {
+      "$ref": "./schemas/auth.schema.json#/$defs/KeyRotationProjection"
+    },
+    "requirements": [
+      "The currently pinned non-revoked key signs the complete HTTP request projection and canonical body digest.",
+      "The new private key signs the closed KeyRotationProjection under the dedicated key-rotation domain.",
+      "newKeyProof.keyId MUST equal projection.newKeyId; the public key MUST encode exactly 32 bytes; and the JWK thumbprint MUST equal projection.newKeyThumbprint.",
+      "Projection tenantId, deviceId, and currentKeyId MUST equal the enrollment, access-token claims, and HTTP request signing projection.",
+      "A successful durable commit atomically pins the new key, revokes old-key tokens and refresh credentials, and returns a KeyRotationResponse containing only new-key-bound tokens plus the committed operation.",
+      "An exact committed retry may replay the byte-identical KeyRotationResponse after validating the historical old-key request signature and embedded new-key proof; altered reuse and all other old-key requests fail closed."
+    ]
+  },
+  "x-shadow-protocol-manifest": {
+    "protocolDigest": "SHA-256 over strict canonical JSON of every manifest member except protocolDigest. This binds the exact file inventory and digests, canonical limits, version, release, frozen required-feature set, signing domains, digest semantics, and frozen status without circular self-inclusion."
+  },
+  "x-shadow-request-signing": {
+    "algorithm": "Ed25519",
+    "canonicalization": "RFC 8785 JCS over strict bounded I-JSON",
+    "domain": "shadow-auditor/request-signature/v1",
+    "projection": {
+      "$ref": "./schemas/request-signing.schema.json#/$defs/RequestSigningProjection"
+    },
+    "requirements": [
+      "The signature and signed metadata are outside the request body.",
+      "The wire path and query MUST already equal their normalized canonical forms.",
+      "Projection tenantId/deviceId/keyId MUST exactly equal bound token claims, enrollment provenance, and body IDs when present.",
+      "Projection sessionId and idempotencyKey MUST exactly equal their corresponding path, body, and headers when present. Projection requestId MUST exactly equal X-Shadow-Request-Id and a body requestId for the current request when present.",
+      "A path resource identifier is bound through canonicalPath but is not implicitly the current requestId. In particular, operationRequestId identifies the original durable operation while projection requestId identifies the fresh signed recovery GET; the two MUST be distinct.",
+      "The access-token digest covers exact ASCII token bytes; enrollment uses SHA-256 of zero bytes.",
+      "Every signed request except exact POST /v1/enrollments requires both the exact access token and cryptographically bound claims. Enrollment rejects access credentials and relies on its single-use bootstrap provenance.",
+      "Enrollment requires the complete closed EnrollmentRequest body. Its declared publicKey MUST exactly equal the Ed25519 key used to verify the detached request signature, and keyThumbprint MUST equal the RFC 7638 thumbprint of that same 32-byte public key.",
+      "The body digest covers uncompressed canonical JSON UTF-8 bytes; absent bodies use SHA-256 of zero bytes.",
+      "Every protected request, including an exact committed key-rotation or self-revocation replay, requires an authoritative tenant/device/key revocation lookup. Missing or unavailable revocation storage fails closed with revocation_store_unavailable; enrollment is the only exemption.",
+      "Every fresh request requires atomic durable tenant/device nonce consumption after successful signature verification. Missing nonce storage, non-atomic check-then-set handling, reused nonces, and timestamps outside five minutes fail closed.",
+      "For fresh or uncommitted authority, expired access-token claims are accepted only for a signed POST to the exact canonical path /v1/auth/refresh; all tenant/device/key/thumbprint/signature bindings and refresh-credential checks remain mandatory. An exact committed retry may replay its original outcome after token expiry only under x-shadow-idempotency and creates no new authority or execution."
+    ],
+    "signatureTransport": "X-Shadow-Signature"
+  },
+  "x-shadow-sse": {
+    "encoding": "Each event is exactly id:<cursor> LF event:<eventType> LF data:<canonical-envelope> LF LF, UTF-8, identity content encoding.",
+    "expiredCursor": "A cursor older than retention returns 410 cursor_expired and a snapshot location; the client MUST resnapshot before reconnecting.",
+    "genesis": "No Last-Event-ID or Last-Event-ID: 0 starts at sequence 1 with previousEventHash null.",
+    "resume": "Last-Event-ID N replays byte-for-byte beginning at N+1. The first replayed previousEventHash MUST match the locally persisted hash for N.",
+    "retention": "Events are retained for at least 7 days and at least the latest 100000 events per session.",
+    "signingKeyTrust": "NegotiatedCapabilities carries the enrollment-authenticated, pre-provisioned serverEventSigningKeys set. Before accepting enrollment, clients semantically validate the entire set and reject duplicate key IDs or public-key material, invalid thumbprints, algorithms, or validity/retention windows. Clients pin the exact set to the token family and sessions it creates, resolve every envelope authorization.keyId from that set, and verify its [validFrom, validUntil) event-time window. The set is immutable in-band. Rotation uses overlapping pre-provisioned keys; unprovisioned rotation requires re-enrollment and new sessions. Server and client retain expired keys through retainUntil so retained events remain verifiable.",
+    "streamBinding": "Every envelope verifier requires the expected tenant ID, expected session ID, and an explicit trusted head. Genesis is exactly cursor 0 with null hash; reconnect uses the locally persisted positive cursor and hash. Envelope-internal identifiers never establish stream trust.",
+    "unknownEvents": "Unknown event types, invalid payload/type pairs, sequence gaps, cursor gaps, digest failures, and hash-chain failures are fatal and MUST NOT be skipped."
+  },
+  "x-shadow-tool-authority": {
+    "descriptor": "Each bounded local tool descriptor is signed by the enrollment-pinned device key and includes an object-root input schema from the Protocol 1.0 closed, recursive subset: every node has exactly one supported type; object nodes declare bounded properties, required, maxProperties, and additionalProperties:false; array and string nodes declare hard maxima; unsupported keywords fail closed. Its schemaDigest covers canonical JSON of that schema, descriptorDigest covers the non-circular descriptor signing projection, and authorization signs that exact projection in the tool-descriptor domain.",
+    "grant": "A grant is valid only for an approved, timely decision. It binds the proposal and decision digests, expires only according to its own signed expiry after issuance, carries a one-use nonce, and cannot increase any proposed budget estimate or any Protocol 1.0 hard maximum. Immediately before atomic one-use consumption, the client MUST revalidate the device-signed descriptor/schema digest and the canonical arguments digest against the exact local descriptor and arguments to be executed.",
+    "proposalAndDecision": "A proposal binds tenant, session, proposal ID, tool name, descriptor digest, canonical arguments digest, risk, budget estimate, and expiry. Every proposal-chain verifier recomputes argumentsDigest from the carried canonical arguments. The human decision binds the complete proposal digest and must be recorded no later than proposal expiry.",
+    "result": "A result binds the proposal, decision, and consumed grant plus execution ledger ID, status, and canonical JSON output/evidence/error digests. succeeded forbids an error digest; failed, timeout, and ambiguous require one. cancelled and denied remain explicit outcomes.",
+    "transport": "Signed projections exclude their own digest, signature, and authorization fields. Descriptor, decision, and result signatures use the applicable enrollment-pinned device authority. NegotiatedCapabilities provisions exactly two distinct serverToolSigningKeys: the proposal role signs only proposals and the grant role signs only grants. Before accepting enrollment, clients semantically validate the complete set. Clients pin the enrollment-authenticated key IDs, public-key thumbprints, key material, and roles to the token family and every session it creates; duplicate key IDs/material, unknown keys, and cross-role signatures fail closed. The set is immutable in-band, so replacement requires re-enrollment and new sessions. Retries provide at-least-once transport safety while durable idempotency and atomic one-use grant consumption preserve exactly-once local execution authority."
+  },
+  "x-shadow-version-negotiation": {
+    "rule": "Select the highest exact mutually supported version satisfying every required feature. Protocol 1.0 does not silently downgrade. Unsupported required features or versions fail with 426 capability_mismatch/protocol_version_unsupported."
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/protocol.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$ref": "auth.schema.json#/$defs/EnrollmentRequest"
+    },
+    {
+      "$ref": "auth.schema.json#/$defs/EnrollmentResponse"
+    },
+    {
+      "$ref": "auth.schema.json#/$defs/RefreshRequest"
+    },
+    {
+      "$ref": "auth.schema.json#/$defs/BoundTokenSet"
+    },
+    {
+      "$ref": "auth.schema.json#/$defs/RotateKeyRequest"
+    },
+    {
+      "$ref": "auth.schema.json#/$defs/KeyRotationResponse"
+    },
+    {
+      "$ref": "auth.schema.json#/$defs/RevokeKeyRequest"
+    },
+    {
+      "$ref": "sessions.schema.json#/$defs/CreateSessionRequest"
+    },
+    {
+      "$ref": "sessions.schema.json#/$defs/SessionControlRequest"
+    },
+    {
+      "$ref": "sessions.schema.json#/$defs/SessionSnapshot"
+    },
+    {
+      "$ref": "events.schema.json#/$defs/EventEnvelope"
+    },
+    {
+      "$ref": "tools.schema.json#/$defs/ToolDescriptor"
+    },
+    {
+      "$ref": "tools.schema.json#/$defs/ToolProposal"
+    },
+    {
+      "$ref": "tools.schema.json#/$defs/ToolDecision"
+    },
+    {
+      "$ref": "tools.schema.json#/$defs/ToolGrant"
+    },
+    {
+      "$ref": "tools.schema.json#/$defs/ToolResult"
+    },
+    {
+      "$ref": "usage.schema.json#/$defs/UsageRecord"
+    },
+    {
+      "$ref": "operations.schema.json#/$defs/Operation"
+    },
+    {
+      "$ref": "problem.schema.json#/$defs/Problem"
+    },
+    {
+      "$ref": "manifest.schema.json"
+    }
+  ],
+  "title": "Shadow Auditor Public Protocol 1.0",
+  "x-typescript-exports": {
+    "BoundTokenClaims": "auth.schema.json#/$defs/BoundTokenClaims",
+    "BoundTokenSet": "auth.schema.json#/$defs/BoundTokenSet",
+    "ClientCapabilities": "capabilities.schema.json#/$defs/ClientCapabilities",
+    "CreateSessionRequest": "sessions.schema.json#/$defs/CreateSessionRequest",
+    "EnrollmentRequest": "auth.schema.json#/$defs/EnrollmentRequest",
+    "EnrollmentResponse": "auth.schema.json#/$defs/EnrollmentResponse",
+    "EventEnvelope": "events.schema.json#/$defs/EventEnvelope",
+    "KeyRotationProjection": "auth.schema.json#/$defs/KeyRotationProjection",
+    "KeyRotationResponse": "auth.schema.json#/$defs/KeyRotationResponse",
+    "NegotiatedCapabilities": "capabilities.schema.json#/$defs/NegotiatedCapabilities",
+    "Operation": "operations.schema.json#/$defs/Operation",
+    "Problem": "problem.schema.json#/$defs/Problem",
+    "ProtocolManifest": "manifest.schema.json",
+    "RefreshRequest": "auth.schema.json#/$defs/RefreshRequest",
+    "RequestSigningProjection": "request-signing.schema.json#/$defs/RequestSigningProjection",
+    "RevokeKeyRequest": "auth.schema.json#/$defs/RevokeKeyRequest",
+    "RotateKeyRequest": "auth.schema.json#/$defs/RotateKeyRequest",
+    "ServerEventSigningKey": "capabilities.schema.json#/$defs/ServerEventSigningKey",
+    "ServerToolSigningKey": "capabilities.schema.json#/$defs/ServerToolSigningKey",
+    "SessionControlRequest": "sessions.schema.json#/$defs/SessionControlRequest",
+    "SessionSnapshot": "sessions.schema.json#/$defs/SessionSnapshot",
+    "ToolDecision": "tools.schema.json#/$defs/ToolDecision",
+    "ToolDescriptor": "tools.schema.json#/$defs/ToolDescriptor",
+    "ToolGrant": "tools.schema.json#/$defs/ToolGrant",
+    "ToolInputSchema": "tools.schema.json#/$defs/ToolInputSchema",
+    "ToolProposal": "tools.schema.json#/$defs/ToolProposal",
+    "ToolResult": "tools.schema.json#/$defs/ToolResult",
+    "UsageRecord": "usage.schema.json#/$defs/UsageRecord"
+  }
+}

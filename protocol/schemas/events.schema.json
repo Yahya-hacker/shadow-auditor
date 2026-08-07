@@ -1,0 +1,404 @@
+{
+  "$defs": {
+    "BaseEvent": {
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "previousEventHash": {
+                "$ref": "common.schema.json#/$defs/Sha256Digest"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "sequence": {
+                "const": 1
+              }
+            },
+            "required": [
+              "sequence"
+            ]
+          },
+          "then": {
+            "properties": {
+              "cursor": {
+                "const": 1
+              },
+              "previousEventHash": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "authorization": {
+          "$ref": "common.schema.json#/$defs/DetachedSignature"
+        },
+        "cursor": {
+          "$ref": "common.schema.json#/$defs/PositiveSafeInteger"
+        },
+        "eventHash": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "eventId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "eventType": {
+          "type": "string"
+        },
+        "occurredAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "payload": {
+          "$ref": "common.schema.json#/$defs/JsonValue"
+        },
+        "payloadDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "previousEventHash": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "sequence": {
+          "$ref": "common.schema.json#/$defs/PositiveSafeInteger"
+        },
+        "sessionId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "sessionId",
+        "eventId",
+        "sequence",
+        "cursor",
+        "occurredAt",
+        "previousEventHash",
+        "payloadDigest",
+        "eventHash",
+        "authorization",
+        "eventType",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "EventEnvelope": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SessionCreatedEvent"
+        },
+        {
+          "$ref": "#/$defs/SessionStateChangedEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolProposedEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolDecisionRecordedEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolGrantIssuedEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolResultRecordedEvent"
+        },
+        {
+          "$ref": "#/$defs/UsageReportedEvent"
+        },
+        {
+          "$ref": "#/$defs/OperationCommittedEvent"
+        },
+        {
+          "$ref": "#/$defs/SnapshotRequiredEvent"
+        }
+      ]
+    },
+    "OperationCommittedEvent": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BaseEvent"
+        },
+        {
+          "properties": {
+            "eventType": {
+              "const": "operation.committed"
+            },
+            "payload": {
+              "$ref": "operations.schema.json#/$defs/CommittedOperation"
+            }
+          },
+          "required": [
+            "eventType",
+            "payload"
+          ],
+          "type": "object"
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SessionCreatedEvent": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BaseEvent"
+        },
+        {
+          "properties": {
+            "eventType": {
+              "const": "session.created"
+            },
+            "payload": {
+              "$ref": "#/$defs/SessionCreatedPayload"
+            }
+          },
+          "required": [
+            "eventType",
+            "payload"
+          ],
+          "type": "object"
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SessionCreatedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "snapshotId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "snapshotVersion": {
+          "$ref": "common.schema.json#/$defs/PositiveSafeInteger"
+        }
+      },
+      "required": [
+        "snapshotId",
+        "snapshotVersion"
+      ],
+      "type": "object"
+    },
+    "SessionStateChangedEvent": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BaseEvent"
+        },
+        {
+          "properties": {
+            "eventType": {
+              "const": "session.state.changed"
+            },
+            "payload": {
+              "$ref": "#/$defs/SessionStateChangedPayload"
+            }
+          },
+          "required": [
+            "eventType",
+            "payload"
+          ],
+          "type": "object"
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SessionStateChangedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "$ref": "sessions.schema.json#/$defs/SessionState"
+        },
+        "reasonCode": {
+          "$ref": "common.schema.json#/$defs/Identifier"
+        },
+        "to": {
+          "$ref": "sessions.schema.json#/$defs/SessionState"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "reasonCode"
+      ],
+      "type": "object"
+    },
+    "SnapshotRequiredEvent": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BaseEvent"
+        },
+        {
+          "properties": {
+            "eventType": {
+              "const": "session.snapshot.required"
+            },
+            "payload": {
+              "$ref": "#/$defs/SnapshotRequiredPayload"
+            }
+          },
+          "required": [
+            "eventType",
+            "payload"
+          ],
+          "type": "object"
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SnapshotRequiredPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "oldestAvailableCursor": {
+          "$ref": "common.schema.json#/$defs/PositiveSafeInteger"
+        },
+        "snapshotPath": {
+          "pattern": "^/v1/sessions/[0-9a-f-]+/snapshot$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "oldestAvailableCursor",
+        "snapshotPath"
+      ],
+      "type": "object"
+    },
+    "ToolDecisionRecordedEvent": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BaseEvent"
+        },
+        {
+          "properties": {
+            "eventType": {
+              "const": "tool.decision.recorded"
+            },
+            "payload": {
+              "$ref": "tools.schema.json#/$defs/ToolDecision"
+            }
+          },
+          "required": [
+            "eventType",
+            "payload"
+          ],
+          "type": "object"
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ToolGrantIssuedEvent": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BaseEvent"
+        },
+        {
+          "properties": {
+            "eventType": {
+              "const": "tool.grant.issued"
+            },
+            "payload": {
+              "$ref": "tools.schema.json#/$defs/ToolGrant"
+            }
+          },
+          "required": [
+            "eventType",
+            "payload"
+          ],
+          "type": "object"
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ToolProposedEvent": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BaseEvent"
+        },
+        {
+          "properties": {
+            "eventType": {
+              "const": "tool.proposed"
+            },
+            "payload": {
+              "$ref": "tools.schema.json#/$defs/ToolProposal"
+            }
+          },
+          "required": [
+            "eventType",
+            "payload"
+          ],
+          "type": "object"
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ToolResultRecordedEvent": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BaseEvent"
+        },
+        {
+          "properties": {
+            "eventType": {
+              "const": "tool.result.recorded"
+            },
+            "payload": {
+              "$ref": "tools.schema.json#/$defs/ToolResult"
+            }
+          },
+          "required": [
+            "eventType",
+            "payload"
+          ],
+          "type": "object"
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "UsageReportedEvent": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BaseEvent"
+        },
+        {
+          "properties": {
+            "eventType": {
+              "const": "usage.reported"
+            },
+            "payload": {
+              "$ref": "usage.schema.json#/$defs/UsageRecord"
+            }
+          },
+          "required": [
+            "eventType",
+            "payload"
+          ],
+          "type": "object"
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    }
+  },
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/events.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Signed Hash-Chained SSE Events"
+}

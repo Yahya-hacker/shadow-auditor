@@ -1,0 +1,671 @@
+{
+  "$defs": {
+    "AllowedLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "networkRequests": {
+          "maximum": 1024,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "outputBytes": {
+          "maximum": 1048576,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "wallClockMs": {
+          "maximum": 3600000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "wallClockMs",
+        "outputBytes",
+        "networkRequests"
+      ],
+      "type": "object"
+    },
+    "BudgetEstimate": {
+      "additionalProperties": false,
+      "properties": {
+        "networkRequests": {
+          "maximum": 1024,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "outputBytes": {
+          "maximum": 1048576,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "wallClockMs": {
+          "maximum": 3600000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "wallClockMs",
+        "outputBytes",
+        "networkRequests"
+      ],
+      "type": "object"
+    },
+    "Risk": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "type": "string"
+    },
+    "ToolDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "authorization": {
+          "$ref": "common.schema.json#/$defs/DetachedSignature"
+        },
+        "decisionDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "projection": {
+          "$ref": "#/$defs/ToolDecisionProjection"
+        }
+      },
+      "required": [
+        "projection",
+        "decisionDigest",
+        "authorization"
+      ],
+      "type": "object"
+    },
+    "ToolDecisionProjection": {
+      "additionalProperties": false,
+      "properties": {
+        "decidedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "decision": {
+          "enum": [
+            "approved",
+            "denied"
+          ],
+          "type": "string"
+        },
+        "decisionId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "proposalDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "proposalId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "reason": {
+          "oneOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sessionId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "sessionId",
+        "proposalId",
+        "proposalDigest",
+        "decisionId",
+        "decision",
+        "reason",
+        "decidedAt"
+      ],
+      "type": "object"
+    },
+    "ToolDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "authorization": {
+          "$ref": "common.schema.json#/$defs/DetachedSignature"
+        },
+        "descriptorDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "projection": {
+          "$ref": "#/$defs/ToolDescriptorProjection"
+        }
+      },
+      "required": [
+        "projection",
+        "descriptorDigest",
+        "authorization"
+      ],
+      "type": "object"
+    },
+    "ToolDescriptorProjection": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        },
+        "inputSchema": {
+          "$ref": "#/$defs/ToolInputObjectSchema"
+        },
+        "name": {
+          "$ref": "common.schema.json#/$defs/Identifier"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "schemaDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "version": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[A-Za-z0-9.-]+)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "name",
+        "version",
+        "description",
+        "inputSchema",
+        "schemaDigest"
+      ],
+      "type": "object"
+    },
+    "ToolGrant": {
+      "additionalProperties": false,
+      "properties": {
+        "authorization": {
+          "$ref": "common.schema.json#/$defs/DetachedSignature"
+        },
+        "grantDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "projection": {
+          "$ref": "#/$defs/ToolGrantProjection"
+        }
+      },
+      "required": [
+        "projection",
+        "grantDigest",
+        "authorization"
+      ],
+      "type": "object"
+    },
+    "ToolGrantProjection": {
+      "additionalProperties": false,
+      "properties": {
+        "allowedLimits": {
+          "$ref": "#/$defs/AllowedLimits"
+        },
+        "decision": {
+          "const": "approved",
+          "type": "string"
+        },
+        "decisionDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "expiresAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "grantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "oneUseNonce": {
+          "$ref": "common.schema.json#/$defs/Nonce"
+        },
+        "proposalDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "proposalId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "sessionId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "sessionId",
+        "proposalId",
+        "proposalDigest",
+        "decisionDigest",
+        "decision",
+        "grantId",
+        "oneUseNonce",
+        "expiresAt",
+        "allowedLimits"
+      ],
+      "type": "object"
+    },
+    "ToolInputArraySchema": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "$ref": "#/$defs/ToolInputSchema"
+        },
+        "maxItems": {
+          "maximum": 1024,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minItems": {
+          "maximum": 1024,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "array",
+          "type": "string"
+        }
+      },
+      "required": [
+        "items",
+        "maxItems",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolInputBooleanSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "boolean",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolInputNullSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "null",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolInputNumberSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "maximum": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        "minimum": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        "type": {
+          "enum": [
+            "integer",
+            "number"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolInputObjectSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "additionalProperties": {
+          "const": false,
+          "type": "boolean"
+        },
+        "maxProperties": {
+          "maximum": 256,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "properties": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ToolInputSchema"
+          },
+          "maxProperties": 256,
+          "propertyNames": {
+            "$ref": "common.schema.json#/$defs/Identifier"
+          },
+          "type": "object"
+        },
+        "required": {
+          "items": {
+            "$ref": "common.schema.json#/$defs/Identifier"
+          },
+          "maxItems": 256,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "type": {
+          "const": "object",
+          "type": "string"
+        }
+      },
+      "required": [
+        "additionalProperties",
+        "maxProperties",
+        "properties",
+        "required",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolInputSchema": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ToolInputArraySchema"
+        },
+        {
+          "$ref": "#/$defs/ToolInputBooleanSchema"
+        },
+        {
+          "$ref": "#/$defs/ToolInputNullSchema"
+        },
+        {
+          "$ref": "#/$defs/ToolInputNumberSchema"
+        },
+        {
+          "$ref": "#/$defs/ToolInputObjectSchema"
+        },
+        {
+          "$ref": "#/$defs/ToolInputStringSchema"
+        }
+      ]
+    },
+    "ToolInputStringSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "maxLength": {
+          "maximum": 65536,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minLength": {
+          "maximum": 65536,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "string",
+          "type": "string"
+        }
+      },
+      "required": [
+        "maxLength",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ToolProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "$ref": "common.schema.json#/$defs/JsonObject"
+        },
+        "authorization": {
+          "$ref": "common.schema.json#/$defs/DetachedSignature"
+        },
+        "projection": {
+          "$ref": "#/$defs/ToolProposalProjection"
+        },
+        "proposalDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "projection",
+        "arguments",
+        "proposalDigest",
+        "authorization"
+      ],
+      "type": "object"
+    },
+    "ToolProposalProjection": {
+      "additionalProperties": false,
+      "properties": {
+        "argumentsDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "budgetEstimate": {
+          "$ref": "#/$defs/BudgetEstimate"
+        },
+        "descriptorDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "expiresAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "proposalId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "risk": {
+          "$ref": "#/$defs/Risk"
+        },
+        "sessionId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "toolName": {
+          "$ref": "common.schema.json#/$defs/Identifier"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "sessionId",
+        "proposalId",
+        "toolName",
+        "descriptorDigest",
+        "argumentsDigest",
+        "risk",
+        "budgetEstimate",
+        "expiresAt"
+      ],
+      "type": "object"
+    },
+    "ToolResult": {
+      "additionalProperties": false,
+      "properties": {
+        "authorization": {
+          "$ref": "common.schema.json#/$defs/DetachedSignature"
+        },
+        "projection": {
+          "$ref": "#/$defs/ToolResultProjection"
+        },
+        "resultDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "projection",
+        "resultDigest",
+        "authorization"
+      ],
+      "type": "object"
+    },
+    "ToolResultProjection": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "errorDigest": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "failed",
+                  "timeout",
+                  "ambiguous"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "errorDigest": {
+                "$ref": "common.schema.json#/$defs/Sha256Digest"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "completedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "decisionDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "errorDigest": {
+          "description": "Null when no error exists; otherwise SHA-256 over the UTF-8 bytes of the strict canonical JSON error value.",
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidenceDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest",
+          "description": "SHA-256 over the UTF-8 bytes of the strict canonical JSON evidence value."
+        },
+        "executionLedgerId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "grantDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "grantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "outputDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest",
+          "description": "SHA-256 over the UTF-8 bytes of the strict canonical JSON output value."
+        },
+        "proposalDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "proposalId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "resultId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "sessionId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "failed",
+            "denied",
+            "cancelled",
+            "timeout",
+            "ambiguous"
+          ],
+          "type": "string"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "sessionId",
+        "proposalId",
+        "proposalDigest",
+        "decisionDigest",
+        "grantId",
+        "grantDigest",
+        "resultId",
+        "executionLedgerId",
+        "status",
+        "outputDigest",
+        "evidenceDigest",
+        "errorDigest",
+        "completedAt"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/tools.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Local Tool Authority Lifecycle"
+}

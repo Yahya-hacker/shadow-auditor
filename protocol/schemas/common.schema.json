@@ -1,0 +1,175 @@
+{
+  "$defs": {
+    "Base64Url32": {
+      "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$",
+      "type": "string"
+    },
+    "Base64Url64": {
+      "pattern": "^[A-Za-z0-9_-]{85}[AQgw]$",
+      "type": "string"
+    },
+    "CanonicalDecimal": {
+      "maxLength": 40,
+      "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,9})?$",
+      "type": "string"
+    },
+    "DetachedSignature": {
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "const": "Ed25519",
+          "type": "string"
+        },
+        "keyId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "signature": {
+          "$ref": "#/$defs/Base64Url64"
+        }
+      },
+      "required": [
+        "algorithm",
+        "keyId",
+        "signature"
+      ],
+      "type": "object"
+    },
+    "Identifier": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z][A-Za-z0-9._/-]*$",
+      "type": "string"
+    },
+    "JsonObject": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "maxProperties": 256,
+      "type": "object"
+    },
+    "JsonValue": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "number"
+        },
+        {
+          "maxLength": 65536,
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "maxItems": 1024,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "maxProperties": 256,
+          "type": "object"
+        }
+      ]
+    },
+    "Nonce": {
+      "pattern": "^(?:(?:[A-Za-z0-9_-]{4}){6,21}|(?:[A-Za-z0-9_-]{4}){5,21}[A-Za-z0-9_-][AQgw]|(?:[A-Za-z0-9_-]{4}){5,20}[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])$",
+      "type": "string"
+    },
+    "PayloadLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "maxArrayItems": {
+          "maximum": 1024,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxBodyBytes": {
+          "maximum": 1048576,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        "maxCanonicalDepth": {
+          "maximum": 32,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxCanonicalNodes": {
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxEventBytes": {
+          "maximum": 262144,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        "maxObjectKeys": {
+          "maximum": 256,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxStringBytes": {
+          "maximum": 65536,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxToolDescriptors": {
+          "maximum": 128,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxArrayItems",
+        "maxBodyBytes",
+        "maxCanonicalDepth",
+        "maxCanonicalNodes",
+        "maxEventBytes",
+        "maxObjectKeys",
+        "maxStringBytes",
+        "maxToolDescriptors"
+      ],
+      "type": "object"
+    },
+    "PositiveSafeInteger": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "ProtocolVersion": {
+      "const": "1.0",
+      "type": "string"
+    },
+    "SafeNonNegativeInteger": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "Sha256Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+      "type": "string"
+    },
+    "Uuid": {
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "type": "string"
+    }
+  },
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/common.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Shadow Auditor Protocol Common Types"
+}

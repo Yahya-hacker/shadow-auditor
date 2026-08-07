@@ -1,0 +1,139 @@
+{
+  "canonicalJson": {
+    "limits": {
+      "maxArrayItems": 1024,
+      "maxBodyBytes": 1048576,
+      "maxCanonicalDepth": 32,
+      "maxCanonicalNodes": 10000,
+      "maxEventBytes": 262144,
+      "maxObjectKeys": 256,
+      "maxStringBytes": 65536,
+      "maxToolDescriptors": 128
+    },
+    "profile": "RFC 8785 JCS over strict I-JSON"
+  },
+  "digestAlgorithm": "sha256",
+  "fileDigestSemantics": "SHA-256 over UTF-8 text after CRLF and CR normalization to LF; manifest.json is excluded to avoid self-reference.",
+  "files": [
+    {
+      "bytes": 44779,
+      "path": "protocol/openapi.json",
+      "sha256": "sha256:72833352c2a53522504eb85c10ef0dac00766be99a2a445ea791d6fb5c1446c0"
+    },
+    {
+      "bytes": 8522,
+      "path": "protocol/schemas/auth.schema.json",
+      "sha256": "sha256:18a6df02c0c7fe7726c0de7661b74a35a496223be3580a8ad9fc7501431855b5"
+    },
+    {
+      "bytes": 6673,
+      "path": "protocol/schemas/capabilities.schema.json",
+      "sha256": "sha256:f41d35c5fb984aa1707eb159d85ae87e6d433230ea1a754c319bafd917385cdd"
+    },
+    {
+      "bytes": 4211,
+      "path": "protocol/schemas/common.schema.json",
+      "sha256": "sha256:1f8ac275c512c0539c9b29723198a2fbf4e33b2a89e607378682133749aeb9a3"
+    },
+    {
+      "bytes": 9468,
+      "path": "protocol/schemas/events.schema.json",
+      "sha256": "sha256:b6c3fc6f29aa73f33bf9319938ecc9d06709d4cce16f10e5646c533ec4da1ad1"
+    },
+    {
+      "bytes": 9140,
+      "path": "protocol/schemas/manifest.schema.json",
+      "sha256": "sha256:6189f32cf8c414bc668624dd05d25c20ca251e3453347164704b2523d9c64085"
+    },
+    {
+      "bytes": 5405,
+      "path": "protocol/schemas/operations.schema.json",
+      "sha256": "sha256:08260c43dbbf1ca73ae9de3be8500fc4b0829ac7bf9db0c20b3da3f79ce09a32"
+    },
+    {
+      "bytes": 2318,
+      "path": "protocol/schemas/problem.schema.json",
+      "sha256": "sha256:392776651bedf0ef00aa782fa493b48c86037659385e9a57401d624e511f1f28"
+    },
+    {
+      "bytes": 3553,
+      "path": "protocol/schemas/protocol.schema.json",
+      "sha256": "sha256:4bd7aa3cf6a22edf9e1faae7ce21eb7b2980cd681f3133253ab3f78ef608c772"
+    },
+    {
+      "bytes": 4864,
+      "path": "protocol/schemas/request-signing.schema.json",
+      "sha256": "sha256:042240a395f715da06f3df6cc2c19225486617636a603d03adbb15e83531fdbd"
+    },
+    {
+      "bytes": 6820,
+      "path": "protocol/schemas/sessions.schema.json",
+      "sha256": "sha256:2124b55efdc72c8a096d50433b25a21d6ba3d7e693fa9741624b81a4e2e53057"
+    },
+    {
+      "bytes": 16365,
+      "path": "protocol/schemas/tools.schema.json",
+      "sha256": "sha256:5353a7a689bdc5f3bc784dbfa947958ec267bcc8fedad54081fc1185a051e90d"
+    },
+    {
+      "bytes": 6273,
+      "path": "protocol/schemas/usage.schema.json",
+      "sha256": "sha256:2e500bb4f504dee362af9dfad703bb8bfe4d85e5830a7fd4b75e199d979b064b"
+    },
+    {
+      "bytes": 14247,
+      "path": "protocol/signing-vectors.json",
+      "sha256": "sha256:e986accc0c18829fcd77a6b49549cda7642a9be5e6cfb948a63bd495e5ed59f7"
+    },
+    {
+      "bytes": 23491,
+      "path": "scripts/generate-protocol.mjs",
+      "sha256": "sha256:9e8460c3e97e1b908897d57ae6dd5ca18f575f3566b23a166a6bc5adc1c67481"
+    },
+    {
+      "bytes": 12973,
+      "path": "src/protocol/canonical-json.ts",
+      "sha256": "sha256:17667d440c41d5ccfeecba3669589e5695a6b2ae5a22a284f1c86e1061e83587"
+    },
+    {
+      "bytes": 26756,
+      "path": "src/protocol/generated/dtos.ts",
+      "sha256": "sha256:361a2246fcefc7eeffaf73e9a6e6e7bc7d8246dec3164281029c253d9d8895cb"
+    },
+    {
+      "bytes": 104,
+      "path": "src/protocol/index.ts",
+      "sha256": "sha256:e4b34beca49d073fc4210c6ed2b593188bb67ed3569987dd659477e166d3e694"
+    },
+    {
+      "bytes": 54240,
+      "path": "src/protocol/signing.ts",
+      "sha256": "sha256:53ca1fcef199a39fb49bfc4373ac5036da528da3e0d3fba1d1381587959e3bef"
+    }
+  ],
+  "protocolDigest": "sha256:64cd095cd45e050e1f6d9415b3c42ab139872a0974b4a336a13b2a99b0cedf53",
+  "protocolDigestSemantics": "SHA-256 over strict canonical JSON of every manifest member except protocolDigest.",
+  "protocolVersion": "1.0",
+  "release": "1.0.0",
+  "requiredFeatures": [
+    "bound-ed25519-auth",
+    "canonical-request-signing",
+    "durable-idempotency",
+    "operation-recovery",
+    "pinned-server-event-keys",
+    "signed-hash-chain-sse",
+    "tool-authority-v1",
+    "usage-reconciliation-v1"
+  ],
+  "signingDomains": [
+    "shadow-auditor/request-signature/v1",
+    "shadow-auditor/key-rotation/v1",
+    "shadow-auditor/tool-descriptor/v1",
+    "shadow-auditor/tool-proposal/v1",
+    "shadow-auditor/tool-decision/v1",
+    "shadow-auditor/tool-grant/v1",
+    "shadow-auditor/tool-result/v1",
+    "shadow-auditor/event-envelope/v1"
+  ],
+  "status": "frozen"
+}

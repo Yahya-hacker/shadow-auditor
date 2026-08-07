@@ -1,0 +1,89 @@
+{
+  "$defs": {
+    "Problem": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ProblemCode"
+        },
+        "detail": {
+          "description": "Safe operator guidance only; never contains tokens, prompts, credentials, repository data, tool output, or private workflow state.",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "instance": {
+          "format": "uri-reference",
+          "maxLength": 2048,
+          "type": "string"
+        },
+        "requestId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "retryAfterMs": {
+          "maximum": 86400000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "status": {
+          "maximum": 599,
+          "minimum": 400,
+          "type": "integer"
+        },
+        "title": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": {
+          "format": "uri",
+          "pattern": "^https://shadow-auditor\\.dev/problems/[a-z0-9-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "title",
+        "status",
+        "code",
+        "requestId",
+        "retryable"
+      ],
+      "type": "object"
+    },
+    "ProblemCode": {
+      "enum": [
+        "authentication_failed",
+        "body_digest_mismatch",
+        "capability_mismatch",
+        "cursor_expired",
+        "event_chain_gap",
+        "grant_expired",
+        "grant_reused",
+        "idempotency_conflict",
+        "invalid_request",
+        "invalid_signature",
+        "invalid_tool_arguments",
+        "invalid_tool_schema",
+        "key_revoked",
+        "nonce_store_unavailable",
+        "nonce_reused",
+        "payload_too_large",
+        "protocol_version_unsupported",
+        "rate_limited",
+        "request_stale",
+        "revocation_store_unavailable",
+        "resource_not_found",
+        "state_conflict",
+        "tool_digest_mismatch"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/problem.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RFC 9457 Problem Details"
+}

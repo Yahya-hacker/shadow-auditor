@@ -1,0 +1,272 @@
+{
+  "$defs": {
+    "CreateSessionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "deviceId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "intent": {
+          "$ref": "#/$defs/MissionIntent"
+        },
+        "negotiatedCapabilitiesDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "requestId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "sessionId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "toolDescriptors": {
+          "items": {
+            "$ref": "tools.schema.json#/$defs/ToolDescriptor"
+          },
+          "maxItems": 128,
+          "type": "array"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "deviceId",
+        "sessionId",
+        "requestId",
+        "intent",
+        "toolDescriptors",
+        "negotiatedCapabilitiesDigest"
+      ],
+      "type": "object"
+    },
+    "EventHead": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cursor": {
+              "const": 0,
+              "type": "integer"
+            },
+            "eventHash": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "cursor",
+            "eventHash"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cursor": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "eventHash": {
+              "$ref": "common.schema.json#/$defs/Sha256Digest"
+            }
+          },
+          "required": [
+            "cursor",
+            "eventHash"
+          ],
+          "type": "object"
+        }
+      ],
+      "title": "Coupled durable event head"
+    },
+    "MissionIntent": {
+      "additionalProperties": false,
+      "properties": {
+        "missionKind": {
+          "enum": [
+            "security-audit",
+            "finding-verification",
+            "remediation-planning"
+          ],
+          "type": "string"
+        },
+        "policyProfileId": {
+          "$ref": "common.schema.json#/$defs/Identifier"
+        },
+        "requestedCapabilities": {
+          "items": {
+            "$ref": "common.schema.json#/$defs/Identifier"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "targetFingerprint": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest",
+          "description": "Digest-only target identity; repository contents and paths remain local."
+        }
+      },
+      "required": [
+        "missionKind",
+        "targetFingerprint",
+        "policyProfileId",
+        "requestedCapabilities"
+      ],
+      "type": "object"
+    },
+    "SessionControlRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "pause",
+            "resume",
+            "cancel"
+          ],
+          "type": "string"
+        },
+        "deviceId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "reasonCode": {
+          "enum": [
+            "budget",
+            "operator",
+            "policy",
+            "shutdown",
+            "timeout"
+          ],
+          "type": "string"
+        },
+        "requestId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "sessionId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "deviceId",
+        "sessionId",
+        "requestId",
+        "action",
+        "reasonCode"
+      ],
+      "type": "object"
+    },
+    "SessionSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "activeGrants": {
+          "items": {
+            "$ref": "tools.schema.json#/$defs/ToolGrant"
+          },
+          "maxItems": 1024,
+          "type": "array"
+        },
+        "createdAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "decisions": {
+          "items": {
+            "$ref": "tools.schema.json#/$defs/ToolDecision"
+          },
+          "maxItems": 1024,
+          "type": "array"
+        },
+        "eventHead": {
+          "$ref": "#/$defs/EventHead"
+        },
+        "operations": {
+          "items": {
+            "$ref": "operations.schema.json#/$defs/Operation"
+          },
+          "maxItems": 1024,
+          "type": "array"
+        },
+        "pendingProposals": {
+          "items": {
+            "$ref": "tools.schema.json#/$defs/ToolProposal"
+          },
+          "maxItems": 1024,
+          "type": "array"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "results": {
+          "items": {
+            "$ref": "tools.schema.json#/$defs/ToolResult"
+          },
+          "maxItems": 1024,
+          "type": "array"
+        },
+        "sessionId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "snapshotId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "snapshotVersion": {
+          "$ref": "common.schema.json#/$defs/PositiveSafeInteger"
+        },
+        "state": {
+          "$ref": "#/$defs/SessionState"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "updatedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "sessionId",
+        "snapshotId",
+        "snapshotVersion",
+        "state",
+        "createdAt",
+        "updatedAt",
+        "eventHead",
+        "pendingProposals",
+        "decisions",
+        "activeGrants",
+        "results",
+        "operations"
+      ],
+      "type": "object"
+    },
+    "SessionState": {
+      "enum": [
+        "created",
+        "planning",
+        "awaiting-decision",
+        "awaiting-result",
+        "paused",
+        "completed",
+        "cancelled",
+        "failed"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/sessions.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Session and Recovery State"
+}

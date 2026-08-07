@@ -81,6 +81,8 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/sarif": "^2.1.7",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "chai": "^4",
     "eslint": "^9",
     "eslint-config-oclif": "^6",
@@ -103,7 +105,10 @@
     "./codebase-intelligence.txt",
     "./devil's advocate.txt",
     "./oclif.manifest.json",
-    "./sast-auditor.txt"
+    "./protocol",
+    "./scripts/generate-protocol.mjs",
+    "./sast-auditor.txt",
+    "./src/protocol"
   ],
   "homepage": "https://github.com/Yahya-hacker/shadow-auditor",
   "keywords": [
@@ -135,11 +140,13 @@
     "lint": "eslint",
     "postpack": "shx rm -f oclif.manifest.json",
     "posttest": "npm run lint",
+    "protocol:check": "node scripts/generate-protocol.mjs --check",
+    "protocol:generate": "node scripts/generate-protocol.mjs",
     "prepack": "npm run build && oclif manifest && oclif readme",
     "relink": "npm install && npm run test:native && npm link",
-    "test": "mocha --forbid-only \"test/**/*.test.ts\"",
+    "test": "mocha --forbid-only --extension ts --recursive test",
     "test:native": "mocha --forbid-only \"test/**/*.test.ts\" --grep \"uses Tree-sitter AST chunking across guaranteed production languages\"",
-    "test:unit": "mocha --forbid-only \"test/**/*.test.ts\"",
+    "test:unit": "mocha --forbid-only --extension ts --recursive test",
     "version": "oclif readme && git add README.md"
   },
   "overrides": {
