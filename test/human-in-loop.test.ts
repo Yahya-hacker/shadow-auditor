@@ -213,6 +213,17 @@ describe('human interaction isolation', () => {
     expect(interrupted).to.equal(true);
   });
 
+  it('requires a new confirmation for an identical side-effecting operation', async () => {
+    const service = new HumanInteractionService();
+    service.enableLangGraphContext();
+
+    await beginCommandConfirmation(service, 'echo repeat');
+    expect(service.resolvePendingDecision(true)).to.equal(true);
+    expect(await service.confirmCommandExecution('echo repeat')).to.equal(true);
+
+    await beginCommandConfirmation(service, 'echo repeat');
+  });
+
   it('collects explicit patch revision instructions without applying approval', async () => {
     const service = new HumanInteractionService();
     const review = service.reviewValidatedPatch({

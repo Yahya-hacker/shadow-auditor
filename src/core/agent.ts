@@ -50,7 +50,6 @@ import {
   effectiveAgentToolSteps,
   hostEligibleToolsForAgent,
 } from './services/tool-policy.js';
-import { type StreamActivity } from './session.js';
 import { processAgentStream } from './stream-processor.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import { createEditFileTool } from './tools/edit-file.js';
@@ -90,7 +89,7 @@ export interface AgentStreamEvent {
   };
   detail?: string;
   humanInputRequest?: HumanInputRequest;
-  kind: 'agent_progress' | 'audit_telemetry' | 'human_input_required' | 'status' | 'swarm_state' | 'token_usage' | StreamActivity['kind'];
+  kind: 'agent_progress' | 'audit_telemetry' | 'human_input_required' | 'status' | 'swarm_state' | 'token_usage' | 'tool_call' | 'tool_result';
   message: string;
   resultPreview?: string;
   stage?: AuditStage;

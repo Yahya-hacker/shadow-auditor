@@ -12,13 +12,8 @@
  * After resume, the session supplies an explicit approve/deny decision. The
  * same tool is called again and consumes that decision before continuing.
  *
- * For non-LangGraph paths (Vercel AI SDK/swarm mode), the Command throw is
- * caught and the function falls back to the blocking confirmation pattern.
- *
- * ## Decision History
- * Successful confirmations are tracked in a decision history. When the same
- * type of operation is requested again on the same file, the confirmation
- * is auto-approved — reducing interruption fatigue during long sessions.
+ * For non-LangGraph paths, the Command throw is caught and the function falls
+ * back to the blocking confirmation pattern.
  *
  * ## Timeout
  * A configurable timeout (default: 5 minutes) auto-denies unanswered
@@ -42,14 +37,11 @@ import type {
 /** Default timeout for human input requests (5 minutes). */
 const DEFAULT_HUMAN_INPUT_TIMEOUT_MS = 5 * 60 * 1000;
 
-/** Maximum decision history entries to prevent unbounded memory growth. */
-const MAX_DECISION_HISTORY = 50;
-
 /**
  * Encapsulates all human-in-the-loop mutable state and confirmation logic.
  *
  * Each `AgentSession` should create its own instance so that pending
- * signatures, decision history, and timeout timers are isolated per session
+ * signatures, decisions, and timeout timers are isolated per session
  * — preventing stale state from leaking across sessions in the same process.
  *
  * @example
@@ -61,14 +53,9 @@ const MAX_DECISION_HISTORY = 50;
  * ```
  */
 export class HumanInteractionService {
-  /**
-   * Decision history: tracks previously approved operations so similar
-   * future operations can be auto-approved. Keyed by operation type + file.
-   */
-  private decisionHistory = new Map<string, { approved: boolean; timestamp: number }>();
 /**
  * Controls whether to throw a LangGraph Command (LangGraph context) or
- * fall back to a blocking Promise (Vercel AI SDK / swarm mode).
+ * fall back to a blocking Promise.
  * Set to `true` by the LangGraph workflow on initialization.
  */
   private langGraphContext = false;
@@ -84,7 +71,7 @@ export class HumanInteractionService {
 
   /**
    * Request human confirmation before executing a command.
-   * Throws a Command (LangGraph) or returns blocking result (Vercel AI SDK).
+   * Throws a Command (LangGraph) or returns a blocking result.
    */
   async confirmCommandExecution(command: string, warning?: string): Promise<boolean> {
     return this.requestConfirmation({
@@ -96,7 +83,7 @@ export class HumanInteractionService {
 
   /**
    * Request human confirmation before applying a file edit.
-   * Throws a Command (LangGraph) or returns blocking result (Vercel AI SDK).
+   * Throws a Command (LangGraph) or returns a blocking result.
    */
   async confirmFileEdit(
     filePath: string,
@@ -112,7 +99,7 @@ export class HumanInteractionService {
 
   /**
    * Request human confirmation before executing an MCP tool.
-   * Throws a Command (LangGraph) or returns blocking result (Vercel AI SDK).
+   * Throws a Command (LangGraph) or returns a blocking result.
    */
   async confirmMcpToolExecution(
     adapterName: string,
@@ -148,9 +135,7 @@ export class HumanInteractionService {
   }
 
   /**
-   * Legacy blocking confirmation for the Vercel AI SDK streamText flow
-   * (non-LangGraph paths). This is kept as a fallback for the swarm coordinator
-   * which uses the Vercel AI SDK's streamText, not LangGraph's StateGraph.
+   * Blocking confirmation for execution paths outside a compiled StateGraph.
    */
   async requestBlockingConfirmation(params: {
     context?: string;
@@ -176,7 +161,6 @@ export class HumanInteractionService {
     this.pendingDecision = null;
     this.pendingDecisionSource = null;
     this.langGraphContext = false;
-    this.decisionHistory.clear();
     if (this.timeoutTimer) {
       clearTimeout(this.timeoutTimer);
       this.timeoutTimer = null;
@@ -265,25 +249,6 @@ export class HumanInteractionService {
 
   // ─── Private helpers ────────────────────────────────────────────────────
 
-  /**
-   * Check decision history for a matching previous approval.
-   * Returns true if the same operation on the same file was previously approved
-   * within the last hour.
-   */
-  private checkDecisionHistory(signature: string): boolean {
-    const entry = this.decisionHistory.get(signature);
-    if (!entry || !entry.approved) return false;
-
-    // Only auto-approve decisions made within the last hour
-    const oneHour = 60 * 60 * 1000;
-    if (Date.now() - entry.timestamp > oneHour) {
-      this.decisionHistory.delete(signature);
-      return false;
-    }
-
-    return true;
-  }
-
   /** Clear the timeout timer when the user responds. */
   private clearTimeout(): void {
     if (this.timeoutTimer) {
@@ -298,23 +263,11 @@ export class HumanInteractionService {
       .digest('hex');
   }
 
-  /** Record a decision in the history for future auto-approval. */
-  private recordDecision(signature: string, approved: boolean): void {
-    // Prune if over limit
-    if (this.decisionHistory.size >= MAX_DECISION_HISTORY) {
-      const oldest = [...this.decisionHistory.entries()]
-        .sort(([, a], [, b]) => a.timestamp - b.timestamp)[0];
-      if (oldest) this.decisionHistory.delete(oldest[0]);
-    }
-
-    this.decisionHistory.set(signature, { approved, timestamp: Date.now() });
-  }
-
   /**
    * Request human confirmation.
    *
    * - **First call**: Instance has no pending signature. Stores the signature
-   *   and throws a Command (LangGraph) or falls back to blocking (Vercel AI SDK).
+   *   and throws a Command (LangGraph) or falls back to blocking confirmation.
    * - **Second call (after resume)**: Signature matches and consumes the
    *   explicit decision supplied by the session.
    *
@@ -335,14 +288,7 @@ export class HumanInteractionService {
       this.pendingDecision = null;
       this.pendingDecisionSource = null;
       this.clearTimeout();
-      this.recordDecision(sig, approved);
       return approved;
-    }
-
-    // Check decision history: if the same operation was approved recently,
-    // auto-approve without interrupting the user.
-    if (this.checkDecisionHistory(sig)) {
-      return true;
     }
 
     if (this.pendingSignature && this.pendingSignature !== sig) {
@@ -373,13 +319,12 @@ export class HumanInteractionService {
       });
     }
 
-    // Non-LangGraph path (Vercel AI SDK / swarm mode): use blocking confirmation.
+    // Non-LangGraph path: use blocking confirmation.
     const confirmed = await this.requestBlockingConfirmation(params);
     this.pendingSignature = null;
     this.pendingDecision = null;
     this.pendingDecisionSource = null;
     this.clearTimeout();
-    this.recordDecision(sig, confirmed);
     return confirmed;
   }
 

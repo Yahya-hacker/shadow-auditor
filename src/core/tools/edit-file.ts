@@ -48,8 +48,8 @@ export function createEditFileTool(pathGuard: PathGuard, humanInteraction: Human
 
         // Request human confirmation. In LangGraph context this throws a Command
         // (interrupting the graph at HumanIntervention). On resume, the tool is
-        // called again and this returns true. In non-LangGraph context (Vercel AI
-        // SDK swarm mode), returns the blocking confirmation result.
+        // called again and this returns true. Outside a compiled graph, this
+        // returns the blocking confirmation result.
         const confirmed = await humanInteraction.confirmFileEdit(filePath, targetCode, replacementCode);
         if (!confirmed) {
           return `── edit_file ── DENIED ──\n[DENIED] User denied file edit: "${filePath}".`;

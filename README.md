@@ -29,7 +29,7 @@ candidates, and produce evidence-backed findings for CI and human review.
 | **Hybrid Retrieval** | Semantic + lexical + knowledge-graph search via `context_retrieval`, followed by targeted line-range reads |
 | **Multi-Agent Swarm** | 5 specialized roles (Recon, TaintTracer, ExploitAnalyst, Verifier, Reporter) with shared Blackboard |
 | **Patch Competition** | In swarm `patch-only` mode, 3 perspective-specific agents propose fixes → orchestrator detects conflicts → synthesizes a unified candidate patch |
-| **Human-in-the-Loop** | Policy-gated tools, timeout auto-deny, decision history for intelligent re-approval |
+| **Human-in-the-Loop** | Policy-gated tools, per-operation approval, and timeout auto-deny |
 | **CI Integration** | SARIF, JSON, Markdown reports with stable `SHADOW-<CWE>-<HEX8>` finding IDs |
 
 ---
@@ -167,9 +167,10 @@ END
 - **Devil's Advocate** — Challenges exploitability and rejects unsupported claims.
 - **Reporting** — Produces the only public model response, with clear impact, reproduction steps, and PoC evidence.
 
-Each stage has scoped tools and a finite runtime budget. Handoffs are schema-validated,
-checkpointed, and repaired at most once; invalid output fails closed rather than being
-published as a finding.
+Each stage has scoped tools and a finite runtime budget. Handoffs are schema-validated
+and checkpointed. Invalid handoffs fail closed after a bounded repair policy: two
+repair attempts by default, configurable from 0 to 4 with
+`reportValidation.maxRepairRetries`.
 
 ### Agent Intelligence System
 
@@ -180,6 +181,12 @@ published as a finding.
 | **Evidence Review** | Devil's Advocate independently confirms or rejects every candidate finding |
 | **Durable Resume** | Checkpoints preserve artifacts and confirmation identity across interrupted runs |
 | **Bounded Execution** | Duplicate-call detection and model-aware tool budgets force a final synthesis |
+
+Tool autonomy is configurable without bypassing host policy. Enter `/tools` in the
+interactive shell to open the dedicated tool screen, select an agent, enable or
+disable optional tools, and set its tool-step budget from 8 to 1024. Mandatory
+handoff and completion tools remain enabled. A step is one model/tool-loop
+iteration; parallel calls emitted by one model response consume one step.
 
 ### Tool Intelligence
 
@@ -249,9 +256,9 @@ Agent C (TUI Logic) ──► PatchProposal ──┘      │
 
 | Feature | Behavior |
 |---------|----------|
-| **Decision History** | Previously approved operations auto-approved for 1 hour |
+| **Single-use Decisions** | Every side-effecting operation requires a fresh approval |
 | **Timeout** | 5-minute auto-deny for unanswered confirmations |
-| **Signature Tracking** | The same recently approved operation signature can resume without a duplicate prompt |
+| **Signature Tracking** | A signature binds one pending operation to its resume response; it is cleared after that decision |
 | **LangGraph Command** | Tools throw `Command` → graph pauses at `HumanIntervention` → TUI shows question |
 
 ---
@@ -285,6 +292,22 @@ Provider payload, schema, tool-loop, replay, and error contracts are covered by
 the automated test suite. Microsoft Foundry with Entra authentication has also
 been exercised live against `gpt-5.6-sol`; other hosted providers require
 customer credentials and should be smoke-tested in the deployment environment.
+
+### Streaming, reasoning, and token accounting
+
+- LangGraph `messages` and `updates` are the runtime stream contract. Provider
+  chunks are normalized before they reach the TUI.
+- The Reporting stage is the only source of public report text. Private chain of
+  thought is not rendered. Azure/Foundry reasoning summaries are shown only when
+  `azure.reasoningSummary` explicitly enables the endpoint's public summary
+  feature; DeepSeek, OpenRouter, and Ollama reasoning channels remain private.
+- Native Anthropic signed thinking blocks and Google thought signatures are
+  preserved for valid provider replay without exposing them in the transcript.
+- Token counters use provider-reported usage metadata when available. A total is
+  derived only when the provider supplies prompt/completion counts but no total.
+  Provider totals that include cached, reasoning, or otherwise unclassified
+  tokens are preserved rather than rewritten, and the TUI labels their
+  provenance.
 
 ---
 
@@ -336,6 +359,20 @@ For private local indexing, set `embeddingProvider` to `ollama`. The index honor
 `indexing.embeddingDimension` must match the selected embedding model (768 for
 the default `nomic-embed-text`). Ollama requests are batched and response vectors
 are validated before the active index is replaced.
+
+OpenAI-compatible cloud embeddings are currently verified for OpenAI and NVIDIA.
+Other chat providers do not imply an embeddings API; configure an explicit
+OpenAI-compatible embedding endpoint or use Ollama. Startup probes validate the
+selected provider. If embeddings are unavailable, Shadow Auditor reports the
+degradation and continues with Tree-sitter, lexical, and knowledge-graph
+retrieval. Cancellation is never converted into a fallback.
+
+The content-addressed semantic index is stored under
+`<target>/.shadow-auditor/semantic-index` and reuses unchanged vectors. Supported
+Tree-sitter grammars provide structural chunks, imports, and conservative call
+edges. Missing or failed grammars are visible in indexing diagnostics and fall
+back to bounded whole-file lexical chunks; relationships are never guessed
+between ambiguous symbols.
 
 API keys are stored in the OS keychain (via `keychain` adapter). For backward compatibility, keys may also be read from the config file.
 
@@ -432,9 +469,9 @@ src/
   decision support and retain human review for release-critical findings.
 - **Command Policy**: Safe families by default (`git status`, `npm test`). Destructive patterns denied.
 - **Expert Mode** (`--expert-unsafe`): Broader capabilities with explicit warnings.
-- **Confirmation Gates**: File edits and command execution require explicit approval.
+- **Confirmation Gates**: File edits and every host command execution require explicit approval.
 - **Timeouts**: Unanswered confirmations auto-deny after 5 minutes.
-- **Decision History**: Exact approved operation signatures can be reused within 1 hour.
+- **Single-use Decisions**: A resumed approval authorizes exactly the pending operation; identical later operations prompt again.
 
 ---
 

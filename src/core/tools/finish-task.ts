@@ -3,13 +3,8 @@ import { z } from 'zod';
 /**
  * Creates a finish_task tool that the agent calls to signal task completion.
  *
- * When combined with `hasToolCall('finish_task')` as a stopWhen predicate in
- * `streamWithContinuation`, this enables the agent to self-terminate its
- * multi-step tool loop once all analysis goals have been met — without waiting
- * for the step budget to be fully consumed.
- *
- * Usage pattern:
- *   stopWhen: [stepCountIs(maxToolSteps), hasToolCall('finish_task')]
+ * The shared LangChain tool executor treats a successful call as terminal,
+ * allowing the agent to end its loop before consuming the remaining budget.
  */
 export function createFinishTaskTool() {
   return {

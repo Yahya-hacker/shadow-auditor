@@ -287,6 +287,7 @@ export class MCPPolicyBuilder {
 export interface MCPPolicyDecision {
   allowed: boolean;
   reason: string;
+  requiresConfirmation: boolean;
   warning?: string;
 }
 
@@ -312,6 +313,7 @@ export function evaluateMcpPolicy(
       return {
         allowed: true,
         reason: `[MCP_POLICY_ALLOWED] ${adapterId}.${toolDefinition.name} allowed in expert unsafe mode.`,
+        requiresConfirmation: true,
         warning: `[EXPERT-UNSAFE] ${adapterId}.${toolDefinition.name} is classified as ${decision.tier}. Confirm only when authorized.`,
       };
     }
@@ -319,12 +321,14 @@ export function evaluateMcpPolicy(
     return {
       allowed: false,
       reason: decision.reason,
+      requiresConfirmation: false,
     };
   }
 
   return {
     allowed: true,
     reason: decision.reason,
+    requiresConfirmation: decision.requiresConfirmation,
     warning: decision.warning,
   };
 }

@@ -108,7 +108,7 @@ export class MCPManager {
         }
 
         const {warning} = policyDecision;
-        if (definition.requiresConfirmation || warning) {
+        if (definition.requiresConfirmation || policyDecision.requiresConfirmation || warning) {
           const confirmed = await humanInteraction.confirmMcpToolExecution(
             adapterId,
             definition.name,

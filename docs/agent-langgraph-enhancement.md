@@ -1,178 +1,150 @@
-# Shadow Auditor — Agent & LangGraph Deep Enhancement Plan
+# LangGraph execution and provider contract
 
-## 1. Architecture Overview
+This reference records the invariants that future changes must preserve.
 
-### Current LangGraph Flow
+## Execution invariants
+
+1. The main workflow remains Codebase Intelligence -> SAST Audit -> Devil's
+   Advocate -> Reporting.
+2. A downstream stage consumes the validated persisted artifact from its
+   predecessor, not free-form transcript text.
+3. Reporting is the only public model-output boundary.
+4. Every stage has a finite step budget. A model response containing parallel
+   tool calls consumes one step.
+5. Duplicate tool calls, handoff repair, and graph recursion are independently
+   bounded.
+6. Invalid evidence and exhausted repair fail closed.
+7. Checkpoints and report artifacts are durable before a run is marked
+   complete.
+8. Cancellation propagates through models, embeddings, tools, DAST,
+   remediation, MCP, and swarm workers.
+
+## State and context
+
+The graph state includes the mission, conversation messages, working memory,
+stage iterations, typed handoffs, evidence actions, candidate findings,
+verdicts, report text, and pending human input.
+
+Working memory preserves progress across context compaction. Provider history
+normalization must keep every assistant tool call paired with exactly one tool
+result. Native signed reasoning content may be retained only when the same
+provider requires it for replay; portable history strips private reasoning.
+
+System and specialist prompts are injected at invocation time instead of being
+stored as user messages. Repository context is represented by the repository
+map, indexing summary, working memory, and targeted retrieval.
+
+## Provider adapter rules
+
+All execution paths consume a LangChain-compatible chat model and the shared
+tool executor. A provider adapter is complete only when it handles:
+
+- endpoint and authentication construction;
+- strict tool-schema binding;
+- streamed and non-streamed assistant messages;
+- tool-call normalization and stable call IDs;
+- assistant/tool history replay;
+- provider errors and cancellation;
+- usage metadata normalization;
+- private-reasoning handling.
+
+Native adapters are preferred where they preserve provider semantics. An
+OpenAI-compatible transport is acceptable only with explicit fixtures for that
+provider's deviations. Cross-package type differences must be isolated in the
+model router rather than spread through agents.
+
+Perplexity Sonar is unsupported until it offers the external tool contract
+required by the graph. Model suggestions in setup are examples and must never
+be described as entitlement or live availability.
+
+## Streaming and reasoning privacy
+
+The runtime consumes LangGraph `messages` and `updates`, not raw provider SDK
+events as a public API. Stream handling must:
+
+- preserve stage and tool causality;
+- emit each tool call, result, and usage record once;
+- recover pending interrupts from the checkpoint after stream failure;
+- reject an empty stream that produced no processable event;
+- filter DeepSeek DSML protocol fragments;
+- keep private chain of thought out of activity and reports.
+
+Azure/Foundry public reasoning summaries require explicit
+`azure.reasoningSummary` configuration. DeepSeek, OpenRouter, and Ollama
+reasoning must remain private. Anthropic signed thinking and Google thought
+signatures may be preserved internally for replay but are not rendered.
+
+## Token accounting
+
+Provider totals are authoritative. Prompt and completion counters are recorded
+when supplied; their sum is used only when no total exists. A positive
+difference between the provider total and classified counters is retained as
+`unclassified`, covering cached, reasoning, audio, or future token categories
+without inventing a classification.
+
+Usage events must be deduplicated at the durable message/event boundary.
+Estimated text length is not token accounting and must not be presented as
+provider usage.
+
+## Tool autonomy
+
+Default step budgets are intentionally generous and configurable from 8 to
+1024 globally or per agent. The `/tools` screen provides the interactive
+control plane. These controls can narrow, not widen, the role and host policy:
+
+- optional tools may be enabled or disabled;
+- per-agent budgets may be changed;
+- mandatory completion and evidence-handoff tools cannot be disabled;
+- command and path policy remain host-owned;
+- mutations and host commands retain human confirmation.
+
+Increasing a budget does not weaken duplicate-call detection, report
+validation, cancellation, or the graph recursion ceiling.
+
+## Retrieval contract
+
+`context_retrieval` uses reciprocal-rank fusion across strategies that actually
+have data:
+
+- vector similarity when a validated embedding provider is available;
+- in-process lexical matching over indexed chunks;
+- label and relationship search over the knowledge graph.
+
+Tree-sitter extraction is structural evidence, not proof of a vulnerability.
+Dependency resolution is local and call edges are added only when a target is
+unambiguous. Missing grammars and embedding outages must produce diagnostics
+and a bounded fallback. Cancellation must never be swallowed as degradation.
+
+The codebase contains community-detection and summarization APIs, but startup
+does not currently materialize community summaries. Do not advertise that
+strategy as active until generation, persistence, invalidation, cost controls,
+and regression coverage are wired end to end.
+
+## Durable human interaction
+
+Interrupts carry a request identity and are checkpointed. Resume must verify
+the current checkpoint request, reject stale answers, persist the user's
+response, clear the pending state, and continue the same thread. UI navigation
+must not dispose the session.
+
+Each confirmation signature binds one pending operation to its resume response
+and is cleared after the decision; there is no reusable approval history.
+Timeouts deny rather than approve. Safe mode rejects destructive commands,
+unsafe shell composition, host-path escape, and symlink traversal before
+execution.
+
+## Required validation for provider or graph changes
+
+Run the smallest focused tests first, then the complete release gate:
+
+```bash
+npm test
+npm run build
+npm audit --omit=dev
+npm pack --dry-run
 ```
-START → Supervisor → [SastAnalyzer | GraphTracer | Verifier] → ToolExecutor → HumanIntervention → END
-```
 
-### Problems Found
-
-#### P1: Router is naive — no planning phase
-**Severity: HIGH**
-The `routeFromSupervisor` simply checks "has tool calls? → ToolExecutor, is AIMessage? → END, else → SastAnalyzer". There's no multi-step planning before execution. The model is asked to "do everything in one shot" which leads to shallow analysis on complex tasks.
-
-**Fix:** Add a "Plan" node before Supervisor that decomposes complex user requests into subtasks, stored in working memory.
-
-#### P2: No reflection/self-review loop
-**Severity: HIGH**
-The workflow produces output but never reviews it. Hallucinated findings, incomplete analysis, or low-confidence results pass straight through to the user.
-
-**Fix:** Add a "Reflect" node after each specialist run that reviews output quality. If below threshold, route back for improvement.
-
-#### P3: Context grows unbounded in long sessions
-**Severity: HIGH**
-`trimContext` caps at 40 messages but the checkpoint stores ALL messages. Over a multi-hour analysis session, the checkpoint file bloats and model context overflows. Critical early findings get trimmed away.
-
-**Fix:** Implement periodic summarization — compress old messages into a concise "analysis progress summary" kept in a `workingMemory` state field.
-
-#### P4: ToolRetriever uses naive keyword overlap
-**Severity: MEDIUM**
-The ToolRetriever's `keywordRetrieve` method uses simple token overlap counting. For a security analysis tool, keyword "SQL" would match "read_file" (no) and miss "context_retrieval" (yes, for DB patterns).
-
-**Fix:** 
-1. Add semantic embedding-based scoring via the existing embedding provider
-2. Add tool usage examples in tool descriptions for better LLM-driven selection
-3. Add tool co-occurrence hints ("after search_codebase, use read_file to inspect matches")
-
-#### P5: Tool results are raw and unprocessed
-**Severity: MEDIUM**
-When `read_file` returns a 5000-line file or `search_codebase` returns 100 matches, the full result is injected into context. This wastes tokens and can cause the model to lose focus.
-
-**Fix:** Add result post-processing: truncate large outputs with summaries, add "top N" hints, and include continuation markers for pagination.
-
-#### P6: No working memory across supersteps
-**Severity: HIGH**
-The system prompt is static. The model doesn't "remember" what it already discovered between tool calls. It must re-read the conversation history to recall findings, which is inefficient.
-
-**Fix:** Add a `workingMemory` field to the LangGraph state. After each significant discovery, update working memory. Inject it into the system prompt so the model always has a concise summary of what's been found.
-
-#### P7: Human-in-the-loop has no timeout or batch mode
-**Severity: MEDIUM**
-When the graph pauses for human confirmation, it waits indefinitely. For long sessions, this means the user might step away and the entire analysis stalls. Also, each file edit requires separate confirmation.
-
-**Fix:**
-1. Add configurable timeout (auto-deny after N minutes)
-2. Add "approve all" pattern for batch edits
-3. Track decision history so repeated similar confirmations can be auto-approved
-
-#### P8: Checkpoint files grow without bound
-**Severity: MEDIUM**
-Each `streamEvents` creates a new checkpoint file. Over a long session, hundreds of checkpoint files accumulate.
-
-**Fix:** Add checkpoint compaction — keep only the most recent N checkpoints plus a "milestone" checkpoint every M steps.
-
-#### P9: Specialist nodes are underutilized
-**Severity: HIGH**
-The specialists (SastAnalyzer, GraphTracer, Verifier) are only activated based on `routeFromSupervisor`'s fallback logic. In practice, the Supervisor often just calls tools directly and never delegates to specialists. The specialist prompts and capabilities are wasted.
-
-**Fix:** Restructure routing:
-- After planning, ALWAYS route through specialists based on task type
-- Supervisor coordinates, specialists execute
-- Add a "Verifier" check after every finding
-
-#### P10: No error recovery edges in the graph
-**Severity: MEDIUM**
-If ToolExecutor encounters an error (tool crash, timeout), it routes back to Supervisor. But the error message might be cryptic, and the Supervisor has no guidance on recovery.
-
-**Fix:** Add error-classification in ToolExecutor output. Route to a "Recovery" node that suggests alternative approaches.
-
-#### P11: Swarm workers use Vercel AI SDK, not LangGraph
-**Severity: MEDIUM**
-The swarm uses `streamWithContinuation` (Vercel AI SDK) while the main agent uses LangGraph. This creates a split architecture where improvements to one path don't benefit the other.
-
-**Fix:** Migrate swarm workers to LangGraph for consistency. Each worker gets its own mini-StateGraph with tool-use loop.
-
-#### P12: Worker prompts lack concrete tool instructions
-**Severity: MEDIUM**
-Worker prompts are role-focused but don't include tool-specific guidance. Workers don't know the best tool to use for each subtask.
-
-**Fix:** Add tool usage examples and sequences to worker prompts. "To find SQL injection: 1) context_retrieval('SQL query construction'), 2) read_file on matched files, 3) search_codebase for parameterization patterns"
-
----
-
-## 2. Implementation Plan
-
-### Phase 1: Core Intelligence (highest impact)
-
-#### 2.1 Add Working Memory to State
-**File:** `src/core/graph/state.ts`
-- Add `workingMemory: Annotation<string>` to AgentState
-- Reducer: replaces on each update (latest value)
-- Contains: key findings, current hypothesis, files examined, confidence scores
-
-#### 2.2 Add Reflection Node
-**File:** `src/core/graph/workflow.ts`
-- New node: `reflectorNode` — reviews last response for quality
-- Checks: completeness, evidence quality, hallucination risk
-- Route: if quality < threshold → back to Supervisor with improvement hints
-- New edge: all specialist nodes → Reflector → (Supervisor | END)
-
-#### 2.3 Context Summarization
-**File:** `src/core/graph/workflow.ts`
-- New function: `summarizeContext(messages, workingMemory) → string`
-- Called when messages exceed 30: compresses oldest 20 into a summary
-- Stored in `workingMemory` state field
-- Injected into system prompt as "## ANALYSIS PROGRESS" section
-
-#### 2.4 Enhanced System Prompt with Working Memory
-**File:** `src/core/system-prompt.ts`
-- Add `workingMemory` parameter
-- Include "## CURRENT ANALYSIS STATE" section with findings, hypotheses, progress
-
-### Phase 2: Tool Intelligence
-
-#### 2.5 Tool Description Enhancement
-**Files:** All tool files (`bash.ts`, `context-retrieval.ts`, etc.)
-- Add usage examples in descriptions
-- Add "when to use" vs "when not to use" guidance
-- Add result format documentation
-- Add tool chaining hints
-
-#### 2.6 Tool Result Post-Processing
-**File:** `src/core/graph/tools/langchain-wrapper.ts`
-- Add result truncation for large outputs
-- Add summary generation for multi-result tools
-- Add continuation hints for paginated results
-
-#### 2.7 ToolRetriever Semantic Scoring
-**File:** `src/core/graph/tool-retriever.ts`
-- Add embedding-based scoring using optional embedProvider
-- Add tool co-occurrence matrix for better recommendations
-- Add LLM-based tool selection as fallback
-
-### Phase 3: Long-Task Resilience
-
-#### 2.8 Checkpoint Compaction
-**File:** `src/core/orchestrator/checkpoint-saver.ts`
-- Add `compact()` method that keeps only N most recent + milestone checkpoints
-- Add checkpoint metadata (timestamp, summary)
-
-#### 2.9 Human-in-the-Loop Timeout
-**File:** `src/utils/human-in-loop.ts`
-- Add configurable timeout parameter
-- Auto-deny after timeout with logged reason
-
-#### 2.10 Graph Error Recovery
-**File:** `src/core/graph/workflow.ts`
-- Add error classification in ToolExecutor output
-- Add RecoveryNode that suggests alternative approaches
-- Add retry counter to prevent infinite loops
-
----
-
-## 3. File Changes Summary
-
-| File | Changes |
-|------|---------|
-| `src/core/graph/state.ts` | Add `workingMemory` field |
-| `src/core/graph/workflow.ts` | Add Reflector node, summarization, enhanced routing |
-| `src/core/graph/tool-retriever.ts` | Semantic scoring, co-occurrence hints |
-| `src/core/graph/tools/langchain-wrapper.ts` | Result processing, truncation |
-| `src/core/system-prompt.ts` | Working memory injection, enhanced directives |
-| `src/core/agent.ts` | Wire working memory, pass to system prompt |
-| `src/core/orchestrator/checkpoint-saver.ts` | Compaction, metadata |
-| `src/utils/human-in-loop.ts` | Timeout, batch approval |
-| All tool files | Enhanced descriptions with examples |
-| `src/core/hivemind/worker-prompts.ts` | Tool usage guidance, sequences |
+Provider changes require deterministic stream, tool, replay, usage, error, and
+cancellation fixtures. Native parser or packaging changes additionally require
+clean tarball installation, global CLI smoke, isolated `npm link`, and a real
+Tree-sitter parse.
