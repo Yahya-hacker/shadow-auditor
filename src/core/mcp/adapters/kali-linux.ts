@@ -21,12 +21,12 @@ export function createKaliLinuxAdapter(options: KaliLinuxAdapterOptions = {}): M
     listTools: () => [
       {
         description: 'Execute an Nmap scan against a target host.',
-        async execute(input: Record<string, unknown>) {
+        async execute(input: Record<string, unknown>, context) {
           if (!invoker) {
             return unavailableMessage('nmap_scan');
           }
 
-          return invoker('nmap_scan', input);
+          return invoker('nmap_scan', input, context.signal);
         },
         inputSchema: z
           .object({
@@ -42,12 +42,12 @@ export function createKaliLinuxAdapter(options: KaliLinuxAdapterOptions = {}): M
       },
       {
         description: 'Execute a Nikto web server scan.',
-        async execute(input: Record<string, unknown>) {
+        async execute(input: Record<string, unknown>, context) {
           if (!invoker) {
             return unavailableMessage('nikto_scan');
           }
 
-          return invoker('nikto_scan', input);
+          return invoker('nikto_scan', input, context.signal);
         },
         inputSchema: z
           .object({
@@ -61,12 +61,12 @@ export function createKaliLinuxAdapter(options: KaliLinuxAdapterOptions = {}): M
       },
       {
         description: 'Execute a Dirb web content discovery scan.',
-        async execute(input: Record<string, unknown>) {
+        async execute(input: Record<string, unknown>, context) {
           if (!invoker) {
             return unavailableMessage('dirb_scan');
           }
 
-          return invoker('dirb_scan', input);
+          return invoker('dirb_scan', input, context.signal);
         },
         inputSchema: z
           .object({

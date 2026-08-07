@@ -1,7 +1,6 @@
 import { expect } from 'chai';
 
 import type {
-  AttackChain,
   AttackStep,
 } from '../src/core/planner/planner-schema.js';
 

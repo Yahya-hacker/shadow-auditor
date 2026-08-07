@@ -175,6 +175,14 @@ describe('verification gates', () => {
         cwe: 'CWE-79',
         entityIds: [],
         title: 'Assumption test',
+        toolRunRefs: [
+          {
+            timestamp: new Date().toISOString(),
+            toolCallId: 'toolcall_assumption',
+            toolName: 'scanner',
+            truncated: false,
+          },
+        ],
       };
 
       const result = gates.verify(candidate);

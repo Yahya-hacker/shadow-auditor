@@ -4,35 +4,39 @@
 
 import * as crypto from 'node:crypto';
 
+import type { NormalizedTokenUsage } from '../usage.js';
+import type {
+  MissionModelInvocation,
+  MissionRuntimeObserver,
+  MissionToolCall,
+  MissionToolResult,
+} from './mission-runtime.js';
+
 import { EventStore } from '../memory/event-store.js';
 import { KnowledgeGraph } from '../memory/knowledge-graph.js';
 import { Retrieval } from '../memory/retrieval.js';
 import { err, ok, type Result } from '../schema/base.js';
-import { CheckpointManager, computeStateHash } from './checkpoints.js';
+import { CheckpointManager } from './checkpoints.js';
 import {
-  type BudgetState,
   type Hypothesis,
   isTerminalPhase,
   type MissionObjective,
   type MissionPhase,
   type MissionState,
-  missionStateSchema,
   type PendingAction,
-  PHASE_DESCRIPTIONS,
   phaseAllowsToolExecution,
 } from './mission-state.js';
 import {
   attemptTransition,
   calculateMissionConfidence,
-  getAllowedTransitionsForState,
   isBudgetExhausted,
   recommendNextPhase,
   type TransitionContext,
-  type TransitionResult,
 } from './transitions.js';
 
 export interface MissionEngineOptions {
   maxTokens?: number;
+  maxTokensPerInvocation?: number;
   maxToolCalls?: number;
   runId: string;
   storagePath: string;
@@ -52,19 +56,23 @@ export interface PhaseResult {
 /**
  * Core mission orchestration engine.
  */
-export class MissionEngine {
+export class MissionEngine implements MissionRuntimeObserver {
   private checkpointManager: CheckpointManager;
+  private readonly completedStages = new Set<string>();
   private eventStore!: EventStore;
   private graph!: KnowledgeGraph;
   private initialized = false;
   private readonly options: Required<MissionEngineOptions>;
   private phaseHandlers: Map<MissionPhase, PhaseHandler> = new Map();
   private retrieval!: Retrieval;
-private state!: MissionState;
+  private runtimeMutation: Promise<void> = Promise.resolve();
+  private readonly startedStages = new Set<string>();
+  private state!: MissionState;
 
   constructor(options: MissionEngineOptions) {
     this.options = {
       maxTokens: options.maxTokens ?? 100_000,
+      maxTokensPerInvocation: options.maxTokensPerInvocation ?? 32_000,
       maxToolCalls: options.maxToolCalls ?? 50,
       runId: options.runId,
       storagePath: options.storagePath,
@@ -96,6 +104,179 @@ private state!: MissionState;
     };
 
     return fullHypothesis;
+  }
+
+  async afterModelInvocation(
+    invocation: MissionModelInvocation,
+    usage: NormalizedTokenUsage | undefined,
+    reservationId?: string,
+  ): Promise<void> {
+    await this.mutateRuntime(async () => {
+      if (!reservationId) {
+        throw new Error(`Missing mission reservation for ${invocation.stage} model usage.`);
+      }
+
+      const reserved = this.state.budget.modelReservations[reservationId];
+      if (!reserved) {
+        throw new Error(`Unknown or already reconciled model reservation "${reservationId}".`);
+      }
+
+      const modelReservations = {...this.state.budget.modelReservations};
+      delete modelReservations[reservationId];
+      const chargedTokens = usage
+        ? Math.max(usage.total, invocation.estimatedTokens ?? 0)
+        : reserved;
+      this.state = {
+        ...this.state,
+        budget: {
+          ...this.state.budget,
+          modelReservations,
+          tokensUsed: this.state.budget.tokensUsed + chargedTokens,
+        },
+      };
+      await this.recordEvent('model_usage', {
+        ...invocation,
+        chargedTokens,
+        reservationId,
+        usage: usage ?? null,
+      });
+      await this.saveCheckpoint();
+    });
+  }
+
+  async afterToolExecution(
+    invocation: MissionModelInvocation,
+    results: MissionToolResult[],
+  ): Promise<void> {
+    await this.mutateRuntime(async () => {
+      for (const result of results) {
+        await this.recordEvent('tool_result', {
+          ...invocation,
+          ...result,
+        });
+      }
+    });
+  }
+
+  async beforeModelInvocation(invocation: MissionModelInvocation): Promise<string> {
+    let reservationId = '';
+    await this.mutateRuntime(async () => {
+      reservationId = crypto.randomUUID();
+      const reservedTokens = Object.values(this.state.budget.modelReservations)
+        .reduce((total, value) => total + value, 0);
+      const available = this.state.budget.maxTokens - this.state.budget.tokensUsed - reservedTokens;
+      if (available < this.options.maxTokensPerInvocation) {
+        throw new Error(
+          `Mission token budget exhausted before ${invocation.stage} could reserve ` +
+          `${this.options.maxTokensPerInvocation} tokens (${Math.max(0, available)} available).`,
+        );
+      }
+
+      const previousState = this.state;
+      this.state = {
+        ...this.state,
+        budget: {
+          ...this.state.budget,
+          modelReservations: {
+            ...this.state.budget.modelReservations,
+            [reservationId]: this.options.maxTokensPerInvocation,
+          },
+        },
+      };
+      try {
+        await this.saveCheckpoint();
+      } catch (error) {
+        this.state = previousState;
+        throw error;
+      }
+    });
+    return reservationId;
+  }
+
+  async beforeToolExecution(
+    invocation: MissionModelInvocation,
+    calls: MissionToolCall[],
+  ): Promise<void> {
+    if (calls.length === 0) return;
+    await this.mutateRuntime(async () => {
+      const callKeys = calls.map(
+        ({callId}) =>
+          `${invocation.agentId ?? invocation.stage}:` +
+          `${invocation.executionId ?? 'unscoped'}:${callId}`,
+      );
+      const duplicate = callKeys.find((key) =>
+        this.state.budget.reservedToolCallIds.includes(key),
+      );
+      if (duplicate) {
+        if (
+          invocation.resumeReservedTools &&
+          callKeys.every((key) => this.state.budget.reservedToolCallIds.includes(key))
+        ) {
+          return;
+        }
+
+        throw new Error(
+          `Refusing to replay already-reserved tool call "${duplicate}". ` +
+          'Review the interrupted run before retrying with a new call ID.',
+        );
+      }
+
+      const nextCount = this.state.budget.toolCallsUsed + calls.length;
+      if (nextCount > this.state.budget.maxToolCalls) {
+        throw new Error(
+          `Mission tool-call budget exhausted before ${invocation.stage} could execute ` +
+          `${calls.length} additional call(s).`,
+        );
+      }
+
+      const previousState = this.state;
+      this.state = {
+        ...this.state,
+        budget: {
+          ...this.state.budget,
+          reservedToolCallIds: [
+            ...this.state.budget.reservedToolCallIds,
+            ...callKeys,
+          ],
+          toolCallsUsed: nextCount,
+        },
+      };
+      // Persist reservations before any external side effect. Ambiguous calls
+      // remain reserved after interruption and cannot be replayed automatically.
+      try {
+        await this.saveCheckpoint();
+      } catch (error) {
+        this.state = previousState;
+        throw error;
+      }
+
+      for (const call of calls) {
+        await this.recordEvent('tool_call', {
+          ...invocation,
+          ...call,
+        });
+      }
+
+    });
+  }
+
+  async beginExecution(objectives?: MissionObjective[]): Promise<void> {
+    await this.mutateRuntime(async () => {
+      if (this.state.currentPhase !== 'COMPLETE' && this.state.currentPhase !== 'FAILED') return;
+      await this.reconcileTerminalEvent();
+      const nextObjectives = objectives ?? this.state.objectives.map((objective) => ({
+        ...objective,
+        status: 'pending' as const,
+      }));
+      this.state = this.createInitialState(nextObjectives);
+      this.startedStages.clear();
+      this.completedStages.clear();
+      await this.saveCheckpoint();
+      await this.recordEvent('mission_started', {
+        missionId: this.state.missionId,
+        objectives: this.state.objectives.length,
+      });
+    });
   }
 
   /**
@@ -160,8 +341,10 @@ private state!: MissionState;
    */
   getRemainingBudget(): { tokens: number; toolCalls: number } {
     this.ensureInitialized();
+    const reservedTokens = Object.values(this.state.budget.modelReservations)
+      .reduce((total, value) => total + value, 0);
     return {
-      tokens: this.state.budget.maxTokens - this.state.budget.tokensUsed,
+      tokens: this.state.budget.maxTokens - this.state.budget.tokensUsed - reservedTokens,
       toolCalls: this.state.budget.maxToolCalls - this.state.budget.toolCallsUsed,
     };
   }
@@ -193,7 +376,6 @@ private state!: MissionState;
       runId: this.options.runId,
       storagePath: this.options.storagePath,
     });
-
     this.graph = await KnowledgeGraph.create({
       runId: this.options.runId,
       storagePath: this.options.storagePath,
@@ -203,8 +385,15 @@ private state!: MissionState;
 
     // Try to resume from checkpoint
     const latestCheckpoint = await this.checkpointManager.loadLatestCheckpoint();
-    if (latestCheckpoint.ok && latestCheckpoint.value) {
+    if (!latestCheckpoint.ok) {
+      throw new Error(`Failed to restore mission checkpoint: ${latestCheckpoint.error}`);
+    }
+
+    if (latestCheckpoint.value) {
       this.state = latestCheckpoint.value;
+      await this.reconcileModelUsageEvents();
+      await this.reconcileToolReservations();
+      await this.reconcileTerminalEvent();
       await this.recordEvent('checkpoint_restored', {
         checkpointPhase: this.state.currentPhase,
         missionId: this.state.missionId,
@@ -216,6 +405,22 @@ private state!: MissionState;
         missionId: this.state.missionId,
         objectives: this.state.objectives.length,
       });
+    }
+
+    for (const [eventType, target] of [
+      ['stage_started', this.startedStages],
+      ['stage_completed', this.completedStages],
+    ] as const) {
+      const events = await this.eventStore.getByType(eventType);
+      if (!events.ok) throw new Error(events.error);
+      for (const event of events.value) {
+        if (
+          event.payload.missionId === this.state.missionId &&
+          typeof event.payload.stage === 'string'
+        ) {
+          target.add(event.payload.stage);
+        }
+      }
     }
 
     this.initialized = true;
@@ -238,6 +443,101 @@ private state!: MissionState;
     };
 
     return fullAction;
+  }
+
+  async recordMissionCompleted(): Promise<void> {
+    await this.mutateRuntime(async () => {
+      if (this.state.currentPhase === 'COMPLETE') {
+        if (!await this.hasMissionEvent('mission_completed')) {
+          await this.recordEvent('mission_completed', {
+            budget: this.state.budget,
+            missionId: this.state.missionId,
+          });
+        }
+
+        return;
+      }
+
+      if (this.state.currentPhase === 'FAILED') {
+        throw new Error(`Mission is already terminal in phase ${this.state.currentPhase}.`);
+      }
+
+      const transitionedAt = new Date().toISOString();
+      this.state = {
+        ...this.state,
+        currentPhase: 'COMPLETE',
+        lastTransitionAt: transitionedAt,
+        lastTransitionReason: 'report_generated',
+        objectives: this.state.objectives.map((objective) => ({
+          ...objective,
+          status: 'completed',
+        })),
+        phaseHistory: [
+          ...this.state.phaseHistory,
+          {phase: 'COMPLETE', reason: 'report_generated', timestamp: transitionedAt},
+        ],
+      };
+      await this.saveCheckpoint();
+      await this.recordEvent('mission_completed', {
+        budget: this.state.budget,
+        missionId: this.state.missionId,
+      });
+    });
+  }
+
+  async recordMissionFailed(reason: string): Promise<void> {
+    await this.mutateRuntime(async () => {
+      if (this.state.currentPhase === 'FAILED') {
+        if (!await this.hasMissionEvent('mission_failed')) {
+          await this.recordEvent('mission_failed', {
+            missionId: this.state.missionId,
+            reason: this.state.errorMessage ?? 'Mission failed before its terminal event was recorded.',
+          });
+        }
+
+        return;
+      }
+
+      if (this.state.currentPhase === 'COMPLETE') {
+        throw new Error(`Mission is already terminal in phase ${this.state.currentPhase}.`);
+      }
+
+      const transitionedAt = new Date().toISOString();
+      this.state = {
+        ...this.state,
+        currentPhase: 'FAILED',
+        errorMessage: reason,
+        lastTransitionAt: transitionedAt,
+        lastTransitionReason: 'error_occurred',
+        objectives: this.state.objectives.map((objective) => ({
+          ...objective,
+          status: objective.status === 'completed' ? objective.status : 'blocked',
+        })),
+        phaseHistory: [
+          ...this.state.phaseHistory,
+          {phase: 'FAILED', reason: 'error_occurred', timestamp: transitionedAt},
+        ],
+      };
+      await this.saveCheckpoint();
+      await this.recordEvent('mission_failed', {missionId: this.state.missionId, reason});
+    });
+  }
+
+  async recordStageCompleted(stage: string): Promise<void> {
+    await this.mutateRuntime(async () => {
+      if (this.completedStages.has(stage)) return;
+      await this.recordEvent('stage_completed', {missionId: this.state.missionId, stage});
+      this.completedStages.add(stage);
+      await this.saveCheckpoint();
+    });
+  }
+
+  async recordStageStarted(stage: string): Promise<void> {
+    await this.mutateRuntime(async () => {
+      if (this.startedStages.has(stage)) return;
+      await this.recordEvent('stage_started', {missionId: this.state.missionId, stage});
+      this.startedStages.add(stage);
+    });
   }
 
   /**
@@ -283,7 +583,8 @@ private state!: MissionState;
    * Save a checkpoint.
    */
   async saveCheckpoint(): Promise<void> {
-    await this.checkpointManager.saveCheckpoint(this.state);
+    const result = await this.checkpointManager.saveCheckpoint(this.state);
+    if (!result.ok) throw new Error(result.error);
   }
 
   /**
@@ -398,6 +699,8 @@ private state!: MissionState;
       budget: {
         maxTokens: this.options.maxTokens,
         maxToolCalls: this.options.maxToolCalls,
+        modelReservations: {},
+        reservedToolCallIds: [],
         tokensUsed: 0,
         toolCallsUsed: 0,
       },
@@ -406,7 +709,7 @@ private state!: MissionState;
       currentPhase: 'OBSERVE',
       hypotheses: [],
       lastTransitionAt: now,
-      missionId: `mission_${this.options.runId}`,
+      missionId: crypto.randomUUID(),
       objectives,
       pendingActions: [],
       phaseHistory: [
@@ -426,11 +729,104 @@ private state!: MissionState;
     }
   }
 
+  private async hasMissionEvent(eventType: 'mission_completed' | 'mission_failed'): Promise<boolean> {
+    const events = await this.eventStore.getByType(eventType);
+    if (!events.ok) throw new Error(events.error);
+    return events.value.some((event) => event.payload.missionId === this.state.missionId);
+  }
+
+  private async mutateRuntime(mutation: () => Promise<void>): Promise<void> {
+    const next = this.runtimeMutation.then(mutation);
+    this.runtimeMutation = next.catch(() => {});
+    await next;
+  }
+
+  private async reconcileModelUsageEvents(): Promise<void> {
+    const events = await this.eventStore.getByType('model_usage');
+    if (!events.ok) throw new Error(events.error);
+    let changed = false;
+    const modelReservations = {...this.state.budget.modelReservations};
+    let tokensUsed = this.state.budget.tokensUsed;
+    for (const event of events.value) {
+      const reservationId = event.payload.reservationId;
+      const chargedTokens = event.payload.chargedTokens;
+      if (
+        typeof reservationId !== 'string' ||
+        typeof chargedTokens !== 'number' ||
+        modelReservations[reservationId] === undefined
+      ) {
+        continue;
+      }
+
+      delete modelReservations[reservationId];
+      tokensUsed += chargedTokens;
+      changed = true;
+    }
+
+    if (!changed) return;
+    this.state = {
+      ...this.state,
+      budget: {...this.state.budget, modelReservations, tokensUsed},
+    };
+    await this.saveCheckpoint();
+  }
+
+  private async reconcileTerminalEvent(): Promise<void> {
+    if (this.state.currentPhase !== 'COMPLETE' && this.state.currentPhase !== 'FAILED') return;
+    const eventType = this.state.currentPhase === 'COMPLETE'
+      ? 'mission_completed'
+      : 'mission_failed';
+    if (await this.hasMissionEvent(eventType)) return;
+
+    await this.recordEvent(eventType, this.state.currentPhase === 'COMPLETE'
+      ? {
+        budget: this.state.budget,
+        missionId: this.state.missionId,
+      }
+      : {
+        missionId: this.state.missionId,
+        reason: this.state.errorMessage ?? 'Mission failed before its terminal event was recorded.',
+      });
+  }
+
+  private async reconcileToolReservations(): Promise<void> {
+    const events = await this.eventStore.getByType('tool_call');
+    if (!events.ok) throw new Error(events.error);
+    const durableCallKeys = new Set(events.value.flatMap((event) => {
+      if (event.payload.missionId !== this.state.missionId) return [];
+      const {agentId, callId, executionId, stage} = event.payload;
+      if (typeof callId !== 'string' || typeof stage !== 'string') return [];
+      return [
+        `${typeof agentId === 'string' ? agentId : stage}:` +
+        `${typeof executionId === 'string' ? executionId : 'unscoped'}:${callId}`,
+      ];
+    }));
+    const reservedToolCallIds = this.state.budget.reservedToolCallIds.filter(
+      (key) => durableCallKeys.has(key),
+    );
+    const released = this.state.budget.reservedToolCallIds.length - reservedToolCallIds.length;
+    if (released === 0) return;
+
+    this.state = {
+      ...this.state,
+      budget: {
+        ...this.state.budget,
+        reservedToolCallIds,
+        toolCallsUsed: Math.max(0, this.state.budget.toolCallsUsed - released),
+      },
+    };
+    await this.saveCheckpoint();
+  }
+
   private async recordEvent(eventType: import('../memory/memory-schema.js').EventType, payload: Record<string, unknown>): Promise<void> {
-    await this.eventStore.append(eventType, {
+    const result = await this.eventStore.append(eventType, {
       ...payload,
+      missionId: this.state.missionId,
       missionPhase: this.state.currentPhase,
     });
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
   }
 
   private shouldCheckpoint(): boolean {

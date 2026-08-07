@@ -6,10 +6,14 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
+import { recoverAtomicWrite, writeFileAtomic } from '../../utils/fs-atomic.js';
+import { logToStderr } from '../../utils/stderr-logger.js';
 import { err, ok, type Result } from '../schema/base.js';
-import { edgeCanonicalId, isDuplicateEntity, mergeEntities } from './entity-normalizer.js';
+import { edgeCanonicalId, mergeEntities } from './entity-normalizer.js';
 import {
   type BaseEntity,
+  type Community,
+  type CommunitySummary,
   type EdgeType,
   type EntityType,
   type GraphEdge,
@@ -35,12 +39,14 @@ export interface TraversalOptions {
  * Enforces deduplication and schema validation on all operations.
  */
 export class KnowledgeGraph {
+  private communities: Map<string, Community> = new Map();
+  private communitySummaries: Map<string, CommunitySummary> = new Map();
   private edges: Map<string, GraphEdge> = new Map();
   private entities: Map<string, BaseEntity> = new Map();
   private entitiesByType: Map<EntityType, Set<string>> = new Map();
   // Indexes for efficient traversal
   private inboundEdges: Map<string, Set<string>> = new Map(); // targetId -> edgeIds
-private outboundEdges: Map<string, Set<string>> = new Map(); // sourceId -> edgeIds
+  private outboundEdges: Map<string, Set<string>> = new Map(); // sourceId -> edgeIds
   private readonly runId: string;
   private readonly snapshotPath: string;
 
@@ -148,17 +154,21 @@ private outboundEdges: Map<string, Set<string>> = new Map(); // sourceId -> edge
     const paths: Array<{ edges: GraphEdge[]; entities: BaseEntity[] }> = [];
     const visited = new Set<string>();
 
-    const dfs = (
-      currentId: string,
-      currentPath: BaseEntity[],
-      currentEdges: GraphEdge[],
-      depth: number,
-    ): void => {
+    // Mutable stack arrays — push before recursing, pop after returning.
+    // Only clone when storing a completed path in results.
+    const pathStack: BaseEntity[] = [];
+    const edgeStack: GraphEdge[] = [];
+
+    const dfs = (currentId: string, depth: number): void => {
       if (depth > maxDepth) return;
+
+      const currentEntity = this.entities.get(currentId);
+      if (!currentEntity) return;
+
       if (currentId === targetId) {
         paths.push({
-          edges: [...currentEdges],
-          entities: [...currentPath],
+          edges: [...edgeStack],
+          entities: [...pathStack],
         });
         return;
       }
@@ -170,7 +180,11 @@ private outboundEdges: Map<string, Set<string>> = new Map(); // sourceId -> edge
         if (!visited.has(nextId)) {
           const nextEntity = this.entities.get(nextId);
           if (nextEntity) {
-            dfs(nextId, [...currentPath, nextEntity], [...currentEdges, edge], depth + 1);
+            pathStack.push(nextEntity);
+            edgeStack.push(edge);
+            dfs(nextId, depth + 1);
+            pathStack.pop();
+            edgeStack.pop();
           }
         }
       }
@@ -180,10 +194,26 @@ private outboundEdges: Map<string, Set<string>> = new Map(); // sourceId -> edge
 
     const startEntity = this.entities.get(sourceId);
     if (startEntity) {
-      dfs(sourceId, [startEntity], [], 0);
+      pathStack.push(startEntity);
+      dfs(sourceId, 0);
+      pathStack.pop();
     }
 
     return paths;
+  }
+
+  /**
+   * Get all stored communities.
+   */
+  getCommunities(): Community[] {
+    return [...this.communities.values()];
+  }
+
+  /**
+   * Get all community summaries.
+   */
+  getCommunitySummaries(): CommunitySummary[] {
+    return [...this.communitySummaries.values()];
   }
 
   /**
@@ -194,12 +224,26 @@ private outboundEdges: Map<string, Set<string>> = new Map(); // sourceId -> edge
   }
 
   /**
+   * Get all edges in the graph.
+   */
+  getEdges(): GraphEdge[] {
+    return [...this.edges.values()];
+  }
+
+  /**
+   * Get all entities in the graph.
+   */
+  getEntities(): BaseEntity[] {
+    return [...this.entities.values()];
+  }
+
+  /**
    * Get all entities of a specific type.
    */
   getEntitiesByType(entityType: EntityType): BaseEntity[] {
     const ids = this.entitiesByType.get(entityType);
     if (!ids) return [];
-    return [...ids].map((id) => this.entities.get(id)!).filter(Boolean);
+    return [...ids].map((id) => this.entities.get(id)).filter((e): e is BaseEntity => e !== undefined);
   }
 
   /**
@@ -217,8 +261,8 @@ private outboundEdges: Map<string, Set<string>> = new Map(); // sourceId -> edge
     if (!edgeIds) return [];
 
     return [...edgeIds]
-      .map((id) => this.edges.get(id)!)
-      .filter((e) => e && (!edgeType || e.edgeType === edgeType));
+      .map((id) => this.edges.get(id))
+      .filter((e): e is GraphEdge => e !== undefined && (!edgeType || e.edgeType === edgeType));
   }
 
   /**
@@ -229,8 +273,8 @@ private outboundEdges: Map<string, Set<string>> = new Map(); // sourceId -> edge
     if (!edgeIds) return [];
 
     return [...edgeIds]
-      .map((id) => this.edges.get(id)!)
-      .filter((e) => e && (!edgeType || e.edgeType === edgeType));
+      .map((id) => this.edges.get(id))
+      .filter((e): e is GraphEdge => e !== undefined && (!edgeType || e.edgeType === edgeType));
   }
 
   /**
@@ -242,10 +286,15 @@ private outboundEdges: Map<string, Set<string>> = new Map(); // sourceId -> edge
     minConfidence?: number;
     propertyMatches?: Record<string, unknown>;
   }): BaseEntity[] {
-    let candidates = [...this.entities.values()];
-
+    // Use the entitiesByType index when a type filter is provided
+    let candidates: BaseEntity[];
     if (criteria.entityType) {
-      candidates = candidates.filter((e) => e.entityType === criteria.entityType);
+      const ids = this.entitiesByType.get(criteria.entityType);
+      candidates = ids
+        ? [...ids].map(id => this.entities.get(id)).filter((e): e is BaseEntity => e !== undefined)
+        : [];
+    } else {
+      candidates = [...this.entities.values()];
     }
 
     if (criteria.minConfidence !== undefined) {
@@ -273,10 +322,44 @@ private outboundEdges: Map<string, Set<string>> = new Map(); // sourceId -> edge
   }
 
   /**
+   * Find multi-hop paths matching a pattern of entity types and edge type.
+   * Example: queryPaths('source', 'flows_to', 'sink', 5) finds all paths
+   * from any source entity to any sink entity via 'flows_to' edges.
+   */
+  queryPaths(
+    sourceType: EntityType,
+    edgeType: EdgeType,
+    targetType: EntityType,
+    maxDepth = 5,
+  ): Array<{ edges: GraphEdge[]; entities: BaseEntity[] }> {
+    const results: Array<{ edges: GraphEdge[]; entities: BaseEntity[] }> = [];
+    const sourceEntities = this.getEntitiesByType(sourceType);
+
+    for (const source of sourceEntities) {
+      const visited = new Set<string>();
+      this.queryPathsDepthFirst({
+        currentEdges: [],
+        currentId: source.canonicalId,
+        currentPath: [],
+        depth: 0,
+        edgeType,
+        maxDepth,
+        results,
+        targetType,
+        visited,
+      });
+    }
+
+    return results;
+  }
+
+  /**
    * Save graph to disk.
    */
   async saveSnapshot(): Promise<void> {
     const state: KnowledgeGraphState = {
+      communities: [...this.communities.values()],
+      communitySummaries: [...this.communitySummaries.values()],
       edges: Object.fromEntries(this.edges),
       entities: Object.fromEntries(this.entities),
       runId: this.runId,
@@ -289,7 +372,24 @@ private outboundEdges: Map<string, Set<string>> = new Map(); // sourceId -> edge
       throw new Error(`Invalid graph state: ${validation.error.message}`);
     }
 
-    await fs.writeFile(this.snapshotPath, JSON.stringify(state, null, 2), 'utf8');
+    await writeFileAtomic(this.snapshotPath, JSON.stringify(state));
+  }
+
+  /**
+   * Store communities detected on this graph.
+   */
+  setCommunities(communities: Community[]): void {
+    this.communities.clear();
+    for (const community of communities) {
+      this.communities.set(community.communityId, community);
+    }
+  }
+
+  /**
+   * Store a summary for a community.
+   */
+  setCommunitySummary(summary: CommunitySummary): void {
+    this.communitySummaries.set(summary.communityId, summary);
   }
 
   /**
@@ -389,16 +489,27 @@ private outboundEdges: Map<string, Set<string>> = new Map(); // sourceId -> edge
    */
   private async loadSnapshot(): Promise<void> {
     try {
+      await recoverAtomicWrite(this.snapshotPath);
       const content = await fs.readFile(this.snapshotPath, 'utf8');
       const parsed = JSON.parse(content) as unknown;
 
       const validation = knowledgeGraphStateSchema.safeParse(parsed);
       if (!validation.success) {
-        console.warn('[KnowledgeGraph] Invalid snapshot, starting fresh:', validation.error.message);
+        logToStderr(`[KnowledgeGraph] Invalid snapshot, starting fresh: ${validation.error.message}`);
         return;
       }
 
       const state = validation.data;
+
+      // Restore communities
+      for (const community of state.communities) {
+        this.communities.set(community.communityId, community);
+      }
+
+      // Restore community summaries
+      for (const summary of state.communitySummaries) {
+        this.communitySummaries.set(summary.communityId, summary);
+      }
 
       // Restore entities
       for (const [id, entity] of Object.entries(state.entities)) {
@@ -418,5 +529,65 @@ private outboundEdges: Map<string, Set<string>> = new Map(); // sourceId -> edge
 
       throw error;
     }
+  }
+
+  private queryPathsDepthFirst(options: {
+    currentEdges: GraphEdge[];
+    currentId: string;
+    currentPath: BaseEntity[];
+    depth: number;
+    edgeType: EdgeType;
+    maxDepth: number;
+    results: Array<{edges: GraphEdge[]; entities: BaseEntity[]}>;
+    targetType: EntityType;
+    visited: Set<string>;
+  }): void {
+    const {
+      currentEdges,
+      currentId,
+      currentPath,
+      depth,
+      edgeType,
+      maxDepth,
+      results,
+      targetType,
+      visited,
+    } = options;
+    if (depth > maxDepth) return;
+
+    const currentEntity = this.entities.get(currentId);
+    if (!currentEntity) return;
+
+    if (depth > 0 && currentEntity.entityType === targetType) {
+      results.push({
+        edges: [...currentEdges],
+        entities: [...currentPath, currentEntity],
+      });
+    }
+
+    visited.add(currentId);
+
+    const outgoing = this.getOutboundEdges(currentId, edgeType);
+    for (const edge of outgoing) {
+      const nextId = edge.targetEntityId;
+      if (!visited.has(nextId)) {
+        const nextEntity = this.entities.get(nextId);
+        if (nextEntity) {
+          this.queryPathsDepthFirst({
+            currentEdges: [...currentEdges, edge],
+            currentId: nextId,
+            currentPath: [...currentPath, currentEntity],
+            depth: depth + 1,
+            edgeType,
+            maxDepth,
+            results,
+            targetType,
+            visited,
+          });
+        }
+      }
+    }
+
+    visited.delete(currentId);
   }
 }

@@ -3,38 +3,74 @@
   "description": "Autonomous AI-powered Static Application Security Testing (SAST) CLI",
   "version": "1.0.0",
   "author": "Yahya-hacker",
+  "allowScripts": {
+    "@tree-sitter-grammars/tree-sitter-markdown": true,
+    "@tree-sitter-grammars/tree-sitter-toml": true,
+    "@tree-sitter-grammars/tree-sitter-yaml": true,
+    "tree-sitter": true,
+    "tree-sitter-c": true,
+    "tree-sitter-c-sharp": true,
+    "tree-sitter-cpp": true,
+    "tree-sitter-elixir": true,
+    "tree-sitter-go": true,
+    "tree-sitter-haskell": true,
+    "tree-sitter-html": true,
+    "tree-sitter-java": true,
+    "tree-sitter-javascript": true,
+    "tree-sitter-json": true,
+    "tree-sitter-php": true,
+    "tree-sitter-python": true,
+    "tree-sitter-ruby": true,
+    "tree-sitter-rust": true,
+    "tree-sitter-scala": true,
+    "tree-sitter-typescript": true,
+    "unrs-resolver": true
+  },
   "bin": {
-    "shadow-auditor": "./bin/run.js"
+    "shadow-auditor": "bin/run.js"
   },
   "bugs": "https://github.com/Yahya-hacker/shadow-auditor/issues",
   "dependencies": {
-    "@ai-sdk/anthropic": "^4.0.33",
-    "@ai-sdk/google": "^4.0.36",
-    "@ai-sdk/mistral": "^4.0.25",
-    "@ai-sdk/openai": "^4.0.33",
+    "@azure/identity": "^4.13.1",
     "@clack/prompts": "^1.2.0",
     "@langchain/anthropic": "^1.5.1",
-    "@langchain/core": "^1.2.5",
+    "@langchain/core": "^1.2.1",
     "@langchain/google-genai": "^2.2.0",
     "@langchain/langgraph": "^1.4.7",
+    "@langchain/langgraph-checkpoint": "^1.1.3",
+    "@langchain/mistralai": "^1.0.3",
+    "@langchain/ollama": "^1.3.0",
     "@langchain/openai": "^1.5.3",
     "@oclif/core": "^4",
     "@oclif/plugin-help": "^6",
-    "ai": "^7.0.55",
-    "cross-keychain": "^1.0.0",
-    "dotenv": "^17.4.0",
-    "ink": "^5.0.1",
-    "ink-select-input": "^6.0.0",
-    "ink-spinner": "^5.0.0",
+    "@tree-sitter-grammars/tree-sitter-markdown": "^0.3.2",
+    "@tree-sitter-grammars/tree-sitter-toml": "0.6.0",
+    "@tree-sitter-grammars/tree-sitter-yaml": "0.6.1",
+    "ai": "^7.0.11",
+    "chalk": "^5.6.2",
+    "chokidar": "^4.0.3",
+    "ink": "^7.1.1",
     "ink-text-input": "^6.0.0",
-    "ollama-ai-provider": "^1.2.0",
-    "react": "^18.3.1",
+    "react": "^19.2.0",
     "tree-sitter": "^0.21.1",
+    "tree-sitter-c": "^0.21.4",
+    "tree-sitter-c-sharp": "^0.21.3",
+    "tree-sitter-cpp": "0.23.2",
+    "tree-sitter-elixir": "^0.3.5",
     "tree-sitter-go": "^0.21.2",
+    "tree-sitter-haskell": "^0.23.1",
+    "tree-sitter-html": "^0.23.2",
+    "tree-sitter-java": "^0.23.5",
     "tree-sitter-javascript": "^0.21.4",
+    "tree-sitter-json": "^0.24.8",
+    "tree-sitter-php": "0.23.11",
     "tree-sitter-python": "^0.21.0",
+    "tree-sitter-ruby": "^0.23.1",
+    "tree-sitter-rust": "^0.21.0",
+    "tree-sitter-scala": "^0.24.0",
     "tree-sitter-typescript": "^0.23.2",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@eslint/compat": "^1",
@@ -43,7 +79,8 @@
     "@types/chai": "^4",
     "@types/mocha": "^10",
     "@types/node": "^24.0.0",
-    "@types/react": "^18.3.0",
+    "@types/react": "^19.0.0",
+    "@types/sarif": "^2.1.7",
     "chai": "^4",
     "eslint": "^9",
     "eslint-config-oclif": "^6",
@@ -54,13 +91,19 @@
     "ts-node": "^10",
     "typescript": "^5"
   },
+  "optionalDependencies": {
+    "cross-keychain": "^1.0.0"
+  },
   "engines": {
-    "node": ">=24.14.1 <25"
+    "node": ">=24.0.0 <25"
   },
   "files": [
     "./bin",
     "./dist",
-    "./oclif.manifest.json"
+    "./codebase-intelligence.txt",
+    "./devil's advocate.txt",
+    "./oclif.manifest.json",
+    "./sast-auditor.txt"
   ],
   "homepage": "https://github.com/Yahya-hacker/shadow-auditor",
   "keywords": [
@@ -82,21 +125,28 @@
     ],
     "topicSeparator": " "
   },
-  "repository": "Yahya-hacker/shadow-auditor",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Yahya-hacker/shadow-auditor.git"
+  },
   "scripts": {
     "start": "node ./bin/run.js shell --reconfigure",
-    "build": "shx rm -rf dist && tsc -b",
+    "build": "shx rm -rf dist && tsc -b --force",
     "lint": "eslint",
     "postpack": "shx rm -f oclif.manifest.json",
     "posttest": "npm run lint",
-    "prepack": "oclif manifest && oclif readme",
+    "prepack": "npm run build && oclif manifest && oclif readme",
+    "relink": "npm install && npm run test:native && npm link",
     "test": "mocha --forbid-only \"test/**/*.test.ts\"",
+    "test:native": "mocha --forbid-only \"test/**/*.test.ts\" --grep \"uses Tree-sitter AST chunking across guaranteed production languages\"",
+    "test:unit": "mocha --forbid-only \"test/**/*.test.ts\"",
     "version": "oclif readme && git add README.md"
   },
-  "types": "dist/index.d.ts",
   "overrides": {
     "serialize-javascript": "^7.0.5",
     "picomatch": "^4.0.4",
-    "brace-expansion": "^2.0.3"
+    "brace-expansion": "^2.1.4",
+    "diff": "^8.0.3",
+    "uuid": "^11.1.1"
   }
 }

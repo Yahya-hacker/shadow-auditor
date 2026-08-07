@@ -1,12 +1,13 @@
-import { type ToolSet } from "ai";
+import { tool, type ToolSet } from 'ai';
 
+import type { HumanInteractionService } from '../../utils/human-in-loop.js';
 import type { MCPAdapter, MCPExecutionContext, MCPToolDefinition } from './types.js';
 
-import { confirmMcpToolExecution } from '../../utils/human-in-loop.js';
-import { evaluateMcpPolicy } from './policy.js';
+import { evaluateMcpPolicy } from '../policy/mcp-policy.js';
 
 export interface MCPManagerOptions {
   expertUnsafe: boolean;
+  humanInteraction: HumanInteractionService;
   targetPath: string;
 }
 
@@ -92,17 +93,23 @@ export class MCPManager {
     definition: MCPToolDefinition,
     context: MCPExecutionContext,
   ): ToolSet[string] {
-    return {
+    const humanInteraction = this.options.humanInteraction;
+
+    return tool({
       description: `[MCP:${adapterId}] ${definition.description}`,
-      async execute(input: Record<string, unknown>) {
+      async execute(input: Record<string, unknown>, executionOptions) {
+        const invocationContext = {
+          ...context,
+          signal: executionOptions.abortSignal,
+        };
         const policyDecision = evaluateMcpPolicy(adapterId, definition, context.expertUnsafe);
         if (!policyDecision.allowed) {
           return policyDecision.reason;
         }
 
         const {warning} = policyDecision;
-        if (definition.requiresConfirmation || warning) {
-          const confirmed = await confirmMcpToolExecution(
+        if (definition.requiresConfirmation || policyDecision.requiresConfirmation || warning) {
+          const confirmed = await humanInteraction.confirmMcpToolExecution(
             adapterId,
             definition.name,
             input,
@@ -114,10 +121,10 @@ export class MCPManager {
           }
         }
 
-        const output = await definition.execute(input, context);
+        const output = await definition.execute(input, invocationContext);
         return formatMcpOutput(output);
       },
       inputSchema: definition.inputSchema,
-    };
+    });
   }
 }

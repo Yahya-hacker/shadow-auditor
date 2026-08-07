@@ -28,10 +28,13 @@ describe('AgentWorker', () => {
 
   it('filters tools correctly by role', () => {
     const allTools = {
+      apply_and_test_patch: {} as any,
       bash: {} as any,
       context_retrieval: {} as any,
+      detect_test_framework: {} as any,
       edit_file: {} as any,
       finish_task: {} as any,
+      get_baseline_status: {} as any,
       list_directory: {} as any,
       read_file_content: {} as any,
       search_codebase: {} as any,
@@ -48,8 +51,74 @@ describe('AgentWorker', () => {
     expect(taintTools.edit_file).to.not.exist;
 
     const patchTools = createRoleToolSet('patch-engineer', allTools);
-    expect(patchTools.edit_file).to.exist;
+    expect(patchTools.edit_file).to.not.exist;
+    expect(patchTools.apply_and_test_patch).to.exist;
+    expect(patchTools.get_baseline_status).to.exist;
     expect(patchTools.list_directory).to.not.exist;
+  });
+
+  it('applies user policy without widening host role boundaries or disabling completion', () => {
+    const allTools = {
+      edit_file: {} as any,
+      finish_task: {} as any,
+      list_directory: {} as any,
+      read_file_content: {} as any,
+      search_codebase: {} as any,
+    };
+    const policy = {
+      agents: {
+        orchestrator: {
+          disabledTools: ['edit_file'],
+        },
+        recon: {
+          disabledTools: ['finish_task', 'search_codebase'],
+          enabledTools: ['edit_file', 'list_directory'],
+        },
+      },
+    };
+
+    const reconTools = createRoleToolSet('recon', allTools, policy);
+    expect(Object.keys(reconTools)).to.have.members(['finish_task', 'list_directory']);
+    expect(reconTools.edit_file).to.equal(undefined);
+
+    const orchestratorTools = createRoleToolSet('orchestrator', allTools, policy);
+    expect(orchestratorTools.edit_file).to.equal(undefined);
+    expect(orchestratorTools.finish_task).to.exist;
+    expect(orchestratorTools.search_codebase).to.exist;
+  });
+
+  it('keeps mandatory blackboard collaboration tools after applying worker policy', async () => {
+    const blackboard = await Blackboard.create({
+      runId: 'policy-blackboard-run',
+      storagePath: storageDir,
+    });
+    const registration = blackboard.registerAgent('recon');
+    expect(registration.ok).to.equal(true);
+    if (!registration.ok) throw new Error('Registration failed');
+
+    const worker = new AgentWorker({
+      agentId: registration.value.agentId,
+      allTools: {
+        finish_task: {} as any,
+        read_file_content: {} as any,
+      },
+      blackboard,
+      model: {} as any,
+      role: 'recon',
+      toolPolicy: {
+        agents: {
+          recon: {enabledTools: ['read_file_content']},
+        },
+      },
+    });
+    const tools = (worker as any).tools;
+
+    expect(tools.read_file_content).to.exist;
+    expect(tools.submit_claim).to.exist;
+    expect(tools.query_claims).to.exist;
+    expect(tools.verify_claim).to.exist;
+    expect(tools.contest_claim).to.exist;
+    worker.terminate();
   });
 
   it('builds worker system prompts with correct roles', () => {

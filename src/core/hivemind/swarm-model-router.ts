@@ -7,10 +7,13 @@
  * for cross-agent claim filtering.
  */
 
-import { type LanguageModel } from 'ai';
+import { type BaseChatModel } from '@langchain/core/language_models/chat_models';
+import { createHash } from 'node:crypto';
+
+import type {AzureProviderConfig} from '../../utils/azure-provider.js';
 
 import { type ShadowConfig } from '../../utils/config.js';
-import { getModel } from '../model-router.js';
+import { getLangchainModel } from '../model-router.js';
 import { type AgentRole, type ModelTier } from './hivemind-schema.js';
 
 // =============================================================================
@@ -18,7 +21,9 @@ import { type AgentRole, type ModelTier } from './hivemind-schema.js';
 // =============================================================================
 
 export interface ModelOverride {
-  apiToken?: string;
+  apiKey?: string;
+  azure?: AzureProviderConfig;
+  customBaseUrl?: string;
   model: string;
   provider: string;
 }
@@ -39,8 +44,15 @@ const PREMIUM_PATTERNS: Array<{ modelPattern: RegExp; provider: string }> = [
   { modelPattern: /claude-3\.5-sonnet/i, provider: 'anthropic' },
   // OpenAI flagship
   { modelPattern: /gpt-5/i, provider: 'openai' },
+  { modelPattern: /gpt-5/i, provider: 'azure' },
+  { modelPattern: /gpt-4\.1/i, provider: 'azure' },
   { modelPattern: /gpt-4o(?!-mini)/i, provider: 'openai' },
   { modelPattern: /o[1-4]-/i, provider: 'openai' },
+  { modelPattern: /deepseek-(reasoner|chat)/i, provider: 'deepseek' },
+  { modelPattern: /qwen-(max|plus)/i, provider: 'qwen' },
+  { modelPattern: /moonshot-v1-(128k|32k)/i, provider: 'moonshot' },
+  { modelPattern: /(nemotron|llama.*70b|mixtral)/i, provider: 'nvidia' },
+  { modelPattern: /sonar-pro/i, provider: 'perplexity' },
   // Google flagship
   { modelPattern: /gemini-(2|3)\.\d-(pro|ultra)/i, provider: 'google' },
   // Mistral flagship
@@ -56,6 +68,11 @@ const STANDARD_PATTERNS: Array<{ modelPattern: RegExp; provider: string }> = [
   { modelPattern: /gpt-4-turbo/i, provider: 'openai' },
   { modelPattern: /gemini-(2|3)\.\d-flash/i, provider: 'google' },
   { modelPattern: /mistral-(medium|small)/i, provider: 'mistral' },
+  { modelPattern: /sonar/i, provider: 'perplexity' },
+  { modelPattern: /qwen/i, provider: 'qwen' },
+  { modelPattern: /deepseek/i, provider: 'deepseek' },
+  { modelPattern: /moonshot/i, provider: 'moonshot' },
+  { modelPattern: /nvidia|nemotron|llama/i, provider: 'nvidia' },
 ];
 
 /**
@@ -66,7 +83,8 @@ const STANDARD_PATTERNS: Array<{ modelPattern: RegExp; provider: string }> = [
  * - `local` (trust 0.5): Ollama/custom models, unknown quality.
  */
 export function classifyModelTier(provider: string, model: string): ModelTier {
-  const normalizedProvider = provider.trim().toLowerCase();
+  const normalizedProvider = typeof provider === 'string' ? provider.trim().toLowerCase() : '';
+  const normalizedModel = typeof model === 'string' ? model : '';
 
   // Ollama and custom endpoints are always local tier
   if (normalizedProvider === 'ollama' || normalizedProvider === 'custom') {
@@ -75,20 +93,24 @@ export function classifyModelTier(provider: string, model: string): ModelTier {
 
   // Check premium patterns
   for (const rule of PREMIUM_PATTERNS) {
-    if (rule.provider === normalizedProvider && rule.modelPattern.test(model)) {
+    if (rule.provider === normalizedProvider && rule.modelPattern.test(normalizedModel)) {
       return 'premium';
     }
   }
 
   // Check standard patterns
   for (const rule of STANDARD_PATTERNS) {
-    if (rule.provider === normalizedProvider && rule.modelPattern.test(model)) {
+    if (rule.provider === normalizedProvider && rule.modelPattern.test(normalizedModel)) {
       return 'standard';
     }
   }
 
   // Unknown models from known providers default to standard
-  if (['anthropic', 'google', 'mistral', 'openai'].includes(normalizedProvider)) {
+  if (
+    ['anthropic', 'azure', 'deepseek', 'google', 'mistral', 'moonshot', 'nvidia', 'openai', 'openrouter', 'perplexity', 'qwen'].includes(
+      normalizedProvider,
+    )
+  ) {
     return 'standard';
   }
 
@@ -118,7 +140,22 @@ export function computeTrustScore(tier: ModelTier): number {
 // Model Resolution
 // =============================================================================
 
+/** Cache to avoid re-creating provider clients for the same model. */
+const modelCache = new Map<string, BaseChatModel>();
 
+function cacheKey(options: {
+  apiKey?: string;
+  azure?: AzureProviderConfig;
+  customBaseUrl?: string;
+  model: string;
+  provider: string;
+}): string {
+  const {apiKey = '', azure, customBaseUrl = '', model, provider} = options;
+  const credentialScope = createHash('sha256')
+    .update(JSON.stringify([apiKey, customBaseUrl.trim(), azure]))
+    .digest('hex');
+  return `${provider.trim().toLowerCase()}:${model.trim()}:${credentialScope}`;
+}
 
 /**
  * Resolve the LanguageModel for a given worker role.
@@ -128,9 +165,9 @@ export function computeTrustScore(tier: ModelTier): number {
  */
 export function resolveWorkerModel(
   role: AgentRole,
-  defaultModel: LanguageModel,
+  defaultModel: BaseChatModel,
   overrides?: SwarmModelOverrides,
-): LanguageModel {
+): BaseChatModel {
   if (!overrides) {
     return defaultModel;
   }
@@ -140,18 +177,29 @@ export function resolveWorkerModel(
     return defaultModel;
   }
 
+  const key = cacheKey({
+    apiKey: override.apiKey,
+    azure: override.azure,
+    customBaseUrl: override.customBaseUrl,
+    model: override.model,
+    provider: override.provider,
+  });
+  const cached = modelCache.get(key);
+  if (cached) {
+    return cached;
+  }
 
-  const k = 'apiKey' as const;
-  const overrideConfig: Partial<ShadowConfig> = {
+  const config: ShadowConfig = {
+    apiKey: override.apiKey ?? '',
+    azure: override.azure,
+    customBaseUrl: override.customBaseUrl,
     model: override.model,
     provider: override.provider,
   };
 
-  if (override.apiToken) {
-    overrideConfig[k] = override.apiToken;
-  }
-
-  return getModel(overrideConfig as ShadowConfig);
+  const model = getLangchainModel(config);
+  modelCache.set(key, model);
+  return model;
 }
 
 /**
@@ -177,5 +225,5 @@ export function resolveWorkerTier(
  * Clear the model cache. Used in tests.
  */
 export function clearModelCache(): void {
-  // No-op since we disabled cache to satisfy CodeQL's password hashing heuristic
+  modelCache.clear();
 }

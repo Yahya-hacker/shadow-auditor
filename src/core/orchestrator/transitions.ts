@@ -2,8 +2,6 @@
  * Mission Transitions - State transition logic and validation.
  */
 
-import type { EventStore } from '../memory/event-store.js';
-
 import { err, ok, type Result } from '../schema/base.js';
 import {
   type BudgetState,
@@ -213,8 +211,10 @@ export function getAllowedTransitionsForState(state: MissionState): MissionPhase
  * Check if budget is exhausted.
  */
 export function isBudgetExhausted(budget: BudgetState): boolean {
+  const reservedTokens = Object.values(budget.modelReservations)
+    .reduce((total, value) => total + value, 0);
   return (
-    budget.tokensUsed >= budget.maxTokens ||
+    budget.tokensUsed + reservedTokens >= budget.maxTokens ||
     budget.toolCallsUsed >= budget.maxToolCalls
   );
 }

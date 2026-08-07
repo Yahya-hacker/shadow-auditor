@@ -13,16 +13,37 @@
  *   Mirage captures those callbacks as proof of SSRF/Blind RCE.
  */
 
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import * as crypto from 'node:crypto';
 
 import { type OastCallback } from './dast-schema.js';
+
+// =============================================================================
+// Validation
+// =============================================================================
+
+/**
+ * Validate that a string only contains characters safe for use in Docker
+ * identifiers (container names, network names). The regex rejects values
+ * that could enable injection when passed as execFile arguments.
+ */
+function validateSafeIdentifier(value: string, context: string): string {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(value)) {
+    throw new Error(
+      `Invalid ${context}: "${value}" contains unsafe characters. ` +
+      'Only alphanumeric characters, dots, hyphens, and underscores are permitted.',
+    );
+  }
+
+  return value;
+}
 
 // =============================================================================
 // Mirage OAST Manager
 // =============================================================================
 
 export interface MirageOASTOptions {
+  dockerExecutor?: typeof execFile;
   networkName: string;
   runId: string;
 }
@@ -33,14 +54,16 @@ export interface MirageOASTOptions {
 export class MirageOAST {
   private readonly callbackLog: OastCallback[] = [];
   private containerName: string;
+  private readonly dockerExecutor: typeof execFile;
   private readonly networkName: string;
   private readonly runId: string;
   private running = false;
 
   constructor(options: MirageOASTOptions) {
-    this.runId = options.runId;
-    this.networkName = options.networkName;
+    this.runId = validateSafeIdentifier(options.runId, 'runId');
+    this.networkName = validateSafeIdentifier(options.networkName, 'networkName');
     this.containerName = `mirage-oast-${this.runId}`;
+    this.dockerExecutor = options.dockerExecutor ?? execFile;
   }
 
   /**
@@ -54,9 +77,9 @@ export class MirageOAST {
    * Destroy the Mirage container.
    */
   async destroy(): Promise<void> {
-    if (!this.running) return;
-
-    await this.dockerExec(`docker rm -f ${this.containerName}`);
+    // Removal is unconditional because cancellation can occur after Docker
+    // creates the container but before the start call marks it as running.
+    await this.dockerExec(['rm', '-f', this.containerName]);
     this.running = false;
   }
 
@@ -128,10 +151,11 @@ export class MirageOAST {
    * 2. Logs every request URL, method, and headers
    * 3. The log can be queried via a management endpoint
    */
-  async start(): Promise<void> {
+  async start(signal?: AbortSignal): Promise<void> {
     if (this.running) return;
 
-    // Inline the Mirage server script as a single-command Docker run
+    // Mirage server script — passed directly as a single argument to node -e.
+    // No shell quoting needed since execFile does NOT invoke a shell.
     const mirageScript = `
 const http = require('http');
 const log = [];
@@ -159,26 +183,25 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Record callback and return generic stub
+  // Record callback and return generic response
   log.push(entry);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ status: 'ok' }));
 });
 
 server.listen(8080, () => console.log('Mirage OAST listening on :8080'));
-`.trim().replaceAll("'", String.raw`'\''`);
+`.trim();
 
-    const dockerCmd = [
-      'docker', 'run', '-d',
+    const result = await this.dockerExec([
+      'run', '-d',
       '--name', this.containerName,
       '--network', this.networkName,
       '--memory', '64m',
       '--cpus', '0.25',
       'node:20-alpine',
-      'node', '-e', `'${mirageScript}'`,
-    ].join(' ');
+      'node', '-e', mirageScript,
+    ], signal);
 
-    const result = await this.dockerExec(dockerCmd);
     if (result.exitCode !== 0) {
       throw new Error(`Failed to start Mirage OAST: ${result.stderr}`);
     }
@@ -189,12 +212,14 @@ server.listen(8080, () => console.log('Mirage OAST listening on :8080'));
   /**
    * Sync the callback log from the Mirage container's management endpoint.
    */
-  async syncLog(): Promise<OastCallback[]> {
+  async syncLog(signal?: AbortSignal): Promise<OastCallback[]> {
+    signal?.throwIfAborted();
     if (!this.running) return [];
 
-    const result = await this.dockerExec(
-      `docker exec ${this.containerName} wget -qO- http://localhost:8080/__mirage/log`,
-    );
+    const result = await this.dockerExec([
+      'exec', this.containerName, 'wget', '-qO-',
+      'http://localhost:8080/__mirage/log',
+    ], signal);
 
     if (result.exitCode !== 0) return [];
 
@@ -234,17 +259,33 @@ server.listen(8080, () => console.log('Mirage OAST listening on :8080'));
   // Private
   // ===========================================================================
 
-  private dockerExec(
-    command: string,
+  /**
+   * Execute a Docker command via execFile (NO shell).
+   * Accepts an argument array starting with the Docker subcommand (e.g., ['run', '-d', ...]).
+   * The 'docker' binary is prepended automatically.
+   */
+  private async dockerExec(
+    args: string[],
+    signal?: AbortSignal,
   ): Promise<{ exitCode: number; stderr: string; stdout: string }> {
-    return new Promise((resolve) => {
-      exec(command, { maxBuffer: 5 * 1024 * 1024, timeout: 30_000 }, (error, stdout, stderr) => {
-        resolve({
-          exitCode: error?.code ?? (error ? 1 : 0),
-          stderr: typeof stderr === 'string' ? stderr : '',
-          stdout: typeof stdout === 'string' ? stdout : '',
-        });
-      });
+    return new Promise((resolve, reject) => {
+      this.dockerExecutor(
+        'docker',
+        args,
+        { maxBuffer: 5 * 1024 * 1024, signal, timeout: 30_000 },
+        (error, stdout, stderr) => {
+          if (signal?.aborted) {
+            reject(signal.reason ?? error ?? new Error('Docker operation aborted.'));
+            return;
+          }
+
+          resolve({
+            exitCode: typeof error?.code === 'number' ? error.code : (error ? 1 : 0),
+            stderr: typeof stderr === 'string' ? stderr : '',
+            stdout: typeof stdout === 'string' ? stdout : '',
+          });
+        },
+      );
     });
   }
 }
