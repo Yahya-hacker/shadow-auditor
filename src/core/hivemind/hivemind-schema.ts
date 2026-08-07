@@ -111,14 +111,6 @@ export const evidenceClaimSchema = z.object({
   createdAt: timestampSchema,
   data: z.record(z.unknown()),
   entityId: canonicalIdSchema.optional(),
-  /**
-   * Cryptographic hash linking the claim to its evidence (event IDs and
-   * knowledge-graph entity IDs). Used by the consensus layer to reject
-   * hallucinated claims that cannot prove their lineage.
-   */
-  evidenceHash: z.string().min(1),
-  linkedEntityIds: z.array(canonicalIdSchema).default([]),
-  linkedEventIds: z.array(shortIdSchema).default([]),
   modelTier: modelTierSchema.default('standard'),
   status: evidenceClaimStatusSchema,
   trustScore: confidenceSchema.default(0.7),
@@ -183,9 +175,7 @@ export const consensusRecordSchema = z.object({
     z.object({
       agentId: shortIdSchema,
       comment: z.string().optional(),
-      evidenceHash: z.string().optional(),
       timestamp: timestampSchema,
-      trustScore: z.number().min(0).max(1).optional(),
       vote: z.enum(['approve', 'reject', 'abstain']),
     })
   ).default([]),

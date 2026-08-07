@@ -1,21 +1,21 @@
 /**
  * Hybrid Retriever - Multi-strategy code retrieval with Reciprocal Rank Fusion.
  *
- * Combines four retrieval strategies:
+ * Combines three retrieval strategies:
  *   1. Graph-based: KnowledgeGraph entity/edge traversal
  *   2. Lexical: ripgrep-powered keyword search
  *   3. Semantic: Vector similarity search via SemanticIndex
- *   4. Community: Hierarchical community summaries for global architectural queries
  *
  * Results are merged using Reciprocal Rank Fusion (RRF) to produce a
  * unified, deduplicated ranking. Configurable weights allow tuning
  * the contribution of each strategy.
  */
 
-import type { BaseEntity } from './memory-schema.js';
-import type { CodeChunk, SemanticIndex } from './semantic-index.js';
 
-import { logToStderr } from '../../utils/stderr-logger.js';
+import type { KnowledgeGraph } from './knowledge-graph.js';
+import type { BaseEntity } from './memory-schema.js';
+import type { Retrieval } from './retrieval.js';
+import type { CodeChunk, SemanticIndex, SemanticSearchResult } from './semantic-index.js';
 
 // ============================================================================
 // Types
@@ -49,7 +49,7 @@ export interface HybridResultProvenance {
   strategy: RetrievalStrategy;
 }
 
-export type RetrievalStrategy = 'community' | 'graph' | 'lexical' | 'semantic';
+export type RetrievalStrategy = 'graph' | 'lexical' | 'semantic';
 
 export interface HybridRetrieverOptions {
   /** Maximum results to return */
@@ -67,8 +67,6 @@ export interface HybridSearchOptions {
   fileFilter?: string;
   /** Maximum results */
   maxResults?: number;
-  /** Cancel in-flight semantic retrieval */
-  signal?: AbortSignal;
   /** Only include results from specific strategies */
   strategies?: RetrievalStrategy[];
 }
@@ -78,7 +76,7 @@ export interface HybridSearchOptions {
  * before fusion.
  */
 interface StrategyResult {
-  /** Deduplication key (filePath:startLine or entityId or communityId) */
+  /** Deduplication key (filePath:startLine or entityId) */
   dedupKey: string;
   filePath: string;
   lineRange?: { end: number; start: number };
@@ -86,7 +84,6 @@ interface StrategyResult {
   /** Payload references */
   payload: {
     chunk?: CodeChunk;
-    communityId?: string;
     entity?: BaseEntity;
   };
   /** Rank within the strategy (1-based) */
@@ -97,13 +94,6 @@ interface StrategyResult {
   strategy: RetrievalStrategy;
   text: string;
 }
-
-// ============================================================================
-// Knowledge Graph imports (dynamic to keep the file testable without full graph)
-// ============================================================================
-
-import type { KnowledgeGraph } from './knowledge-graph.js';
-import type { Retrieval } from './retrieval.js';
 
 // ============================================================================
 // Lexical Search (ripgrep-style in-process)
@@ -189,28 +179,6 @@ function computeRRFScore(
 }
 
 // ============================================================================
-// Query Classification
-// ============================================================================
-
-function isGlobalQuery(query: string): boolean {
-  const globalKeywords = [
-    'overall',
-    'architecture',
-    'flow',
-    'auth',
-    'authentication',
-    'system',
-    'design',
-    'pattern',
-    'how does',
-    'high level',
-    'high-level',
-  ];
-  const lower = query.toLowerCase();
-  return globalKeywords.some((keyword) => lower.includes(keyword));
-}
-
-// ============================================================================
 // Hybrid Retriever
 // ============================================================================
 
@@ -239,10 +207,9 @@ export class HybridRetriever {
     this.maxResults = options.maxResults ?? 15;
     this.rrfK = options.rrfK ?? 60;
     this.weights = {
-      community: options.weights?.community ?? 0.25,
-      graph: options.weights?.graph ?? 0.25,
-      lexical: options.weights?.lexical ?? 0.15,
-      semantic: options.weights?.semantic ?? 0.35,
+      graph: options.weights?.graph ?? 0.3,
+      lexical: options.weights?.lexical ?? 0.2,
+      semantic: options.weights?.semantic ?? 0.5,
     };
   }
 
@@ -260,18 +227,17 @@ export class HybridRetriever {
     query: string,
     options: HybridSearchOptions = {},
   ): Promise<HybridResult[]> {
-    options.signal?.throwIfAborted();
-    const strategies = options.strategies ?? ['semantic', 'lexical', 'graph', 'community'];
+    const strategies = options.strategies ?? ['semantic', 'lexical', 'graph'];
     const maxResults = options.maxResults ?? this.maxResults;
     const perStrategyLimit = maxResults * 3; // Fetch more per strategy for better fusion
 
     // Execute enabled strategies in parallel
     const strategyResults: StrategyResult[] = [];
 
-    const promises: Array<Promise<StrategyResult[]> | StrategyResult[]> = [];
+    const promises: Array<Promise<StrategyResult[]>> = [];
 
-    if (strategies.includes('semantic') && this.semanticIndex.semanticSearchAvailable) {
-      promises.push(this.executeSemanticStrategy(query, perStrategyLimit, options.fileFilter, options.signal));
+    if (strategies.includes('semantic')) {
+      promises.push(this.executeSemanticStrategy(query, perStrategyLimit, options.fileFilter));
     }
 
     if (strategies.includes('lexical')) {
@@ -282,12 +248,7 @@ export class HybridRetriever {
       promises.push(this.executeGraphStrategy(query, perStrategyLimit));
     }
 
-    if (strategies.includes('community')) {
-      promises.push(this.executeCommunityStrategy(query, perStrategyLimit));
-    }
-
     const results = await Promise.allSettled(promises);
-    options.signal?.throwIfAborted();
 
     for (const result of results) {
       if (result.status === 'fulfilled') {
@@ -303,41 +264,10 @@ export class HybridRetriever {
   // Strategy Implementations
   // ==========================================================================
 
-  private async executeCommunityStrategy(
+  private async executeGraphStrategy(
     query: string,
     limit: number,
   ): Promise<StrategyResult[]> {
-    try {
-      const summaries = this.graph.getCommunitySummaries();
-      if (summaries.length === 0) {
-        return [];
-      }
-
-      // For global queries, boost community summaries. For local queries, still
-      // include them but with a lower rank.
-      const globalBoost = isGlobalQuery(query) ? 1.5 : 1;
-      const scored = summaries.map((summary, index) => ({
-        dedupKey: summary.communityId,
-        filePath: '',
-        matchDescription: `Community summary: ${summary.summary.slice(0, 120)}`,
-        payload: { communityId: summary.communityId },
-        rank: index + 1,
-        score: (1 / (index + 1)) * globalBoost,
-        strategy: 'community' as RetrievalStrategy,
-        text: summary.summary,
-      }));
-
-      return scored.slice(0, limit);
-    } catch (error) {
-      logToStderr(`[HybridRetriever] Community search failed: ${(error as Error).message}`);
-      return [];
-    }
-  }
-
-  private executeGraphStrategy(
-    query: string,
-    limit: number,
-  ): StrategyResult[] {
     try {
       // Search the knowledge graph for entities matching the query
       const searchResults = this.retrieval.searchByLabel(query, { limit });
@@ -359,16 +289,16 @@ export class HybridRetriever {
         };
       });
     } catch (error) {
-      logToStderr(`[HybridRetriever] Graph search failed: ${(error as Error).message}`);
+      console.warn(`[HybridRetriever] Graph search failed: ${(error as Error).message}`);
       return [];
     }
   }
 
-  private executeLexicalStrategy(
+  private async executeLexicalStrategy(
     query: string,
     limit: number,
     fileFilter?: string,
-  ): StrategyResult[] {
+  ): Promise<StrategyResult[]> {
     try {
       const allChunks = this.getAllChunks();
       const results = lexicalSearch(query, allChunks, { fileFilter, maxResults: limit });
@@ -385,7 +315,7 @@ export class HybridRetriever {
         text: r.chunk.rawContent,
       }));
     } catch (error) {
-      logToStderr(`[HybridRetriever] Lexical search failed: ${(error as Error).message}`);
+      console.warn(`[HybridRetriever] Lexical search failed: ${(error as Error).message}`);
       return [];
     }
   }
@@ -394,12 +324,10 @@ export class HybridRetriever {
     query: string,
     limit: number,
     fileFilter?: string,
-    signal?: AbortSignal,
   ): Promise<StrategyResult[]> {
     try {
       const results = await this.semanticIndex.search(query, {
         fileFilter,
-        signal,
         topK: limit,
       });
 
@@ -417,8 +345,7 @@ export class HybridRetriever {
           : r.chunk.rawContent,
       }));
     } catch (error) {
-      if (signal?.aborted) throw error;
-      logToStderr(`[HybridRetriever] Semantic search failed: ${(error as Error).message}`);
+      console.warn(`[HybridRetriever] Semantic search failed: ${(error as Error).message}`);
       return [];
     }
   }
@@ -446,7 +373,7 @@ export class HybridRetriever {
     // Compute RRF score for each unique result
     const fused: HybridResult[] = [];
 
-    for (const [_dedupKey, results] of grouped) {
+    for (const [dedupKey, results] of grouped) {
       const ranks = results.map((r) => ({
         rank: r.rank,
         weight: this.weights[r.strategy],
@@ -478,4 +405,5 @@ export class HybridRetriever {
     fused.sort((a, b) => b.fusedScore - a.fusedScore);
     return fused.slice(0, maxResults);
   }
+
 }

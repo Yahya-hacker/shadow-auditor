@@ -14,21 +14,35 @@ export type AuditMode =
   | 'quick'          // Legacy alias (maps to triage behaviour internally)
   | 'triage';        // Fast, fewer tools, minimal retrieval
 
+// =============================================================================
+// Budget Tracking Schemas
+// =============================================================================
+
 export const budgetStatusSchema = z.object({
   continuationRequired: z.boolean(),
   exhaustionReason: z.string().optional(),
+
+  // Status
   isExhausted: z.boolean(),
   lastUpdatedAt: z.string().datetime(),
   outputTokensBudget: z.number().int().positive(),
+
+  // Percentages
   outputTokensPercent: z.number().min(0).max(100),
   outputTokensRemaining: z.number().int(),
+  // Token budgets
   outputTokensUsed: z.number().int().nonnegative(),
+
   runId: z.string(),
   schemaVersion: z.string().default(SCHEMA_VERSION),
+
+  // Timestamps
   startedAt: z.string().datetime(),
   toolStepsBudget: z.number().int().positive(),
   toolStepsPercent: z.number().min(0).max(100),
+
   toolStepsRemaining: z.number().int(),
+  // Step budgets
   toolStepsUsed: z.number().int().nonnegative(),
 });
 
@@ -44,12 +58,9 @@ export const continuationStrategySchema = z.enum([
 export type ContinuationStrategy = z.infer<typeof continuationStrategySchema>;
 
 export interface ModelCapabilities {
-  /** Maximum combined input and output context, when known. */
-  contextWindowTokens?: number;
   /** Continuation strategy when budget is exhausted */
   continuationStrategy?: ContinuationStrategy;
   maxOutputTokens: number;
-  /** Recommended maximum model/tool iterations. Parallel calls within one iteration count once. */
   maxToolSteps: number;
   preferredAuditMode: AuditMode;
   /** Whether model supports context caching */
@@ -64,13 +75,9 @@ interface CapabilityRule {
   provider: string;
 }
 
-export const DEFAULT_MAX_TOOL_STEPS = 128;
-export const ABSOLUTE_MAX_TOOL_STEPS = 1024;
-
 const FALLBACK_CAPABILITIES: ModelCapabilities = {
-  contextWindowTokens: 64_000,
   maxOutputTokens: 16_000,
-  maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
+  maxToolSteps: 10,
   preferredAuditMode: 'balanced',
   supportsLongOutput: false,
   supportsReasoningMode: false,
@@ -80,96 +87,32 @@ const CAPABILITY_RULES: CapabilityRule[] = [
   // Anthropic (2026-generation models)
   {
     capabilities: {
-      contextWindowTokens: 200_000,
       maxOutputTokens: 64_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
+      maxToolSteps: 22,
       preferredAuditMode: 'deep',
       supportsLongOutput: true,
-      supportsReasoningMode: false,
+      supportsReasoningMode: true,
     },
     modelPattern: /claude-(opus|sonnet|haiku)-4\.5/i,
     provider: 'anthropic',
   },
   {
     capabilities: {
-      contextWindowTokens: 200_000,
       maxOutputTokens: 64_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
+      maxToolSteps: 20,
       preferredAuditMode: 'deep',
       supportsLongOutput: true,
-      supportsReasoningMode: false,
+      supportsReasoningMode: true,
     },
     modelPattern: /.*/,
     provider: 'anthropic',
   },
 
-  // Azure OpenAI / Microsoft Foundry deployment families
-  {
-    capabilities: {
-      contextWindowTokens: 1_000_000,
-      continuationStrategy: 'auto_continue',
-      maxOutputTokens: 128_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
-      preferredAuditMode: 'deep-sast',
-      supportsContextCaching: true,
-      supportsLongOutput: true,
-      supportsReasoningMode: true,
-    },
-    modelPattern: /^gpt-5\.6-sol(?:-|$)/i,
-    provider: 'azure',
-  },
-  {
-    capabilities: {
-      contextWindowTokens: 400_000,
-      maxOutputTokens: 48_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
-      preferredAuditMode: 'deep',
-      supportsLongOutput: true,
-      supportsReasoningMode: true,
-    },
-    modelPattern: /^gpt-5(?:\.|-|$)/i,
-    provider: 'azure',
-  },
-  {
-    capabilities: {
-      contextWindowTokens: 1_000_000,
-      maxOutputTokens: 32_768,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
-      preferredAuditMode: 'deep',
-      supportsLongOutput: true,
-      supportsReasoningMode: true,
-    },
-    modelPattern: /^gpt-4\.1(?:-|$)/i,
-    provider: 'azure',
-  },
-  {
-    capabilities: {
-      ...FALLBACK_CAPABILITIES,
-    },
-    modelPattern: /.*/,
-    provider: 'azure',
-  },
-
   // OpenAI / Codex family (2026 constraints requested by user)
   {
     capabilities: {
-      contextWindowTokens: 1_000_000,
-      continuationStrategy: 'auto_continue',
-      maxOutputTokens: 128_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
-      preferredAuditMode: 'deep-sast',
-      supportsContextCaching: true,
-      supportsLongOutput: true,
-      supportsReasoningMode: true,
-    },
-    modelPattern: /^gpt-5\.6-sol(?:-|$)/i,
-    provider: 'openai',
-  },
-  {
-    capabilities: {
-      contextWindowTokens: 400_000,
       maxOutputTokens: 48_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
+      maxToolSteps: 20,
       preferredAuditMode: 'deep',
       supportsLongOutput: true,
       supportsReasoningMode: true,
@@ -179,9 +122,8 @@ const CAPABILITY_RULES: CapabilityRule[] = [
   },
   {
     capabilities: {
-      contextWindowTokens: 400_000,
       maxOutputTokens: 40_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
+      maxToolSteps: 18,
       preferredAuditMode: 'balanced',
       supportsLongOutput: true,
       supportsReasoningMode: true,
@@ -191,9 +133,8 @@ const CAPABILITY_RULES: CapabilityRule[] = [
   },
   {
     capabilities: {
-      contextWindowTokens: 400_000,
       maxOutputTokens: 32_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
+      maxToolSteps: 16,
       preferredAuditMode: 'balanced',
       supportsLongOutput: true,
       supportsReasoningMode: true,
@@ -203,9 +144,8 @@ const CAPABILITY_RULES: CapabilityRule[] = [
   },
   {
     capabilities: {
-      contextWindowTokens: 128_000,
       maxOutputTokens: 16_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
+      maxToolSteps: 12,
       preferredAuditMode: 'balanced',
       supportsLongOutput: false,
       supportsReasoningMode: false,
@@ -218,18 +158,7 @@ const CAPABILITY_RULES: CapabilityRule[] = [
   {
     capabilities: {
       maxOutputTokens: 16_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
-      preferredAuditMode: 'balanced',
-      supportsLongOutput: false,
-      supportsReasoningMode: true,
-    },
-    modelPattern: /.*/,
-    provider: 'deepseek',
-  },
-  {
-    capabilities: {
-      maxOutputTokens: 16_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
+      maxToolSteps: 12,
       preferredAuditMode: 'balanced',
       supportsLongOutput: false,
       supportsReasoningMode: false,
@@ -240,10 +169,10 @@ const CAPABILITY_RULES: CapabilityRule[] = [
   {
     capabilities: {
       maxOutputTokens: 16_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
+      maxToolSteps: 12,
       preferredAuditMode: 'balanced',
       supportsLongOutput: false,
-      supportsReasoningMode: false,
+      supportsReasoningMode: true,
     },
     modelPattern: /.*/,
     provider: 'mistral',
@@ -251,29 +180,7 @@ const CAPABILITY_RULES: CapabilityRule[] = [
   {
     capabilities: {
       maxOutputTokens: 8000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
-      preferredAuditMode: 'quick',
-      supportsLongOutput: false,
-      supportsReasoningMode: false,
-    },
-    modelPattern: /.*/,
-    provider: 'moonshot',
-  },
-  {
-    capabilities: {
-      maxOutputTokens: 16_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
-      preferredAuditMode: 'balanced',
-      supportsLongOutput: false,
-      supportsReasoningMode: false,
-    },
-    modelPattern: /.*/,
-    provider: 'nvidia',
-  },
-  {
-    capabilities: {
-      maxOutputTokens: 8000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
+      maxToolSteps: 10,
       preferredAuditMode: 'quick',
       supportsLongOutput: false,
       supportsReasoningMode: false,
@@ -284,29 +191,7 @@ const CAPABILITY_RULES: CapabilityRule[] = [
   {
     capabilities: {
       maxOutputTokens: 16_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
-      preferredAuditMode: 'balanced',
-      supportsLongOutput: false,
-      supportsReasoningMode: false,
-    },
-    modelPattern: /.*/,
-    provider: 'perplexity',
-  },
-  {
-    capabilities: {
-      maxOutputTokens: 16_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
-      preferredAuditMode: 'balanced',
-      supportsLongOutput: false,
-      supportsReasoningMode: false,
-    },
-    modelPattern: /.*/,
-    provider: 'qwen',
-  },
-  {
-    capabilities: {
-      maxOutputTokens: 16_000,
-      maxToolSteps: DEFAULT_MAX_TOOL_STEPS,
+      maxToolSteps: 10,
       preferredAuditMode: 'balanced',
       supportsLongOutput: false,
       supportsReasoningMode: false,
@@ -347,12 +232,6 @@ export function resolveModelCapabilities(config: Pick<ShadowConfig, 'model' | 'p
   return matchedRule.capabilities;
 }
 
-export function effectiveContextWindowTokens(
-  config: Pick<ShadowConfig, 'model' | 'provider'>,
-): number {
-  return resolveModelCapabilities(config).contextWindowTokens ?? FALLBACK_CAPABILITIES.contextWindowTokens!;
-}
-
 export function effectiveMaxOutputTokens(
   config: Pick<ShadowConfig, 'maxOutputTokens' | 'model' | 'provider'>,
   onWarning?: (message: string) => void,
@@ -380,7 +259,7 @@ export function effectiveMaxToolSteps(
     return modelCapabilities.maxToolSteps;
   }
 
-  return Math.min(requested, ABSOLUTE_MAX_TOOL_STEPS);
+  return Math.min(requested, modelCapabilities.maxToolSteps);
 }
 
 /**
@@ -444,170 +323,197 @@ export function resolveRuntimeSettings(
 
   return {
     capabilities,
-    maxOutputTokens: Math.min(
-      capabilities.maxOutputTokens,
-      Math.max(1, Math.round(baseTokens * multiplier.tokens)),
-    ),
-    maxToolSteps: Math.min(
-      ABSOLUTE_MAX_TOOL_STEPS,
-      Math.max(1, Math.round(baseSteps * multiplier.steps)),
-    ),
+    maxOutputTokens: Math.max(1, Math.round(baseTokens * multiplier.tokens)),
+    maxToolSteps:    Math.max(1, Math.round(baseSteps  * multiplier.steps)),
   };
 }
 
+// =============================================================================
+// Budget Manager
+// =============================================================================
+
 export interface BudgetManagerOptions {
-    continuationStrategy?: ContinuationStrategy;
-    criticalThreshold?: number;
-    /** Cumulative output-token allowance for the complete run. */
-    outputTokensBudget: number;
-    runId: string;
-    toolStepsBudget: number;
-    warningThreshold?: number;
-  }
+  continuationStrategy?: ContinuationStrategy;
+  criticalThreshold?: number; // Percentage at which to prepare for continuation (default: 95)
+  outputTokensBudget: number;
+  runId: string;
+  toolStepsBudget: number;
+  warningThreshold?: number; // Percentage at which to warn (default: 80)
+}
 
-  /**
-   * Compatibility API for consumers that explicitly track cumulative run usage.
-   * Runtime model construction uses `RuntimeSettings.maxOutputTokens` only as a
-   * per-call provider ceiling and does not depend on this manager.
-   */
-  // eslint-disable-next-line unicorn/prefer-event-target
+/**
+ * Tracks and manages model budget (tokens and steps).
+ */
+// eslint-disable-next-line unicorn/prefer-event-target
 export class BudgetManager extends EventEmitter {
-    private readonly continuationStrategy: ContinuationStrategy;
-    private criticalEmitted = false;
-    private readonly criticalThreshold: number;
-    private lastUpdatedAt = new Date();
-    private readonly outputTokensBudget: number;
-    private outputTokensUsed = 0;
-    private readonly runId: string;
-    private readonly startedAt = new Date();
-    private readonly toolStepsBudget: number;
-    private toolStepsUsed = 0;
-    private warningEmitted = false;
-    private readonly warningThreshold: number;
+  private readonly continuationStrategy: ContinuationStrategy;
+  private criticalEmitted = false;
+  private readonly criticalThreshold: number;
+  private lastUpdatedAt: Date;
+  private readonly outputTokensBudget: number;
+  private outputTokensUsed = 0;
+  private readonly runId: string;
+  private startedAt: Date;
+  private readonly toolStepsBudget: number;
+  private toolStepsUsed = 0;
+  private warningEmitted = false;
+  private readonly warningThreshold: number;
 
-    constructor(options: BudgetManagerOptions) {
-      super();
-      if (!Number.isSafeInteger(options.outputTokensBudget) || options.outputTokensBudget <= 0) {
-        throw new RangeError('outputTokensBudget must be a positive safe integer.');
-      }
-
-      if (!Number.isSafeInteger(options.toolStepsBudget) || options.toolStepsBudget <= 0) {
-        throw new RangeError('toolStepsBudget must be a positive safe integer.');
-      }
-
-      this.runId = options.runId;
-      this.outputTokensBudget = options.outputTokensBudget;
-      this.toolStepsBudget = options.toolStepsBudget;
-      this.continuationStrategy = options.continuationStrategy ?? 'graceful_stop';
-      this.warningThreshold = options.warningThreshold ?? 80;
-      this.criticalThreshold = options.criticalThreshold ?? 95;
-    }
-
-    canAfford(estimatedTokens: number, estimatedSteps = 1): boolean {
-      const status = this.getStatus();
-      return status.outputTokensRemaining >= estimatedTokens && status.toolStepsRemaining >= estimatedSteps;
-    }
-
-    getContinuationStrategy(): ContinuationStrategy {
-      return this.continuationStrategy;
-    }
-
-    getStatus(): BudgetStatus {
-      const outputTokensRemaining = this.outputTokensBudget - this.outputTokensUsed;
-      const toolStepsRemaining = this.toolStepsBudget - this.toolStepsUsed;
-      const outputTokensPercent = Math.min(100, (this.outputTokensUsed / this.outputTokensBudget) * 100);
-      const toolStepsPercent = Math.min(100, (this.toolStepsUsed / this.toolStepsBudget) * 100);
-      const isExhausted = outputTokensRemaining <= 0 || toolStepsRemaining <= 0;
-
-      return {
-        continuationRequired: isExhausted ||
-          outputTokensPercent >= this.criticalThreshold ||
-          toolStepsPercent >= this.criticalThreshold,
-        exhaustionReason: outputTokensRemaining <= 0 ?
-          'Output token budget exhausted' :
-          toolStepsRemaining <= 0 ? 'Tool step budget exhausted' : undefined,
-        isExhausted,
-        lastUpdatedAt: this.lastUpdatedAt.toISOString(),
-        outputTokensBudget: this.outputTokensBudget,
-        outputTokensPercent: Math.round(outputTokensPercent * 10) / 10,
-        outputTokensRemaining,
-        outputTokensUsed: this.outputTokensUsed,
-        runId: this.runId,
-        schemaVersion: SCHEMA_VERSION,
-        startedAt: this.startedAt.toISOString(),
-        toolStepsBudget: this.toolStepsBudget,
-        toolStepsPercent: Math.round(toolStepsPercent * 10) / 10,
-        toolStepsRemaining,
-        toolStepsUsed: this.toolStepsUsed,
-      };
-    }
-
-    getSummary(): string {
-      const status = this.getStatus();
-      return [
-        `Budget: ${status.outputTokensUsed}/${status.outputTokensBudget} tokens (${status.outputTokensPercent.toFixed(1)}%)`,
-        `${status.toolStepsUsed}/${status.toolStepsBudget} steps (${status.toolStepsPercent.toFixed(1)}%)`,
-        status.continuationRequired ? `[CONTINUATION REQUIRED: ${this.continuationStrategy}]` : '',
-      ].filter(Boolean).join(', ');
-    }
-
-    hasBudget(): boolean {
-      return !this.getStatus().isExhausted;
-    }
-
-    needsContinuation(): boolean {
-      return this.getStatus().continuationRequired;
-    }
-
-    recordStep(): void {
-      this.toolStepsUsed++;
-      this.lastUpdatedAt = new Date();
-      this.checkThresholds();
-    }
-
-    recordTokens(count: number): void {
-      if (!Number.isSafeInteger(count) || count < 0) {
-        throw new RangeError('Token usage must be a non-negative safe integer.');
-      }
-
-      this.outputTokensUsed += count;
-      this.lastUpdatedAt = new Date();
-      this.checkThresholds();
-    }
-
-    private checkThresholds(): void {
-      const status = this.getStatus();
-      const maxPercent = Math.max(status.outputTokensPercent, status.toolStepsPercent);
-      if (!this.warningEmitted && maxPercent >= this.warningThreshold) {
-        this.warningEmitted = true;
-        this.emit('warning', status);
-      }
-
-      if (!this.criticalEmitted && maxPercent >= this.criticalThreshold) {
-        this.criticalEmitted = true;
-        this.emit('critical', status);
-      }
-
-      if (status.isExhausted) {
-        this.emit('exhausted', status);
-      }
-    }
+  constructor(options: BudgetManagerOptions) {
+    super();
+    this.runId = options.runId;
+    this.outputTokensBudget = options.outputTokensBudget;
+    this.toolStepsBudget = options.toolStepsBudget;
+    this.continuationStrategy = options.continuationStrategy ?? 'graceful_stop';
+    this.warningThreshold = options.warningThreshold ?? 80;
+    this.criticalThreshold = options.criticalThreshold ?? 95;
+    this.startedAt = new Date();
+    this.lastUpdatedAt = new Date();
   }
 
   /**
-   * Creates a cumulative compatibility budget. The token allowance is derived
-   * from the per-call ceiling across the maximum model turns, never by treating
-   * one call's provider limit as the entire mission budget.
+   * Estimate if there's enough budget for an operation.
    */
+  canAfford(estimatedTokens: number, estimatedSteps: number = 1): boolean {
+    const status = this.getStatus();
+    return (
+      status.outputTokensRemaining >= estimatedTokens &&
+      status.toolStepsRemaining >= estimatedSteps
+    );
+  }
+
+  /**
+   * Get the continuation strategy.
+   */
+  getContinuationStrategy(): ContinuationStrategy {
+    return this.continuationStrategy;
+  }
+
+  /**
+   * Get current budget status.
+   */
+  getStatus(): BudgetStatus {
+    const outputTokensRemaining = this.outputTokensBudget - this.outputTokensUsed;
+    const toolStepsRemaining = this.toolStepsBudget - this.toolStepsUsed;
+
+    const outputTokensPercent = Math.min(100, (this.outputTokensUsed / this.outputTokensBudget) * 100);
+    const toolStepsPercent = Math.min(100, (this.toolStepsUsed / this.toolStepsBudget) * 100);
+
+    const isExhausted = outputTokensRemaining <= 0 || toolStepsRemaining <= 0;
+    let exhaustionReason: string | undefined;
+
+    if (outputTokensRemaining <= 0) {
+      exhaustionReason = 'Output token budget exhausted';
+    } else if (toolStepsRemaining <= 0) {
+      exhaustionReason = 'Tool step budget exhausted';
+    }
+
+    const continuationRequired = isExhausted ||
+      outputTokensPercent >= this.criticalThreshold ||
+      toolStepsPercent >= this.criticalThreshold;
+
+    return {
+      continuationRequired,
+      exhaustionReason,
+      isExhausted,
+      lastUpdatedAt: this.lastUpdatedAt.toISOString(),
+      outputTokensBudget: this.outputTokensBudget,
+      outputTokensPercent: Math.round(outputTokensPercent * 10) / 10,
+      outputTokensRemaining,
+      outputTokensUsed: this.outputTokensUsed,
+      runId: this.runId,
+      schemaVersion: SCHEMA_VERSION,
+      startedAt: this.startedAt.toISOString(),
+      toolStepsBudget: this.toolStepsBudget,
+      toolStepsPercent: Math.round(toolStepsPercent * 10) / 10,
+      toolStepsRemaining,
+      toolStepsUsed: this.toolStepsUsed,
+    };
+  }
+
+  /**
+   * Get a summary string for logging.
+   */
+  getSummary(): string {
+    const status = this.getStatus();
+    return [
+      `Budget: ${status.outputTokensUsed}/${status.outputTokensBudget} tokens (${status.outputTokensPercent.toFixed(1)}%)`,
+      `${status.toolStepsUsed}/${status.toolStepsBudget} steps (${status.toolStepsPercent.toFixed(1)}%)`,
+      status.continuationRequired ? `[CONTINUATION REQUIRED: ${this.continuationStrategy}]` : '',
+    ].filter(Boolean).join(', ');
+  }
+
+  /**
+   * Check if there's budget for more work.
+   */
+  hasBudget(): boolean {
+    return !this.getStatus().isExhausted;
+  }
+
+  /**
+   * Check if continuation is required.
+   */
+  needsContinuation(): boolean {
+    return this.getStatus().continuationRequired;
+  }
+
+  /**
+   * Record a tool step.
+   */
+  recordStep(): void {
+    this.toolStepsUsed++;
+    this.lastUpdatedAt = new Date();
+    this.checkThresholds();
+  }
+
+  /**
+   * Record token usage.
+   */
+  recordTokens(count: number): void {
+    this.outputTokensUsed += count;
+    this.lastUpdatedAt = new Date();
+    this.checkThresholds();
+  }
+
+  private checkThresholds(): void {
+    const status = this.getStatus();
+    const maxPercent = Math.max(status.outputTokensPercent, status.toolStepsPercent);
+
+    // Check warning threshold
+    if (!this.warningEmitted && maxPercent >= this.warningThreshold) {
+      this.warningEmitted = true;
+      this.emit('warning', status);
+    }
+
+    // Check critical threshold
+    if (!this.criticalEmitted && maxPercent >= this.criticalThreshold) {
+      this.criticalEmitted = true;
+      this.emit('critical', status);
+    }
+
+    // Check exhaustion
+    if (status.isExhausted) {
+      this.emit('exhausted', status);
+    }
+  }
+}
+
+// =============================================================================
+// Factory Function
+// =============================================================================
+
+/**
+ * Create a budget manager from runtime settings.
+ */
 export function createBudgetManager(
-    runId: string,
-    settings: RuntimeSettings,
-    continuationStrategy?: ContinuationStrategy,
-  ): BudgetManager {
-    return new BudgetManager({
-      continuationStrategy: continuationStrategy ?? settings.capabilities.continuationStrategy ?? 'graceful_stop',
-      outputTokensBudget: settings.maxOutputTokens * (settings.maxToolSteps + 1),
-      runId,
-      toolStepsBudget: settings.maxToolSteps,
-    });
+  runId: string,
+  settings: RuntimeSettings,
+  continuationStrategy?: ContinuationStrategy,
+): BudgetManager {
+  return new BudgetManager({
+    continuationStrategy: continuationStrategy ?? settings.capabilities.continuationStrategy ?? 'graceful_stop',
+    outputTokensBudget: settings.maxOutputTokens,
+    runId,
+    toolStepsBudget: settings.maxToolSteps,
+  });
 }

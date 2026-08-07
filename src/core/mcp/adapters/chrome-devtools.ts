@@ -21,12 +21,12 @@ export function createChromeDevtoolsAdapter(options: ChromeDevtoolsAdapterOption
     listTools: () => [
       {
         description: 'Capture an accessibility-aware page snapshot.',
-        async execute(input: Record<string, unknown>, context) {
+        async execute(input: Record<string, unknown>) {
           if (!invoker) {
             return unavailableMessage('take_snapshot');
           }
 
-          return invoker('take_snapshot', input, context.signal);
+          return invoker('take_snapshot', input);
         },
         inputSchema: z
           .object({
@@ -39,12 +39,12 @@ export function createChromeDevtoolsAdapter(options: ChromeDevtoolsAdapterOption
       },
       {
         description: 'Retrieve browser console messages.',
-        async execute(input: Record<string, unknown>, context) {
+        async execute(input: Record<string, unknown>) {
           if (!invoker) {
             return unavailableMessage('console_messages');
           }
 
-          return invoker('console_messages', input, context.signal);
+          return invoker('console_messages', input);
         },
         inputSchema: z
           .object({
@@ -57,12 +57,12 @@ export function createChromeDevtoolsAdapter(options: ChromeDevtoolsAdapterOption
       },
       {
         description: 'Retrieve network requests observed in the browser.',
-        async execute(input: Record<string, unknown>, context) {
+        async execute(input: Record<string, unknown>) {
           if (!invoker) {
             return unavailableMessage('network_requests');
           }
 
-          return invoker('network_requests', input, context.signal);
+          return invoker('network_requests', input);
         },
         inputSchema: z
           .object({

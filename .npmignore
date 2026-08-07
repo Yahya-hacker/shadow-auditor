@@ -30,8 +30,3 @@ docs/
 .npmrc
 .env*
 *.map
-
-# Runtime stage prompts
-!codebase-intelligence.txt
-!devil's advocate.txt
-!sast-auditor.txt

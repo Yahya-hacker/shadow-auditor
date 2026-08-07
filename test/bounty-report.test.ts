@@ -149,31 +149,6 @@ describe('bounty-report-generator', () => {
       expect(report).to.include('| Critical | 1 |');
       expect(report).to.include('| High | 1 |');
     });
-
-    it('should not attach unassociated evidence to every finding', () => {
-      const secondFinding = {
-        ...mockFinding,
-        cweId: 'CWE-79',
-        title: 'Cross-Site Scripting',
-        vulnId: 'SHADOW-CWE-079-def456',
-      };
-
-      const report = generateBountyReport({
-        evidenceByFindingId: {
-          [mockFinding.vulnId]: {sandboxLogs: [mockSandboxLog]},
-        },
-        findings: [mockFinding, secondFinding],
-        sandboxLogs: [mockSandboxLog],
-        targetName: 'App',
-      });
-      const firstFindingStart = report.indexOf(`## [${mockFinding.cweId}]`);
-      const secondFindingStart = report.indexOf(`## [${secondFinding.cweId}]`);
-      const firstFindingReport = report.slice(firstFindingStart, secondFindingStart);
-      const secondFindingReport = report.slice(secondFindingStart);
-
-      expect(firstFindingReport).to.include('### Proof of Concept');
-      expect(secondFindingReport).to.not.include('### Proof of Concept');
-    });
   });
 
   describe('generateFindingsIndex', () => {

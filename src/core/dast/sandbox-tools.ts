@@ -11,7 +11,6 @@
 import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 
-import { type SignedExecutionEvidenceStore } from './evidence-store.js';
 import { type SandboxManager } from './sandbox-manager.js';
 
 // =============================================================================
@@ -19,7 +18,6 @@ import { type SandboxManager } from './sandbox-manager.js';
 // =============================================================================
 
 export interface SandboxToolsOptions {
-  evidenceStore?: SignedExecutionEvidenceStore;
   sandboxManager: SandboxManager;
 }
 
@@ -27,22 +25,8 @@ export interface SandboxToolsOptions {
  * Create agent-facing sandbox tools for verifier and exploit-analyst roles.
  */
 export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
-  const {evidenceStore, sandboxManager} = options;
+  const { sandboxManager } = options;
   const mirage = sandboxManager.getMirage();
-  const sandboxExecInputSchema = z.object({
-    command: z.string().min(1).describe('Shell command to execute inside the sandbox'),
-    findingId: z.string().min(1).max(200).optional().describe(
-      'Exact SAST candidate finding ID this execution validates.',
-    ),
-  }).superRefine((value, context) => {
-    if (evidenceStore && !value.findingId) {
-      context.addIssue({
-        code: 'custom',
-        message: 'findingId is required when signed execution evidence is enabled.',
-        path: ['findingId'],
-      });
-    }
-  });
 
   return {
     check_oast_logs: tool({
@@ -54,10 +38,9 @@ export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
         'Provide either a domain filter (e.g., "oast-abc123.shadow.local") or a token.',
       ].join(' '),
 
-      async execute({ domain, token }, executionOptions) {
-        executionOptions.abortSignal?.throwIfAborted();
+      async execute({ domain, token }) {
         // Sync latest logs from the Mirage container
-        await mirage.syncLog(executionOptions.abortSignal);
+        await mirage.syncLog();
 
         const filter = domain ?? token ?? '';
         const callbacks = filter
@@ -90,16 +73,15 @@ export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
         'network with all outbound traffic routed through the Mirage OAST proxy.',
       ].join(' '),
 
-      async execute({ startCommand }, executionOptions) {
+      async execute({ startCommand }) {
         try {
           if (!sandboxManager.isRunning()) {
-            await sandboxManager.create(executionOptions.abortSignal);
+            await sandboxManager.create();
           }
 
-          const result = await sandboxManager.deploy(executionOptions.abortSignal, startCommand);
+          const result = await sandboxManager.deploy();
           return result;
         } catch (error) {
-          executionOptions.abortSignal?.throwIfAborted();
           return `[ERROR] Sandbox deploy failed: ${error instanceof Error ? error.message : String(error)}`;
         }
       },
@@ -118,38 +100,29 @@ export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
         'Returns stdout, stderr, exit code, and execution duration.',
       ].join(' '),
 
-      async execute({command, findingId}, executionOptions) {
+      async execute({ command }) {
         try {
           if (!sandboxManager.isRunning()) {
             return '[ERROR] Sandbox is not running. Call sandbox_deploy first.';
           }
 
-          const result = await sandboxManager.exec(command, executionOptions.abortSignal);
-          const evidenceArtifact = evidenceStore
-            ? await evidenceStore.recordSandboxExecution(findingId!, result)
-            : undefined;
+          const result = await sandboxManager.exec(command);
 
           return JSON.stringify({
             command: result.command,
             durationMs: result.durationMs,
-            evidenceArtifact: evidenceArtifact && {
-              artifactId: evidenceArtifact.artifactId,
-              digest: evidenceArtifact.digest,
-              findingId: evidenceArtifact.findingId,
-              publicKeyFingerprint: evidenceArtifact.publicKeyFingerprint,
-              signatureAlgorithm: evidenceArtifact.signatureAlgorithm,
-            },
             exitCode: result.exitCode,
             stderr: result.stderr.slice(0, 3000),
             stdout: result.stdout.slice(0, 5000),
           }, null, 2);
         } catch (error) {
-          executionOptions.abortSignal?.throwIfAborted();
           return `[ERROR] Sandbox exec failed: ${error instanceof Error ? error.message : String(error)}`;
         }
       },
 
-      inputSchema: sandboxExecInputSchema,
+      inputSchema: z.object({
+        command: z.string().min(1).describe('Shell command to execute inside the sandbox'),
+      }),
     }),
 
     sandbox_status: tool({
@@ -159,10 +132,9 @@ export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
         'the network name, and the count of OAST callbacks captured so far.',
       ].join(' '),
 
-      async execute(_input, executionOptions) {
+      async execute() {
         try {
-          executionOptions.abortSignal?.throwIfAborted();
-          const status = await sandboxManager.status(executionOptions.abortSignal);
+          const status = await sandboxManager.status();
 
           return JSON.stringify({
             containerRunning: status.containerRunning,
@@ -171,7 +143,6 @@ export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
             oastCallbackCount: status.oastCallbackCount,
           }, null, 2);
         } catch (error) {
-          executionOptions.abortSignal?.throwIfAborted();
           return `[ERROR] Status check failed: ${error instanceof Error ? error.message : String(error)}`;
         }
       },

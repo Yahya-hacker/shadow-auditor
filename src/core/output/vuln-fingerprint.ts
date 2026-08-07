@@ -37,7 +37,7 @@ export interface FingerprintInput {
 function normalizeTitle(title: string): string {
   return title
     .toLowerCase()
-    .replaceAll(/[^\p{L}\p{N}\s]/gu, '')  // Unicode-aware: preserves CJK, Cyrillic, Arabic, etc.
+    .replaceAll(/[^\w\s]/g, '')
     .replaceAll(/\s+/g, '_')
     .trim();
 }

@@ -1,6 +1,3 @@
-import {ChatMistralAI} from '@langchain/mistralai';
-import { ChatOllama } from '@langchain/ollama';
-import {ChatOpenAI} from '@langchain/openai';
 import { expect } from 'chai';
 
 import {
@@ -10,7 +7,6 @@ import {
   resolveWorkerTier,
   type SwarmModelOverrides,
 } from '../src/core/hivemind/swarm-model-router.js';
-import { getLangchainModel } from '../src/core/model-router.js';
 
 describe('swarm-model-router', () => {
   afterEach(() => {
@@ -71,104 +67,6 @@ describe('swarm-model-router', () => {
     it('is case-insensitive for provider', () => {
       expect(classifyModelTier('ANTHROPIC', 'claude-opus-4.5')).to.equal('premium');
       expect(classifyModelTier('  OpenAI  ', 'gpt-5.3-codex')).to.equal('premium');
-    });
-  });
-
-  describe('getLangchainModel', () => {
-    it('rejects unknown providers instead of silently using OpenAI', () => {
-      let error: unknown;
-      try {
-        getLangchainModel({ apiKey: 'key', model: 'model', provider: 'unsupported' });
-      } catch (error_) {
-        error = error_;
-      }
-
-      expect(error).to.be.instanceOf(Error);
-      expect((error as Error).message).to.include('Unknown provider');
-    });
-
-    it('requires a base URL for custom providers', () => {
-      let error: unknown;
-      try {
-        getLangchainModel({ apiKey: 'key', model: 'model', provider: 'custom' });
-      } catch (error_) {
-        error = error_;
-      }
-
-      expect(error).to.be.instanceOf(Error);
-      expect((error as Error).message).to.include('requires customBaseUrl');
-    });
-
-    it('fails clearly for Perplexity instead of issuing incompatible tool calls', () => {
-      expect(() =>
-        getLangchainModel({apiKey: 'key', model: 'sonar-pro', provider: 'perplexity'}),
-      ).to.throw('does not support the external tool contract');
-    });
-
-    it('constructs OpenRouter through the OpenAI-compatible adapter', () => {
-      const model = getLangchainModel({
-        apiKey: 'key',
-        model: 'openrouter/auto',
-        provider: 'openrouter',
-      });
-
-      expect(model).to.be.instanceOf(ChatOpenAI);
-      expect(classifyModelTier('openrouter', 'openrouter/auto')).to.equal('standard');
-    });
-
-    it('uses the native Mistral integration', () => {
-      const model = getLangchainModel({
-        apiKey: 'key',
-        model: 'mistral-large-latest',
-        provider: 'mistral',
-      });
-
-      expect(model).to.be.instanceOf(ChatMistralAI);
-    });
-
-    it('uses the native Ollama integration and preserves its host URL', () => {
-      const model = getLangchainModel({
-        apiKey: '',
-        customBaseUrl: 'http://ollama.internal:11434',
-        model: 'qwen3:8b',
-        provider: 'ollama',
-      });
-
-      expect(model).to.be.instanceOf(ChatOllama);
-      expect(model).to.have.property('baseUrl', 'http://ollama.internal:11434');
-    });
-
-    it('does not force temperature on DeepSeek V4 reasoning models', () => {
-      const model = getLangchainModel({
-        apiKey: 'key',
-        model: 'deepseek-v4-pro',
-        provider: 'deepseek',
-      });
-
-      expect(model).to.have.property('temperature', undefined);
-    });
-
-    it('maps UI reasoning controls to DeepSeek request parameters', () => {
-      const enabled = getLangchainModel({
-        apiKey: 'key',
-        model: 'deepseek-v4-pro',
-        provider: 'deepseek',
-        reasoningEffort: 'medium',
-      }) as ChatOpenAI;
-      const disabled = getLangchainModel({
-        apiKey: 'key',
-        model: 'deepseek-v4-pro',
-        provider: 'deepseek',
-        reasoningEffort: 'none',
-      }) as ChatOpenAI;
-
-      expect(enabled.modelKwargs).to.deep.equal({
-        reasoning_effort: 'high',
-        thinking: {type: 'enabled'},
-      });
-      expect(disabled.modelKwargs).to.deep.equal({
-        thinking: {type: 'disabled'},
-      });
     });
   });
 

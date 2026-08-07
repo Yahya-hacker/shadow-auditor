@@ -4,7 +4,6 @@ export type MCPRiskLevel = 'high' | 'low' | 'medium';
 
 export interface MCPExecutionContext {
   expertUnsafe: boolean;
-  signal?: AbortSignal;
   targetPath: string;
 }
 
@@ -27,8 +26,4 @@ export interface MCPAdapter {
   shutdown?: () => Promise<void>;
 }
 
-export type MCPRawInvoker = (
-  operation: string,
-  input: Record<string, unknown>,
-  signal?: AbortSignal,
-) => Promise<unknown>;
+export type MCPRawInvoker = (operation: string, input: Record<string, unknown>) => Promise<unknown>;
