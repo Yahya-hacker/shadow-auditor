@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/tool-decision.schema.json",
+  "title": "ToolDecision",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "$ref": "./protocol-version.schema.json"
+    },
+    "decisionId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "proposalId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "deny"
+      ]
+    },
+    "decidedAt": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "actor": {
+      "type": "string",
+      "enum": [
+        "human",
+        "policy"
+      ]
+    },
+    "argumentsDigest": {
+      "$ref": "./digest.schema.json"
+    },
+    "reason": {
+      "type": "string",
+      "maxLength": 8192
+    },
+    "constraints": {
+      "$ref": "./json-object.schema.json"
+    },
+    "request": {
+      "$ref": "./signed-request-metadata.schema.json"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "decisionId",
+    "sessionId",
+    "proposalId",
+    "decision",
+    "decidedAt",
+    "actor",
+    "argumentsDigest",
+    "request"
+  ]
+}

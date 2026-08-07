@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/resume-session-request.schema.json",
+  "title": "ResumeSessionRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "$ref": "./protocol-version.schema.json"
+    },
+    "cursor": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "lastEventHash": {
+      "oneOf": [
+        {
+          "$ref": "./digest.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "request": {
+      "$ref": "./signed-request-metadata.schema.json"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "cursor",
+    "lastEventHash",
+    "request"
+  ]
+}

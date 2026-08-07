@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/client-capabilities.schema.json",
+  "title": "ClientCapabilities",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersions": {
+      "type": "array",
+      "items": {
+        "$ref": "./protocol-version.schema.json"
+      },
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "durable-events",
+          "event-hash-chain",
+          "local-tool-execution",
+          "resumable-sessions",
+          "digest-bound-approvals",
+          "sse"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true
+    },
+    "maxInboundEventBytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 16777216
+    },
+    "maxOutboundPayloadBytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 16777216
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "$ref": "./tool-descriptor.schema.json"
+      },
+      "maxItems": 256
+    }
+  },
+  "required": [
+    "protocolVersions",
+    "features",
+    "maxInboundEventBytes",
+    "maxOutboundPayloadBytes",
+    "tools"
+  ]
+}

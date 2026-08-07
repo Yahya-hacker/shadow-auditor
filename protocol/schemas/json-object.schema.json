@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/json-object.schema.json",
+  "title": "JsonObject",
+  "description": "A bounded JSON object with no non-JSON runtime values.",
+  "type": "object",
+  "additionalProperties": {
+    "$ref": "./json-value.schema.json"
+  },
+  "maxProperties": 1024
+}

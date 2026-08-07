@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/tool-proposal.schema.json",
+  "title": "ToolProposal",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "proposalId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "actionId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "toolName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-zA-Z0-9._-]+$"
+    },
+    "arguments": {
+      "$ref": "./json-object.schema.json"
+    },
+    "argumentsDigest": {
+      "$ref": "./digest.schema.json"
+    },
+    "risk": {
+      "type": "string",
+      "enum": [
+        "read",
+        "write",
+        "execute",
+        "network",
+        "privileged"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "requestedAt": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 128
+    }
+  },
+  "required": [
+    "proposalId",
+    "actionId",
+    "sessionId",
+    "toolName",
+    "arguments",
+    "argumentsDigest",
+    "risk",
+    "reason",
+    "requestedAt",
+    "idempotencyKey"
+  ]
+}

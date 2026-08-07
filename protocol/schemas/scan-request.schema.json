@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/scan-request.schema.json",
+  "title": "ScanRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": [
+        "audit",
+        "bounty",
+        "ci"
+      ]
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "scope": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      },
+      "minItems": 1,
+      "maxItems": 1024
+    },
+    "exclusions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      },
+      "maxItems": 1024
+    },
+    "baselineRevision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "maxDurationSeconds": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 604800
+    }
+  },
+  "required": [
+    "mode",
+    "objective",
+    "scope",
+    "exclusions"
+  ]
+}

@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/event-envelope.schema.json",
+  "title": "EventEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "$ref": "./protocol-version.schema.json"
+    },
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "session.snapshot",
+        "agent.action",
+        "tool.proposal",
+        "execution.grant",
+        "usage.record",
+        "session.paused",
+        "session.resumed",
+        "session.cancelled",
+        "session.completed",
+        "session.failed",
+        "heartbeat"
+      ]
+    },
+    "correlationId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "causationId": {
+      "oneOf": [
+        {
+          "$ref": "./digest.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "payload": {
+      "$ref": "./json-object.schema.json"
+    },
+    "payloadDigest": {
+      "$ref": "./digest.schema.json"
+    },
+    "previousEventHash": {
+      "oneOf": [
+        {
+          "$ref": "./digest.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "eventHash": {
+      "$ref": "./digest.schema.json"
+    },
+    "signer": {
+      "$ref": "./public-key.schema.json"
+    },
+    "signature": {
+      "$ref": "./signature.schema.json"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "eventId",
+    "sessionId",
+    "sequence",
+    "occurredAt",
+    "eventType",
+    "correlationId",
+    "causationId",
+    "payload",
+    "payloadDigest",
+    "previousEventHash",
+    "eventHash",
+    "signer",
+    "signature"
+  ]
+}

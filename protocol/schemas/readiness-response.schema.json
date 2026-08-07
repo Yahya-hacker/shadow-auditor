@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/readiness-response.schema.json",
+  "title": "ReadinessResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "not_ready"
+      ]
+    },
+    "protocolVersion": {
+      "$ref": "./protocol-version.schema.json"
+    },
+    "serverTime": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "$ref": "./readiness-check.schema.json"
+      },
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "status",
+    "protocolVersion",
+    "serverTime",
+    "checks"
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/negotiated-capabilities.schema.json",
+  "title": "NegotiatedCapabilities",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "$ref": "./protocol-version.schema.json"
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "durable-events",
+          "event-hash-chain",
+          "local-tool-execution",
+          "resumable-sessions",
+          "digest-bound-approvals",
+          "sse"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true
+    },
+    "maxClientPayloadBytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 16777216
+    },
+    "maxServerEventBytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 16777216
+    },
+    "heartbeatIntervalMs": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 300000
+    },
+    "eventRetentionSeconds": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 31536000
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "$ref": "./tool-descriptor.schema.json"
+      },
+      "maxItems": 256
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "features",
+    "maxClientPayloadBytes",
+    "maxServerEventBytes",
+    "heartbeatIntervalMs",
+    "eventRetentionSeconds",
+    "tools"
+  ]
+}

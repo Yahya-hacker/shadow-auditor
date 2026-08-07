@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/token-set.schema.json",
+  "title": "TokenSet",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "tokenType": {
+      "type": "string",
+      "const": "Bearer"
+    },
+    "accessToken": {
+      "type": "string",
+      "minLength": 32,
+      "maxLength": 8192
+    },
+    "accessTokenExpiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "refreshToken": {
+      "type": "string",
+      "minLength": 32,
+      "maxLength": 8192
+    },
+    "refreshTokenExpiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    }
+  },
+  "required": [
+    "tokenType",
+    "accessToken",
+    "accessTokenExpiresAt",
+    "refreshToken",
+    "refreshTokenExpiresAt"
+  ]
+}

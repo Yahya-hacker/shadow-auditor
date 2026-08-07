@@ -1,0 +1,80 @@
+{
+  "protocolVersion": "1.0",
+  "algorithm": "RFC8785-compatible JCS using UTF-8, then Ed25519",
+  "key": {
+    "keyId": "rfc8032-test-key-1",
+    "seedHex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+    "publicKey": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+  },
+  "canonicalization": [
+    {
+      "input": {
+        "b": 2,
+        "a": 1
+      },
+      "canonical": "{\"a\":1,\"b\":2}",
+      "digest": "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+    },
+    {
+      "input": {
+        "unicode": "€",
+        "controls": "\n",
+        "array": [
+          3,
+          true,
+          null
+        ]
+      },
+      "canonical": "{\"array\":[3,true,null],\"controls\":\"\\n\",\"unicode\":\"€\"}",
+      "digest": "sha256:ad403403a36def874e90cbb7fac4fbf894577affb96b04647b5ab201dc3268e7"
+    },
+    {
+      "input": {
+        "negativeZero": 0,
+        "exponent": 1e+30
+      },
+      "canonical": "{\"exponent\":1e+30,\"negativeZero\":0}",
+      "digest": "sha256:6ac24070dd6d440289eb2f685c1c3efd89706424562b5a6c92ccb502009d7d93"
+    }
+  ],
+  "request": {
+    "payload": {
+      "protocolVersion": "1.0",
+      "deviceId": "018f6f5e-9c78-7a2f-8da8-b80e77f734f1",
+      "keyId": "device-test-key-1",
+      "requestId": "018f6f5e-a263-7f79-8f72-64519e1b872f",
+      "timestamp": "2026-01-02T03:04:05.000Z",
+      "nonce": "7m4J_vlY6U0sWQTYhPj87w",
+      "method": "POST",
+      "path": "/v1/sessions",
+      "bodyDigest": "sha256:6b9a0b1b83f7a0c50ef3f1f28b4d994abe5bea17e6d26c5e1f43af595a0a437e",
+      "signatureAlgorithm": "ed25519"
+    },
+    "canonical": "{\"bodyDigest\":\"sha256:6b9a0b1b83f7a0c50ef3f1f28b4d994abe5bea17e6d26c5e1f43af595a0a437e\",\"deviceId\":\"018f6f5e-9c78-7a2f-8da8-b80e77f734f1\",\"keyId\":\"device-test-key-1\",\"method\":\"POST\",\"nonce\":\"7m4J_vlY6U0sWQTYhPj87w\",\"path\":\"/v1/sessions\",\"protocolVersion\":\"1.0\",\"requestId\":\"018f6f5e-a263-7f79-8f72-64519e1b872f\",\"signatureAlgorithm\":\"ed25519\",\"timestamp\":\"2026-01-02T03:04:05.000Z\"}",
+    "digest": "sha256:1343f06895bc9af589acc2ae1b63ff3b1014aad56208c025ba0f9ebe1130d2cc",
+    "signature": "WGRcSDbz3xkuPgPyoaIhkedSJU3ebD1He5_sNPX2xq9iP37WkAGfEIGWbd-1LksldVKeaR9YL6liofc028LjAQ"
+  },
+  "event": {
+    "payload": {
+      "protocolVersion": "1.0",
+      "eventId": "018f6f5e-b21b-7168-93cb-e616baa51f09",
+      "sessionId": "018f6f5e-b0ce-7d67-b989-91d2e3e8ea7b",
+      "sequence": 1,
+      "occurredAt": "2026-01-02T03:04:06.000Z",
+      "eventType": "heartbeat",
+      "correlationId": "018f6f5e-b273-7ed0-a364-9e715f1cf9af",
+      "causationId": null,
+      "payload": {},
+      "payloadDigest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "previousEventHash": null,
+      "signer": {
+        "algorithm": "ed25519",
+        "keyId": "server-test-key-1",
+        "publicKey": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+      }
+    },
+    "canonical": "{\"causationId\":null,\"correlationId\":\"018f6f5e-b273-7ed0-a364-9e715f1cf9af\",\"eventId\":\"018f6f5e-b21b-7168-93cb-e616baa51f09\",\"eventType\":\"heartbeat\",\"occurredAt\":\"2026-01-02T03:04:06.000Z\",\"payload\":{},\"payloadDigest\":\"sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\",\"previousEventHash\":null,\"protocolVersion\":\"1.0\",\"sequence\":1,\"sessionId\":\"018f6f5e-b0ce-7d67-b989-91d2e3e8ea7b\",\"signer\":{\"algorithm\":\"ed25519\",\"keyId\":\"server-test-key-1\",\"publicKey\":\"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo\"}}",
+    "digest": "sha256:f236ed014ead74c7ece1f72ab7c05a600e5da7fd0c46a203195e27223acfc815",
+    "signature": "tyyBLOsQkbBUVqYmPFHCIvNoVQPM8Zovq9gPBOJIx6OPMsc003mLtBpANjo_rsD9IB-Gx2WIwcTHmIFhHZrOCA"
+  }
+}

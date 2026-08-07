@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/device-refresh-response.schema.json",
+  "title": "DeviceRefreshResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "$ref": "./protocol-version.schema.json"
+    },
+    "deviceId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "tokens": {
+      "$ref": "./token-set.schema.json"
+    },
+    "serverTime": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "deviceId",
+    "tokens",
+    "serverTime"
+  ]
+}

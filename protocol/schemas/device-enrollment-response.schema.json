@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/device-enrollment-response.schema.json",
+  "title": "DeviceEnrollmentResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "$ref": "./protocol-version.schema.json"
+    },
+    "deviceId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "tokens": {
+      "$ref": "./token-set.schema.json"
+    },
+    "serverTime": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "serverSigningKeys": {
+      "type": "array",
+      "items": {
+        "$ref": "./public-key.schema.json"
+      },
+      "minItems": 1,
+      "maxItems": 16
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "deviceId",
+    "tokens",
+    "serverTime",
+    "serverSigningKeys"
+  ]
+}

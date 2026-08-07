@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/readiness-check.schema.json",
+  "title": "ReadinessCheck",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "not_ready"
+      ]
+    },
+    "detail": {
+      "type": "string",
+      "maxLength": 2048
+    }
+  },
+  "required": [
+    "name",
+    "status",
+    "detail"
+  ]
+}

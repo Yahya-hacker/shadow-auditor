@@ -43,6 +43,7 @@
     "@types/chai": "^4",
     "@types/mocha": "^10",
     "@types/node": "^24.0.0",
+    "ajv": "^8.17.1",
     "@types/react": "^18.3.0",
     "chai": "^4",
     "eslint": "^9",
@@ -86,6 +87,8 @@
   "scripts": {
     "start": "node ./bin/run.js shell --reconfigure",
     "build": "shx rm -rf dist && tsc -b",
+    "check:protocol": "node ./scripts/generate-protocol.mjs --check",
+    "generate:protocol": "node ./scripts/generate-protocol.mjs",
     "lint": "eslint",
     "postpack": "shx rm -f oclif.manifest.json",
     "posttest": "npm run lint",

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/agent-action.schema.json",
+  "title": "AgentAction",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "actionId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "analysis",
+        "propose_tool",
+        "progress",
+        "report",
+        "completed",
+        "failed"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "toolProposal": {
+      "$ref": "./tool-proposal.schema.json"
+    },
+    "data": {
+      "$ref": "./json-object.schema.json"
+    }
+  },
+  "required": [
+    "actionId",
+    "sessionId",
+    "kind",
+    "summary",
+    "data"
+  ]
+}

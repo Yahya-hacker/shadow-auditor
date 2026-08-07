@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/protocol-version.schema.json",
+  "title": "ProtocolVersion",
+  "description": "The frozen public protocol major/minor identifier.",
+  "type": "string",
+  "const": "1.0"
+}

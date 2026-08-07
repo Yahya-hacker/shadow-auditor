@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/session-snapshot.schema.json",
+  "title": "SessionSnapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "$ref": "./protocol-version.schema.json"
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "created",
+        "running",
+        "paused",
+        "cancelling",
+        "cancelled",
+        "completed",
+        "failed"
+      ]
+    },
+    "cursor": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "scan": {
+      "$ref": "./scan-request.schema.json"
+    },
+    "negotiatedCapabilities": {
+      "$ref": "./negotiated-capabilities.schema.json"
+    },
+    "lastEventHash": {
+      "oneOf": [
+        {
+          "$ref": "./digest.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pendingToolProposalIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid",
+        "maxLength": 36
+      },
+      "maxItems": 256,
+      "uniqueItems": true
+    },
+    "usage": {
+      "$ref": "./usage-totals.schema.json"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "sessionId",
+    "status",
+    "cursor",
+    "createdAt",
+    "updatedAt",
+    "scan",
+    "negotiatedCapabilities",
+    "lastEventHash",
+    "pendingToolProposalIds",
+    "usage"
+  ]
+}

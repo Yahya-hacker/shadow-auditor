@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/json-value.schema.json",
+  "title": "JsonValue",
+  "description": "A bounded, recursively JSON-serializable value.",
+  "oneOf": [
+    {
+      "type": "null"
+    },
+    {
+      "type": "boolean"
+    },
+    {
+      "type": "number"
+    },
+    {
+      "type": "string",
+      "maxLength": 1048576
+    },
+    {
+      "type": "array",
+      "items": {
+        "$ref": "./json-value.schema.json"
+      },
+      "maxItems": 4096
+    },
+    {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "./json-value.schema.json"
+      },
+      "maxProperties": 1024
+    }
+  ]
+}

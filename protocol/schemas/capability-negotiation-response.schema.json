@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/capability-negotiation-response.schema.json",
+  "title": "CapabilityNegotiationResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "$ref": "./protocol-version.schema.json"
+    },
+    "negotiated": {
+      "$ref": "./negotiated-capabilities.schema.json"
+    },
+    "server": {
+      "$ref": "./server-capabilities.schema.json"
+    },
+    "negotiatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "negotiated",
+    "server",
+    "negotiatedAt"
+  ]
+}

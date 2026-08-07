@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/problem-error.schema.json",
+  "title": "ProblemError",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "pointer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "detail": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    }
+  },
+  "required": [
+    "pointer",
+    "code",
+    "detail"
+  ]
+}

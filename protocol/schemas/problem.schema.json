@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/problem.schema.json",
+  "title": "Problem",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "type": {
+      "type": "string",
+      "format": "uri-reference",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "status": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 599
+    },
+    "detail": {
+      "type": "string",
+      "maxLength": 16384
+    },
+    "instance": {
+      "type": "string",
+      "format": "uri-reference",
+      "maxLength": 2048
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "traceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "$ref": "./problem-error.schema.json"
+      },
+      "maxItems": 128
+    }
+  },
+  "required": [
+    "type",
+    "title",
+    "status",
+    "code",
+    "retryable"
+  ]
+}

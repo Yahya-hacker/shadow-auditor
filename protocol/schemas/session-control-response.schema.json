@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/session-control-response.schema.json",
+  "title": "SessionControlResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "$ref": "./protocol-version.schema.json"
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "running",
+        "paused",
+        "cancelling",
+        "cancelled"
+      ]
+    },
+    "effectiveAt": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "cursor": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "sessionId",
+    "status",
+    "effectiveAt",
+    "cursor"
+  ]
+}

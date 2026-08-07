@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/signed-request-metadata.schema.json",
+  "title": "SignedRequestMetadata",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "$ref": "./protocol-version.schema.json"
+    },
+    "deviceId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "keyId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "GET",
+        "POST"
+      ]
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^/"
+    },
+    "bodyDigest": {
+      "$ref": "./digest.schema.json"
+    },
+    "signatureAlgorithm": {
+      "type": "string",
+      "const": "ed25519"
+    },
+    "signature": {
+      "$ref": "./signature.schema.json"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "deviceId",
+    "keyId",
+    "requestId",
+    "timestamp",
+    "nonce",
+    "method",
+    "path",
+    "bodyDigest",
+    "signatureAlgorithm",
+    "signature"
+  ]
+}

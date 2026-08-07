@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/execution-grant.schema.json",
+  "title": "ExecutionGrant",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "$ref": "./protocol-version.schema.json"
+    },
+    "grantId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "proposalId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "decisionId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "deviceId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "toolName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "argumentsDigest": {
+      "$ref": "./digest.schema.json"
+    },
+    "decisionDigest": {
+      "$ref": "./digest.schema.json"
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 128
+    },
+    "signer": {
+      "$ref": "./public-key.schema.json"
+    },
+    "signature": {
+      "$ref": "./signature.schema.json"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "grantId",
+    "sessionId",
+    "proposalId",
+    "decisionId",
+    "deviceId",
+    "toolName",
+    "argumentsDigest",
+    "decisionDigest",
+    "issuedAt",
+    "expiresAt",
+    "nonce",
+    "signer",
+    "signature"
+  ]
+}

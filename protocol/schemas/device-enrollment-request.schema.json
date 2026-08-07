@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/device-enrollment-request.schema.json",
+  "title": "DeviceEnrollmentRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "$ref": "./protocol-version.schema.json"
+    },
+    "enrollmentCode": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 512
+    },
+    "deviceName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "clientVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "platform": {
+      "type": "string",
+      "enum": [
+        "linux",
+        "darwin",
+        "win32"
+      ]
+    },
+    "devicePublicKey": {
+      "$ref": "./public-key.schema.json"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "enrollmentCode",
+    "deviceName",
+    "clientVersion",
+    "platform",
+    "devicePublicKey"
+  ]
+}

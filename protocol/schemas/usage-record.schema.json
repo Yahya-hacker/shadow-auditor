@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/usage-record.schema.json",
+  "title": "UsageRecord",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "$ref": "./protocol-version.schema.json"
+    },
+    "usageId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 64
+    },
+    "meter": {
+      "type": "string",
+      "enum": [
+        "input_tokens",
+        "output_tokens",
+        "tool_execution_ms",
+        "storage_bytes"
+      ]
+    },
+    "quantity": {
+      "type": "number",
+      "minimum": 0
+    },
+    "unit": {
+      "type": "string",
+      "enum": [
+        "token",
+        "millisecond",
+        "byte"
+      ]
+    },
+    "billable": {
+      "type": "boolean"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "metadata": {
+      "$ref": "./json-object.schema.json"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "usageId",
+    "sessionId",
+    "eventId",
+    "occurredAt",
+    "meter",
+    "quantity",
+    "unit",
+    "billable",
+    "source"
+  ]
+}

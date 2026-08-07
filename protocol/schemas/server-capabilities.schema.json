@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/server-capabilities.schema.json",
+  "title": "ServerCapabilities",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersions": {
+      "type": "array",
+      "items": {
+        "$ref": "./protocol-version.schema.json"
+      },
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "durable-events",
+          "event-hash-chain",
+          "local-tool-execution",
+          "resumable-sessions",
+          "digest-bound-approvals",
+          "sse"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true
+    },
+    "maxInboundPayloadBytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 16777216
+    },
+    "maxOutboundEventBytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 16777216
+    },
+    "heartbeatIntervalMs": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 300000
+    },
+    "eventRetentionSeconds": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 31536000
+    },
+    "signingKeys": {
+      "type": "array",
+      "items": {
+        "$ref": "./public-key.schema.json"
+      },
+      "minItems": 1,
+      "maxItems": 16
+    }
+  },
+  "required": [
+    "protocolVersions",
+    "features",
+    "maxInboundPayloadBytes",
+    "maxOutboundEventBytes",
+    "heartbeatIntervalMs",
+    "eventRetentionSeconds",
+    "signingKeys"
+  ]
+}

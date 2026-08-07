@@ -1,0 +1,1273 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Shadow Auditor Public Remote Protocol",
+    "version": "1.0.0",
+    "description": "Frozen protocol 1.0 contract. Agent cognition remains server-side; local evidence, tools, approvals, and reports use purpose-built DTOs and never serialize LangGraph AgentState."
+  },
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "servers": [
+    {
+      "url": "https://api.shadow-auditor.dev"
+    }
+  ],
+  "x-protocol-version": "1.0",
+  "paths": {
+    "/healthz": {
+      "get": {
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Liveness response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/health-response.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "getReadiness",
+        "responses": {
+          "200": {
+            "description": "Readiness response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/readiness-response.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/device/enroll": {
+      "post": {
+        "operationId": "enrollDevice",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/device-enrollment-request.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Device enrolled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/device-enrollment-response.schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or request signature failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Replay, digest, cursor, or session-state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload exceeds negotiated bounds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Backpressure limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/device/refresh": {
+      "post": {
+        "operationId": "refreshDeviceToken",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/device-refresh-request.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tokens rotated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/device-refresh-response.schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or request signature failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Replay, digest, cursor, or session-state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload exceeds negotiated bounds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Backpressure limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/capabilities/negotiate": {
+      "post": {
+        "operationId": "negotiateCapabilities",
+        "security": [
+          {
+            "bearerAuth": [],
+            "requestSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/capability-negotiation-request.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Capabilities negotiated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/capability-negotiation-response.schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or request signature failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Replay, digest, cursor, or session-state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload exceeds negotiated bounds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Backpressure limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions": {
+      "post": {
+        "operationId": "createSession",
+        "security": [
+          {
+            "bearerAuth": [],
+            "requestSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/create-session-request.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Session created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/session-snapshot.schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or request signature failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Replay, digest, cursor, or session-state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload exceeds negotiated bounds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Backpressure limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}": {
+      "get": {
+        "operationId": "getSession",
+        "security": [
+          {
+            "bearerAuth": [],
+            "requestSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Durable session snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/session-snapshot.schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or request signature failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Replay, digest, cursor, or session-state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload exceeds negotiated bounds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Backpressure limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/events": {
+      "get": {
+        "operationId": "streamSessionEvents",
+        "security": [
+          {
+            "bearerAuth": [],
+            "requestSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE stream. Each data field is one compact EventEnvelope JSON value.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "x-sse-event-schema": {
+                  "$ref": "./schemas/event-envelope.schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or request signature failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Replay, digest, cursor, or session-state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload exceeds negotiated bounds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Backpressure limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/tool-decisions": {
+      "post": {
+        "operationId": "submitToolDecision",
+        "security": [
+          {
+            "bearerAuth": [],
+            "requestSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/tool-decision.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Decision accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/session-snapshot.schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or request signature failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Replay, digest, cursor, or session-state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload exceeds negotiated bounds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Backpressure limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/tool-results": {
+      "post": {
+        "operationId": "submitToolResult",
+        "security": [
+          {
+            "bearerAuth": [],
+            "requestSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/tool-result.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Result accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/session-snapshot.schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or request signature failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Replay, digest, cursor, or session-state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload exceeds negotiated bounds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Backpressure limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/pause": {
+      "post": {
+        "operationId": "pauseSession",
+        "security": [
+          {
+            "bearerAuth": [],
+            "requestSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/pause-session-request.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pause applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/session-control-response.schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or request signature failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Replay, digest, cursor, or session-state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload exceeds negotiated bounds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Backpressure limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/resume": {
+      "post": {
+        "operationId": "resumeSession",
+        "security": [
+          {
+            "bearerAuth": [],
+            "requestSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/resume-session-request.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resume applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/session-control-response.schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or request signature failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Replay, digest, cursor, or session-state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload exceeds negotiated bounds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Backpressure limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/cancel": {
+      "post": {
+        "operationId": "cancelSession",
+        "security": [
+          {
+            "bearerAuth": [],
+            "requestSignature": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "./schemas/cancel-session-request.schema.json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cancellation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/session-control-response.schema.json"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or request signature failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Replay, digest, cursor, or session-state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload exceeds negotiated bounds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Backpressure limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "./schemas/problem.schema.json"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "requestSignature": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Shadow-Signature",
+        "description": "Ed25519 request signature. Replay metadata and the same signature are carried in SignedRequestMetadata."
+      }
+    },
+    "schemas": {
+      "JsonValue": {
+        "$ref": "./schemas/json-value.schema.json"
+      },
+      "JsonObject": {
+        "$ref": "./schemas/json-object.schema.json"
+      },
+      "ProtocolVersion": {
+        "$ref": "./schemas/protocol-version.schema.json"
+      },
+      "Digest": {
+        "$ref": "./schemas/digest.schema.json"
+      },
+      "Signature": {
+        "$ref": "./schemas/signature.schema.json"
+      },
+      "SignedRequestMetadata": {
+        "$ref": "./schemas/signed-request-metadata.schema.json"
+      },
+      "ProblemError": {
+        "$ref": "./schemas/problem-error.schema.json"
+      },
+      "Problem": {
+        "$ref": "./schemas/problem.schema.json"
+      },
+      "PublicKey": {
+        "$ref": "./schemas/public-key.schema.json"
+      },
+      "ToolDescriptor": {
+        "$ref": "./schemas/tool-descriptor.schema.json"
+      },
+      "DeviceEnrollmentRequest": {
+        "$ref": "./schemas/device-enrollment-request.schema.json"
+      },
+      "TokenSet": {
+        "$ref": "./schemas/token-set.schema.json"
+      },
+      "DeviceEnrollmentResponse": {
+        "$ref": "./schemas/device-enrollment-response.schema.json"
+      },
+      "DeviceRefreshRequest": {
+        "$ref": "./schemas/device-refresh-request.schema.json"
+      },
+      "DeviceRefreshResponse": {
+        "$ref": "./schemas/device-refresh-response.schema.json"
+      },
+      "ClientCapabilities": {
+        "$ref": "./schemas/client-capabilities.schema.json"
+      },
+      "ServerCapabilities": {
+        "$ref": "./schemas/server-capabilities.schema.json"
+      },
+      "CapabilityNegotiationRequest": {
+        "$ref": "./schemas/capability-negotiation-request.schema.json"
+      },
+      "NegotiatedCapabilities": {
+        "$ref": "./schemas/negotiated-capabilities.schema.json"
+      },
+      "CapabilityNegotiationResponse": {
+        "$ref": "./schemas/capability-negotiation-response.schema.json"
+      },
+      "ScanRequest": {
+        "$ref": "./schemas/scan-request.schema.json"
+      },
+      "RepositoryDescriptor": {
+        "$ref": "./schemas/repository-descriptor.schema.json"
+      },
+      "CreateSessionRequest": {
+        "$ref": "./schemas/create-session-request.schema.json"
+      },
+      "UsageTotals": {
+        "$ref": "./schemas/usage-totals.schema.json"
+      },
+      "SessionSnapshot": {
+        "$ref": "./schemas/session-snapshot.schema.json"
+      },
+      "EventEnvelope": {
+        "$ref": "./schemas/event-envelope.schema.json"
+      },
+      "ToolProposal": {
+        "$ref": "./schemas/tool-proposal.schema.json"
+      },
+      "AgentAction": {
+        "$ref": "./schemas/agent-action.schema.json"
+      },
+      "ToolDecision": {
+        "$ref": "./schemas/tool-decision.schema.json"
+      },
+      "ExecutionGrant": {
+        "$ref": "./schemas/execution-grant.schema.json"
+      },
+      "ToolResult": {
+        "$ref": "./schemas/tool-result.schema.json"
+      },
+      "UsageRecord": {
+        "$ref": "./schemas/usage-record.schema.json"
+      },
+      "PauseSessionRequest": {
+        "$ref": "./schemas/pause-session-request.schema.json"
+      },
+      "ResumeSessionRequest": {
+        "$ref": "./schemas/resume-session-request.schema.json"
+      },
+      "CancelSessionRequest": {
+        "$ref": "./schemas/cancel-session-request.schema.json"
+      },
+      "SessionControlResponse": {
+        "$ref": "./schemas/session-control-response.schema.json"
+      },
+      "HealthResponse": {
+        "$ref": "./schemas/health-response.schema.json"
+      },
+      "ReadinessCheck": {
+        "$ref": "./schemas/readiness-check.schema.json"
+      },
+      "ReadinessResponse": {
+        "$ref": "./schemas/readiness-response.schema.json"
+      }
+    }
+  }
+}

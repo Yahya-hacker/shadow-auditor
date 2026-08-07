@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/signature.schema.json",
+  "title": "Signature",
+  "description": "An unpadded base64url-encoded Ed25519 signature.",
+  "type": "string",
+  "pattern": "^[A-Za-z0-9_-]{86}$",
+  "maxLength": 86
+}

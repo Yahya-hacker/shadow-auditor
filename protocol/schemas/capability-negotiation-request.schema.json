@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/capability-negotiation-request.schema.json",
+  "title": "CapabilityNegotiationRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "$ref": "./protocol-version.schema.json"
+    },
+    "client": {
+      "$ref": "./client-capabilities.schema.json"
+    },
+    "request": {
+      "$ref": "./signed-request-metadata.schema.json"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "client",
+    "request"
+  ]
+}
