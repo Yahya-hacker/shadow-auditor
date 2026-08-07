@@ -12,6 +12,13 @@ export interface CanonicalJsonLimits {
   maxStringBytes: number;
 }
 
+export interface BoundedCanonicalJsonValidation {
+  canonicalJson: string;
+  nodeCount: number;
+  payloadBytes: number;
+  value: JsonValue;
+}
+
 export const PROTOCOL_CANONICAL_LIMITS: Readonly<CanonicalJsonLimits> = Object.freeze({
   maxArrayLength: 1024,
   maxDepth: 32,
@@ -167,33 +174,76 @@ function snapshotJsonValue(value: unknown, depth: number, state: ValidationState
   }
 }
 
-function serializeCanonical(value: JsonValue): string {
+interface SerializationState {
+  bytes: number;
+  chunks: string[];
+  maxPayloadBytes: number;
+}
+
+function appendCanonical(state: SerializationState, chunk: string): void {
+  state.bytes += byteLength(chunk);
+  if (state.bytes > state.maxPayloadBytes) {
+    fail('payload_too_large', `canonical JSON exceeds ${state.maxPayloadBytes} bytes`);
+  }
+
+  state.chunks.push(chunk);
+}
+
+function serializeCanonical(value: JsonValue, state: SerializationState): void {
   if (value === null || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
-    return JSON.stringify(value);
+    appendCanonical(state, JSON.stringify(value));
+    return;
   }
 
   if (Array.isArray(value)) {
-    return `[${value.map((item) => serializeCanonical(item)).join(',')}]`;
+    appendCanonical(state, '[');
+    for (const [index, item] of value.entries()) {
+      if (index > 0) appendCanonical(state, ',');
+      serializeCanonical(item, state);
+    }
+
+    appendCanonical(state, ']');
+    return;
   }
 
-  const members = Object.keys(value)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${serializeCanonical(value[key])}`);
-  return `{${members.join(',')}}`;
+  appendCanonical(state, '{');
+  for (const [index, key] of Object.keys(value).sort().entries()) {
+    if (index > 0) appendCanonical(state, ',');
+    appendCanonical(state, JSON.stringify(key));
+    appendCanonical(state, ':');
+    serializeCanonical(value[key], state);
+  }
+
+  appendCanonical(state, '}');
+}
+
+export function validateBoundedCanonicalJson(
+  value: unknown,
+  limits: CanonicalJsonLimits = PROTOCOL_CANONICAL_LIMITS,
+): BoundedCanonicalJsonValidation {
+  const state: ValidationState = {active: new WeakSet(), limits, nodes: 0};
+  const snapshot = snapshotJsonValue(value, 0, state);
+  const serialization: SerializationState = {
+    bytes: 0,
+    chunks: [],
+    maxPayloadBytes: limits.maxPayloadBytes,
+  };
+  serializeCanonical(snapshot, serialization);
+  const canonical = serialization.chunks.join('');
+
+  return {
+    canonicalJson: canonical,
+    nodeCount: state.nodes,
+    payloadBytes: serialization.bytes,
+    value: snapshot,
+  };
 }
 
 export function canonicalizeJson(
   value: unknown,
   limits: CanonicalJsonLimits = PROTOCOL_CANONICAL_LIMITS,
 ): string {
-  const state: ValidationState = {active: new WeakSet(), limits, nodes: 0};
-  const snapshot = snapshotJsonValue(value, 0, state);
-  const canonical = serializeCanonical(snapshot);
-  if (byteLength(canonical) > limits.maxPayloadBytes) {
-    fail('payload_too_large', `canonical JSON exceeds ${limits.maxPayloadBytes} bytes`);
-  }
-
-  return canonical;
+  return validateBoundedCanonicalJson(value, limits).canonicalJson;
 }
 
 class StrictJsonParser {

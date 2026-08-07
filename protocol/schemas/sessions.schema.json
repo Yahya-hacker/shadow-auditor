@@ -1,5 +1,31 @@
 {
   "$defs": {
+    "ActiveGrantsSnapshotPage": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/SnapshotPageBase"
+        }
+      ],
+      "properties": {
+        "collection": {
+          "const": "activeGrants",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "tools.schema.json#/$defs/ToolGrant"
+          },
+          "maxItems": 128,
+          "type": "array"
+        }
+      },
+      "required": [
+        "collection",
+        "items"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "CreateSessionRequest": {
       "additionalProperties": false,
       "properties": {
@@ -43,6 +69,32 @@
         "negotiatedCapabilitiesDigest"
       ],
       "type": "object"
+    },
+    "DecisionsSnapshotPage": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/SnapshotPageBase"
+        }
+      ],
+      "properties": {
+        "collection": {
+          "const": "decisions",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "tools.schema.json#/$defs/ToolDecision"
+          },
+          "maxItems": 128,
+          "type": "array"
+        }
+      },
+      "required": [
+        "collection",
+        "items"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "EventHead": {
       "oneOf": [
@@ -120,6 +172,137 @@
       ],
       "type": "object"
     },
+    "OperationsSnapshotPage": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/SnapshotPageBase"
+        }
+      ],
+      "properties": {
+        "collection": {
+          "const": "operations",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/RecoveredOperation"
+          },
+          "maxItems": 128,
+          "type": "array"
+        }
+      },
+      "required": [
+        "collection",
+        "items"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "PendingProposalsSnapshotPage": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/SnapshotPageBase"
+        }
+      ],
+      "properties": {
+        "collection": {
+          "const": "pendingProposals",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "tools.schema.json#/$defs/ToolProposal"
+          },
+          "maxItems": 128,
+          "type": "array"
+        }
+      },
+      "required": [
+        "collection",
+        "items"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "RecoveredOperation": {
+      "additionalProperties": false,
+      "description": "A durable operation plus the session whose recovery view contains it. The explicit session binding is required because authentication operations are tenant-scoped and Operation itself does not carry sessionId.",
+      "properties": {
+        "operation": {
+          "$ref": "operations.schema.json#/$defs/Operation"
+        },
+        "sessionId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "sessionId",
+        "operation"
+      ],
+      "type": "object"
+    },
+    "ResultsSnapshotPage": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/SnapshotPageBase"
+        }
+      ],
+      "properties": {
+        "collection": {
+          "const": "results",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "tools.schema.json#/$defs/RecoveredToolResult"
+          },
+          "maxItems": 128,
+          "type": "array"
+        }
+      },
+      "required": [
+        "collection",
+        "items"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SessionCheckpoint": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "eventHead": {
+          "$ref": "#/$defs/EventHead"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
+        },
+        "sessionId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "state": {
+          "$ref": "#/$defs/SessionState"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "updatedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "sessionId",
+        "state",
+        "createdAt",
+        "updatedAt",
+        "eventHead"
+      ],
+      "type": "object"
+    },
     "SessionControlRequest": {
       "additionalProperties": false,
       "properties": {
@@ -168,55 +351,195 @@
       ],
       "type": "object"
     },
-    "SessionSnapshot": {
+    "SessionSnapshotPage": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PendingProposalsSnapshotPage"
+        },
+        {
+          "$ref": "#/$defs/DecisionsSnapshotPage"
+        },
+        {
+          "$ref": "#/$defs/ActiveGrantsSnapshotPage"
+        },
+        {
+          "$ref": "#/$defs/ResultsSnapshotPage"
+        },
+        {
+          "$ref": "#/$defs/OperationsSnapshotPage"
+        }
+      ]
+    },
+    "SessionState": {
+      "enum": [
+        "created",
+        "planning",
+        "awaiting-decision",
+        "awaiting-result",
+        "paused",
+        "completed",
+        "cancelled",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "SnapshotCollectionBoundaries": {
       "additionalProperties": false,
       "properties": {
         "activeGrants": {
-          "items": {
-            "$ref": "tools.schema.json#/$defs/ToolGrant"
-          },
-          "maxItems": 1024,
-          "type": "array"
-        },
-        "createdAt": {
-          "$ref": "common.schema.json#/$defs/Timestamp"
+          "$ref": "#/$defs/SnapshotCollectionBoundary"
         },
         "decisions": {
-          "items": {
-            "$ref": "tools.schema.json#/$defs/ToolDecision"
-          },
-          "maxItems": 1024,
-          "type": "array"
-        },
-        "eventHead": {
-          "$ref": "#/$defs/EventHead"
+          "$ref": "#/$defs/SnapshotCollectionBoundary"
         },
         "operations": {
-          "items": {
-            "$ref": "operations.schema.json#/$defs/Operation"
-          },
-          "maxItems": 1024,
-          "type": "array"
+          "$ref": "#/$defs/SnapshotCollectionBoundary"
         },
         "pendingProposals": {
-          "items": {
-            "$ref": "tools.schema.json#/$defs/ToolProposal"
-          },
-          "maxItems": 1024,
-          "type": "array"
+          "$ref": "#/$defs/SnapshotCollectionBoundary"
+        },
+        "results": {
+          "$ref": "#/$defs/SnapshotCollectionBoundary"
+        }
+      },
+      "required": [
+        "pendingProposals",
+        "decisions",
+        "activeGrants",
+        "results",
+        "operations"
+      ],
+      "type": "object"
+    },
+    "SnapshotCollectionBoundary": {
+      "additionalProperties": false,
+      "description": "The immutable item count and terminal hash of the ordered per-record snapshot hash chain.",
+      "properties": {
+        "collectionDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "itemCount": {
+          "$ref": "common.schema.json#/$defs/SafeNonNegativeInteger"
+        }
+      },
+      "required": [
+        "itemCount",
+        "collectionDigest"
+      ],
+      "type": "object"
+    },
+    "SnapshotCollectionName": {
+      "enum": [
+        "pendingProposals",
+        "decisions",
+        "activeGrants",
+        "results",
+        "operations"
+      ],
+      "type": "string"
+    },
+    "SnapshotCursor": {
+      "additionalProperties": false,
+      "properties": {
+        "authorization": {
+          "$ref": "common.schema.json#/$defs/DetachedSignature"
+        },
+        "projection": {
+          "$ref": "#/$defs/SnapshotCursorProjection"
+        }
+      },
+      "required": [
+        "projection",
+        "authorization"
+      ],
+      "type": "object"
+    },
+    "SnapshotCursorProjection": {
+      "additionalProperties": false,
+      "properties": {
+        "collection": {
+          "$ref": "#/$defs/SnapshotCollectionName"
+        },
+        "collectionDigest": {
+          "$ref": "common.schema.json#/$defs/Sha256Digest"
+        },
+        "expiresAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "nextOffset": {
+          "$ref": "common.schema.json#/$defs/PositiveSafeInteger"
         },
         "protocolVersion": {
           "$ref": "common.schema.json#/$defs/ProtocolVersion"
         },
-        "results": {
-          "items": {
-            "$ref": "tools.schema.json#/$defs/ToolResult"
-          },
-          "maxItems": 1024,
-          "type": "array"
+        "sessionId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "snapshotId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "snapshotVersion": {
+          "$ref": "common.schema.json#/$defs/PositiveSafeInteger"
+        },
+        "tenantId": {
+          "$ref": "common.schema.json#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "tenantId",
+        "sessionId",
+        "snapshotId",
+        "snapshotVersion",
+        "collection",
+        "collectionDigest",
+        "nextOffset",
+        "expiresAt"
+      ],
+      "type": "object"
+    },
+    "SnapshotCursorToken": {
+      "description": "Unpadded base64url encoding of the exact UTF-8 strict canonical JSON SnapshotCursor. Decoding, canonical re-encoding, schema validation, signature validation, and scope validation are all mandatory.",
+      "maxLength": 2048,
+      "minLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "type": "string"
+    },
+    "SnapshotPageBase": {
+      "properties": {
+        "collectionBoundaries": {
+          "$ref": "#/$defs/SnapshotCollectionBoundaries"
+        },
+        "createdAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "eventHead": {
+          "$ref": "#/$defs/EventHead"
+        },
+        "nextCursor": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/SnapshotCursorToken"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pageStart": {
+          "$ref": "common.schema.json#/$defs/SafeNonNegativeInteger"
+        },
+        "protocolVersion": {
+          "$ref": "common.schema.json#/$defs/ProtocolVersion"
         },
         "sessionId": {
           "$ref": "common.schema.json#/$defs/Uuid"
+        },
+        "snapshotCreatedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "snapshotExpiresAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
         },
         "snapshotId": {
           "$ref": "common.schema.json#/$defs/Uuid"
@@ -240,30 +563,17 @@
         "sessionId",
         "snapshotId",
         "snapshotVersion",
+        "snapshotCreatedAt",
+        "snapshotExpiresAt",
         "state",
         "createdAt",
         "updatedAt",
         "eventHead",
-        "pendingProposals",
-        "decisions",
-        "activeGrants",
-        "results",
-        "operations"
+        "collectionBoundaries",
+        "pageStart",
+        "nextCursor"
       ],
       "type": "object"
-    },
-    "SessionState": {
-      "enum": [
-        "created",
-        "planning",
-        "awaiting-decision",
-        "awaiting-result",
-        "paused",
-        "completed",
-        "cancelled",
-        "failed"
-      ],
-      "type": "string"
     }
   },
   "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/sessions.schema.json",

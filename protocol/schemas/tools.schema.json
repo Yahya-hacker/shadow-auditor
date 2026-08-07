@@ -52,6 +52,31 @@
       ],
       "type": "object"
     },
+    "RecoveredToolResult": {
+      "additionalProperties": false,
+      "description": "Self-contained signed verification lineage retained with every recovered result even after live proposal, decision, and grant records are no longer independently active.",
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/ToolDecision"
+        },
+        "grant": {
+          "$ref": "#/$defs/ToolGrant"
+        },
+        "proposal": {
+          "$ref": "#/$defs/ToolProposal"
+        },
+        "result": {
+          "$ref": "#/$defs/ToolResult"
+        }
+      },
+      "required": [
+        "proposal",
+        "decision",
+        "grant",
+        "result"
+      ],
+      "type": "object"
+    },
     "Risk": {
       "enum": [
         "low",

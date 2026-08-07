@@ -81,11 +81,34 @@
         "profile": {
           "const": "RFC 8785 JCS over strict I-JSON",
           "type": "string"
+        },
+        "unitSemantics": {
+          "const": "maxStringBytes and maxBodyBytes count UTF-8 bytes; maxCanonicalDepth and maxCanonicalNodes are aggregate runtime limits not expressible by JSON Schema.",
+          "type": "string"
+        },
+        "validationSteps": {
+          "items": false,
+          "maxItems": 3,
+          "minItems": 3,
+          "prefixItems": [
+            {
+              "const": "strict-json-parse"
+            },
+            {
+              "const": "json-schema-2020-12"
+            },
+            {
+              "const": "bounded-canonical-json"
+            }
+          ],
+          "type": "array"
         }
       },
       "required": [
         "limits",
-        "profile"
+        "profile",
+        "unitSemantics",
+        "validationSteps"
       ],
       "type": "object"
     },
@@ -292,8 +315,8 @@
     },
     "requiredFeatures": {
       "items": false,
-      "maxItems": 8,
-      "minItems": 8,
+      "maxItems": 9,
+      "minItems": 9,
       "prefixItems": [
         {
           "const": "bound-ed25519-auth"
@@ -306,6 +329,9 @@
         },
         {
           "const": "operation-recovery"
+        },
+        {
+          "const": "snapshot-pagination-v1"
         },
         {
           "const": "pinned-server-event-keys"
@@ -329,6 +355,7 @@
           "shadow-auditor/event-envelope/v1",
           "shadow-auditor/key-rotation/v1",
           "shadow-auditor/request-signature/v1",
+          "shadow-auditor/snapshot-cursor/v1",
           "shadow-auditor/tool-decision/v1",
           "shadow-auditor/tool-descriptor/v1",
           "shadow-auditor/tool-grant/v1",
@@ -337,8 +364,8 @@
         ],
         "type": "string"
       },
-      "maxItems": 8,
-      "minItems": 8,
+      "maxItems": 9,
+      "minItems": 9,
       "type": "array",
       "uniqueItems": true
     },

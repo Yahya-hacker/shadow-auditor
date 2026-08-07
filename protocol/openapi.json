@@ -89,6 +89,32 @@
           "$ref": "./schemas/common.schema.json#/$defs/Base64Url64"
         }
       },
+      "SnapshotCollection": {
+        "in": "query",
+        "name": "collection",
+        "required": true,
+        "schema": {
+          "$ref": "./schemas/sessions.schema.json#/$defs/SnapshotCollectionName"
+        }
+      },
+      "SnapshotCursor": {
+        "description": "Signed opaque continuation returned by the preceding page. It is valid only for the exact tenant, session, snapshot, version, collection, boundary digest, next offset, and expiry embedded in the token.",
+        "in": "query",
+        "name": "cursor",
+        "required": false,
+        "schema": {
+          "$ref": "./schemas/sessions.schema.json#/$defs/SnapshotCursorToken"
+        }
+      },
+      "SnapshotId": {
+        "description": "Omit to atomically create a new frozen snapshot. Supply the returned snapshotId to start another collection or continue an existing collection in that same snapshot.",
+        "in": "query",
+        "name": "snapshotId",
+        "required": false,
+        "schema": {
+          "$ref": "./schemas/common.schema.json#/$defs/Uuid"
+        }
+      },
       "TenantId": {
         "in": "header",
         "name": "X-Shadow-Tenant-Id",
@@ -616,7 +642,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "./schemas/sessions.schema.json#/$defs/SessionSnapshot"
+                  "$ref": "./schemas/sessions.schema.json#/$defs/SessionCheckpoint"
                 }
               }
             },
@@ -722,7 +748,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "./schemas/sessions.schema.json#/$defs/SessionSnapshot"
+                  "$ref": "./schemas/sessions.schema.json#/$defs/SessionCheckpoint"
                 }
               }
             },
@@ -863,11 +889,20 @@
     },
     "/v1/sessions/{sessionId}/snapshot": {
       "get": {
-        "description": "Returns the event head plus every pending proposal, recorded decision, active grant, result, and durable operation needed to recover after a crash or cursor expiry.",
+        "description": "Returns one bounded page from one collection of an immutable, snapshot-consistent recovery view. Omitting snapshotId and cursor atomically creates the snapshot and returns offset zero. To start the other collections, reuse that snapshotId without a cursor. To continue a collection, supply both the same snapshotId and its preceding signed cursor. Every collection is ordered by its stable lowercase UUID: proposalId, decisionId, grantId, resultId, or operation requestId. The client verifies every page against the tenant, session, snapshot identity, version, collection, frozen boundaries, event head, state, timestamps, and requested offset from its authenticated request and first accepted page; it never treats page-provided scope as trusted. Every returned record must carry the same tenant and session identity. Result records contain proposal, decision, grant, and result lineage. The client completes recovery only after all five collections reach their declared itemCount and terminal collectionDigest.",
         "operationId": "getSessionSnapshot",
         "parameters": [
           {
             "$ref": "#/components/parameters/SessionIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/SnapshotCollection"
+          },
+          {
+            "$ref": "#/components/parameters/SnapshotId"
+          },
+          {
+            "$ref": "#/components/parameters/SnapshotCursor"
           },
           {
             "$ref": "#/components/parameters/ProtocolVersion"
@@ -908,16 +943,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "./schemas/sessions.schema.json#/$defs/SessionSnapshot"
+                  "$ref": "./schemas/sessions.schema.json#/$defs/SessionSnapshotPage"
                 }
               }
             },
-            "description": "Complete session snapshot"
+            "description": "Bounded deterministic page from the frozen session snapshot"
           },
           "401": {
             "$ref": "#/components/responses/Problem"
           },
           "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "410": {
             "$ref": "#/components/responses/Problem"
           }
         },
@@ -1162,6 +1203,18 @@
       "provider-accounting"
     ]
   },
+  "x-shadow-canonical-validation": {
+    "applicability": "Every JSON body, decoded snapshot cursor, signing projection, manifest projection, event envelope and payload, tool descriptor/schema/arguments/output/evidence/error value, and every other value hashed as canonical JSON.",
+    "order": [
+      "Enforce compressed and expanded negotiated byte maxima before accepting the body.",
+      "Parse with the strict duplicate-key-rejecting JSON parser.",
+      "Validate the exact closed JSON Schema with draft 2020-12 and real format validators.",
+      "Run the exported bounded canonical JSON validator over the parsed value.",
+      "Only then canonicalize, hash, sign, verify, persist, or act on the value."
+    ],
+    "schemaLimit": "JSON Schema maxLength counts Unicode code points and cannot enforce aggregate canonical depth, node count, or UTF-8 payload size. It is never a substitute for bounded canonical validation.",
+    "units": "String and payload maxima count UTF-8 bytes. Object member names count as nodes. The frozen limits and validation-step identifiers are machine-readable in manifest.canonicalJson."
+  },
   "x-shadow-compression": {
     "request": "identity is mandatory; gzip is optional only after negotiation. Body signatures always cover decompressed canonical JSON. Expansion beyond the negotiated body maximum fails before parsing.",
     "response": "JSON may use negotiated gzip. text/event-stream is always identity to preserve byte-for-byte replay."
@@ -1214,6 +1267,14 @@
     ],
     "signatureTransport": "X-Shadow-Signature"
   },
+  "x-shadow-snapshot-recovery": {
+    "boundary": "At snapshot creation the server freezes state, eventHead, all five collection item counts, and each terminal collection hash. A collection hash starts from SHA-256 of the ASCII snapshot collection domain plus collection name and advances once per ordered record over the previous hash, stable record UUID, and bounded-canonical record digest.",
+    "cursor": "The opaque cursor is unpadded base64url of exact canonical JSON matching SnapshotCursor. Its Ed25519 signature uses the enrollment-pinned server event-signing key and the shadow-auditor/snapshot-cursor/v1 domain. The projection binds protocol, tenant, session, snapshot ID/version, collection, collection digest, next offset, and exact snapshot expiry.",
+    "expiry": "The server retains an immutable snapshot for at least 15 minutes and advertises its exact snapshotExpiresAt. At or after expiry, every page or cursor request returns 410 snapshot_expired. The client discards all partial collections and restarts without snapshotId or cursor; pages from different snapshots must never be combined.",
+    "integrity": "Pages contain at most 128 records, begin at the requested exact offset, and never overlap. The final page has null nextCursor. Clients validate even terminal pages against trusted authenticated request scope and the frozen identity established by the first accepted page, require every record to match that tenant and session, and require contiguous offsets, globally strict UUID ordering, no duplicate IDs, exact item counts, and matching terminal hashes across every collection before accepting recovery.",
+    "lineage": "Each results item is a RecoveredToolResult carrying the signed proposal, decision, grant, and result. Clients verify the existing complete tool-result signature/digest chain using only this recovered record.",
+    "retry": "Until expiry, repeating the same snapshotId, collection, and cursor returns the identical status, selected headers, media type, and body bytes. Altered, cross-collection, cross-snapshot, stale-version, foreign-tenant/session, or skipped-offset cursor use fails closed with snapshot_cursor_mismatch."
+  },
   "x-shadow-sse": {
     "encoding": "Each event is exactly id:<cursor> LF event:<eventType> LF data:<canonical-envelope> LF LF, UTF-8, identity content encoding.",
     "expiredCursor": "A cursor older than retention returns 410 cursor_expired and a snapshot location; the client MUST resnapshot before reconnecting.",
@@ -1228,7 +1289,7 @@
     "descriptor": "Each bounded local tool descriptor is signed by the enrollment-pinned device key and includes an object-root input schema from the Protocol 1.0 closed, recursive subset: every node has exactly one supported type; object nodes declare bounded properties, required, maxProperties, and additionalProperties:false; array and string nodes declare hard maxima; unsupported keywords fail closed. Its schemaDigest covers canonical JSON of that schema, descriptorDigest covers the non-circular descriptor signing projection, and authorization signs that exact projection in the tool-descriptor domain.",
     "grant": "A grant is valid only for an approved, timely decision. It binds the proposal and decision digests, expires only according to its own signed expiry after issuance, carries a one-use nonce, and cannot increase any proposed budget estimate or any Protocol 1.0 hard maximum. Immediately before atomic one-use consumption, the client MUST revalidate the device-signed descriptor/schema digest and the canonical arguments digest against the exact local descriptor and arguments to be executed.",
     "proposalAndDecision": "A proposal binds tenant, session, proposal ID, tool name, descriptor digest, canonical arguments digest, risk, budget estimate, and expiry. Every proposal-chain verifier recomputes argumentsDigest from the carried canonical arguments. The human decision binds the complete proposal digest and must be recorded no later than proposal expiry.",
-    "result": "A result binds the proposal, decision, and consumed grant plus execution ledger ID, status, and canonical JSON output/evidence/error digests. succeeded forbids an error digest; failed, timeout, and ambiguous require one. cancelled and denied remain explicit outcomes.",
+    "result": "A result binds the proposal, decision, and consumed grant plus execution ledger ID, status, and canonical JSON output/evidence/error digests. succeeded forbids an error digest; failed, timeout, and ambiguous require one. cancelled and denied remain explicit outcomes. Durable recovery returns each completed result with self-contained signed proposal, decision, and grant lineage so the result remains independently verifiable after live authority records are retired.",
     "transport": "Signed projections exclude their own digest, signature, and authorization fields. Descriptor, decision, and result signatures use the applicable enrollment-pinned device authority. NegotiatedCapabilities provisions exactly two distinct serverToolSigningKeys: the proposal role signs only proposals and the grant role signs only grants. Before accepting enrollment, clients semantically validate the complete set. Clients pin the enrollment-authenticated key IDs, public-key thumbprints, key material, and roles to the token family and every session it creates; duplicate key IDs/material, unknown keys, and cross-role signatures fail closed. The set is immutable in-band, so replacement requires re-enrollment and new sessions. Retries provide at-least-once transport safety while durable idempotency and atomic one-use grant consumption preserve exactly-once local execution authority."
   },
   "x-shadow-version-negotiation": {

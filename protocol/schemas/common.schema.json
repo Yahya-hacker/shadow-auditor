@@ -44,10 +44,12 @@
       "additionalProperties": {
         "$ref": "#/$defs/JsonValue"
       },
+      "description": "Structural JSON Schema validation is necessary but not sufficient. This value must also pass the bounded canonical JSON validator and UTF-8 byte limits frozen in the protocol manifest.",
       "maxProperties": 256,
       "type": "object"
     },
     "JsonValue": {
+      "description": "A structural JSON value. After schema validation, every canonicalized or signed instance must pass the bounded canonical JSON validator. JSON Schema cannot enforce aggregate depth, node count, canonical payload bytes, or UTF-8 string bytes.",
       "oneOf": [
         {
           "type": "null"
@@ -61,7 +63,6 @@
           "type": "number"
         },
         {
-          "maxLength": 65536,
           "type": "string"
         },
         {

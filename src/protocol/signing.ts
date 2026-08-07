@@ -20,6 +20,7 @@ import {
   digestCanonicalJson,
   EMPTY_BODY_SHA256,
   JsonValue,
+  parseStrictJson,
   sha256Bytes,
 } from './canonical-json.js';
 
@@ -32,6 +33,8 @@ export const TOOL_DECISION_DOMAIN = 'shadow-auditor/tool-decision/v1';
 export const TOOL_GRANT_DOMAIN = 'shadow-auditor/tool-grant/v1';
 export const TOOL_RESULT_DOMAIN = 'shadow-auditor/tool-result/v1';
 export const EVENT_ENVELOPE_DOMAIN = 'shadow-auditor/event-envelope/v1';
+export const SNAPSHOT_CURSOR_DOMAIN = 'shadow-auditor/snapshot-cursor/v1';
+export const SNAPSHOT_COLLECTION_DOMAIN = 'shadow-auditor/snapshot-collection/v1';
 
 const UUID_PATTERN = /^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/;
 const DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -203,6 +206,97 @@ export interface SignedToolResult {
   authorization: DetachedSignature;
   projection: ToolResultProjection;
   resultDigest: string;
+}
+
+export interface RecoveredToolResultLineage {
+  decision: SignedToolDecision;
+  grant: SignedToolGrant;
+  proposal: SignedToolProposal;
+  result: SignedToolResult;
+}
+
+export type RecoveryCollectionName =
+  | 'activeGrants'
+  | 'decisions'
+  | 'operations'
+  | 'pendingProposals'
+  | 'results';
+
+export interface RecoveryCollectionBoundary {
+  collectionDigest: string;
+  itemCount: number;
+}
+
+export type RecoveryCollectionBoundaries = Readonly<Record<
+  RecoveryCollectionName,
+  RecoveryCollectionBoundary
+>>;
+
+export interface SnapshotCursorSigningProjection {
+  collection: RecoveryCollectionName;
+  collectionDigest: string;
+  expiresAt: string;
+  nextOffset: number;
+  protocolVersion: typeof PROTOCOL_VERSION;
+  sessionId: string;
+  snapshotId: string;
+  snapshotVersion: number;
+  tenantId: string;
+}
+
+export interface SignedSnapshotCursor {
+  authorization: DetachedSignature;
+  projection: SnapshotCursorSigningProjection;
+}
+
+export interface SnapshotCursorContext {
+  collection: RecoveryCollectionName;
+  collectionDigest: string;
+  expectedOffset: number;
+  sessionId: string;
+  snapshotExpiresAt: string;
+  snapshotId: string;
+  snapshotVersion: number;
+  tenantId: string;
+}
+
+export interface SnapshotPage {
+  collection: RecoveryCollectionName;
+  collectionBoundaries: RecoveryCollectionBoundaries;
+  createdAt: string;
+  eventHead: EventHead;
+  items: readonly unknown[];
+  nextCursor: null | string;
+  pageStart: number;
+  protocolVersion: typeof PROTOCOL_VERSION;
+  sessionId: string;
+  snapshotCreatedAt: string;
+  snapshotExpiresAt: string;
+  snapshotId: string;
+  snapshotVersion: number;
+  state: string;
+  tenantId: string;
+  updatedAt: string;
+}
+
+export interface SnapshotCollectionContext {
+  collection: RecoveryCollectionName;
+  collectionBoundaries: RecoveryCollectionBoundaries;
+  createdAt: string;
+  eventHead: EventHead;
+  protocolVersion: typeof PROTOCOL_VERSION;
+  sessionId: string;
+  snapshotCreatedAt: string;
+  snapshotExpiresAt: string;
+  snapshotId: string;
+  snapshotVersion: number;
+  state: string;
+  tenantId: string;
+  updatedAt: string;
+}
+
+export interface SnapshotPageContext extends SnapshotCollectionContext {
+  expectedPageStart: number;
 }
 
 export interface SignedEventEnvelope extends EventProjection {
@@ -1387,6 +1481,597 @@ export function verifyToolResult(
     result.authorization,
     authorities.result.publicKey,
     authorities.result.expectedKeyId,
+  );
+}
+
+const SNAPSHOT_COLLECTIONS: readonly RecoveryCollectionName[] = [
+  'activeGrants',
+  'decisions',
+  'operations',
+  'pendingProposals',
+  'results',
+];
+
+function cursorString(
+  record: Readonly<Record<string, JsonValue>>,
+  key: string,
+): string {
+  const value = record[key];
+  if (typeof value !== 'string') {
+    fail('snapshot_cursor_mismatch', `snapshot cursor ${key} must be a string`);
+  }
+
+  return value;
+}
+
+function assertSnapshotCursorStructure(
+  value: JsonValue,
+): asserts value is JsonValue & SignedSnapshotCursor {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor must be an object');
+  }
+
+  const cursor = value as Record<string, JsonValue>;
+  if (Object.keys(cursor).sort().join(',') !== 'authorization,projection') {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor contains unknown or missing fields');
+  }
+
+  const {authorization, projection} = cursor;
+  if (
+    typeof authorization !== 'object' ||
+    authorization === null ||
+    Array.isArray(authorization)
+  ) {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor authorization must be an object');
+  }
+
+  const authorizationRecord = authorization as Record<string, JsonValue>;
+  if (
+    Object.keys(authorizationRecord).sort().join(',') !==
+    'algorithm,keyId,signature'
+  ) {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor authorization is malformed');
+  }
+
+  const algorithm = cursorString(authorizationRecord, 'algorithm');
+  if (algorithm !== 'Ed25519') {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor algorithm must be Ed25519');
+  }
+
+  assertUuid(cursorString(authorizationRecord, 'keyId'), 'snapshot cursor keyId');
+  decodeBase64Url(
+    cursorString(authorizationRecord, 'signature'),
+    64,
+    'snapshot cursor signature',
+  );
+
+  if (
+    typeof projection !== 'object' ||
+    projection === null ||
+    Array.isArray(projection)
+  ) {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor projection must be an object');
+  }
+
+  const projectionRecord = projection as Record<string, JsonValue>;
+  const projectionKeys = [
+    'collection',
+    'collectionDigest',
+    'expiresAt',
+    'nextOffset',
+    'protocolVersion',
+    'sessionId',
+    'snapshotId',
+    'snapshotVersion',
+    'tenantId',
+  ];
+  if (
+    Object.keys(projectionRecord).sort().join(',') !==
+    projectionKeys.sort().join(',')
+  ) {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor projection is malformed');
+  }
+
+  if (cursorString(projectionRecord, 'protocolVersion') !== PROTOCOL_VERSION) {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor protocolVersion is invalid');
+  }
+
+  assertUuid(cursorString(projectionRecord, 'tenantId'), 'snapshot cursor tenantId');
+  assertUuid(cursorString(projectionRecord, 'sessionId'), 'snapshot cursor sessionId');
+  assertUuid(cursorString(projectionRecord, 'snapshotId'), 'snapshot cursor snapshotId');
+  if (
+    !Number.isSafeInteger(projectionRecord.snapshotVersion) ||
+    Number(projectionRecord.snapshotVersion) < 1
+  ) {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor snapshotVersion is invalid');
+  }
+
+  const collection = cursorString(projectionRecord, 'collection');
+  if (!SNAPSHOT_COLLECTIONS.includes(collection as RecoveryCollectionName)) {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor collection is invalid');
+  }
+
+  assertDigest(
+    cursorString(projectionRecord, 'collectionDigest'),
+    'snapshot cursor collectionDigest',
+  );
+  if (
+    !Number.isSafeInteger(projectionRecord.nextOffset) ||
+    Number(projectionRecord.nextOffset) < 1
+  ) {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor nextOffset is invalid');
+  }
+
+  parseTimestamp(
+    cursorString(projectionRecord, 'expiresAt'),
+    'snapshot cursor expiresAt',
+  );
+}
+
+export function createSnapshotCursor(
+  projection: SnapshotCursorSigningProjection,
+  keyId: string,
+  privateSeed: string,
+): SignedSnapshotCursor {
+  const cursor: SignedSnapshotCursor = {
+    authorization: {
+      algorithm: 'Ed25519',
+      keyId,
+      signature: signProjection(SNAPSHOT_CURSOR_DOMAIN, projection, privateSeed),
+    },
+    projection,
+  };
+  assertSnapshotCursorStructure(parseStrictJson(canonicalizeJson(cursor)));
+  return cursor;
+}
+
+export function encodeSnapshotCursor(cursor: SignedSnapshotCursor): string {
+  return Buffer.from(canonicalizeJson(cursor), 'utf8').toString('base64url');
+}
+
+export function decodeSnapshotCursor(token: string): SignedSnapshotCursor {
+  if (
+    typeof token !== 'string' ||
+    token.length < 128 ||
+    token.length > 2048 ||
+    !/^[A-Za-z0-9_-]+$/u.test(token)
+  ) {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor token is malformed');
+  }
+
+  const decoded = Buffer.from(token, 'base64url');
+  if (decoded.toString('base64url') !== token || decoded.length > 1536) {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor token is not canonical base64url');
+  }
+
+  const json = decoded.toString('utf8');
+  if (!Buffer.from(json, 'utf8').equals(decoded)) {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor token is not valid UTF-8');
+  }
+
+  let value: JsonValue;
+  try {
+    value = parseStrictJson(json);
+  } catch {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor token does not contain strict JSON');
+  }
+
+  assertSnapshotCursorStructure(value);
+  if (canonicalizeJson(value) !== json) {
+    fail('snapshot_cursor_mismatch', 'snapshot cursor token JSON is not canonical');
+  }
+
+  return value;
+}
+
+function snapshotCursorMismatch(actual: unknown, expected: unknown, label: string): void {
+  if (actual !== expected) {
+    fail('snapshot_cursor_mismatch', `${label} does not match the frozen snapshot`);
+  }
+}
+
+export function verifySnapshotCursor(
+  cursor: SignedSnapshotCursor,
+  context: SnapshotCursorContext,
+  authority: SigningAuthority,
+  now: number = Date.now(),
+): void {
+  const validated = decodeSnapshotCursor(encodeSnapshotCursor(cursor));
+  const {projection} = validated;
+  snapshotCursorMismatch(projection.tenantId, context.tenantId, 'tenantId');
+  snapshotCursorMismatch(projection.sessionId, context.sessionId, 'sessionId');
+  snapshotCursorMismatch(projection.snapshotId, context.snapshotId, 'snapshotId');
+  snapshotCursorMismatch(
+    projection.snapshotVersion,
+    context.snapshotVersion,
+    'snapshotVersion',
+  );
+  snapshotCursorMismatch(projection.collection, context.collection, 'collection');
+  snapshotCursorMismatch(
+    projection.collectionDigest,
+    context.collectionDigest,
+    'collectionDigest',
+  );
+  snapshotCursorMismatch(projection.nextOffset, context.expectedOffset, 'nextOffset');
+  snapshotCursorMismatch(
+    projection.expiresAt,
+    context.snapshotExpiresAt,
+    'expiresAt',
+  );
+  if (now >= parseTimestamp(projection.expiresAt, 'snapshot cursor expiresAt')) {
+    fail('snapshot_expired', 'snapshot cursor has expired; restart from a new snapshot');
+  }
+
+  assertAuthorization(
+    SNAPSHOT_CURSOR_DOMAIN,
+    validated.projection,
+    validated.authorization,
+    authority.publicKey,
+    authority.expectedKeyId,
+  );
+}
+
+function snapshotItemId(collection: RecoveryCollectionName, item: unknown): string {
+  if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+    fail('snapshot_integrity_failed', `${collection} item must be an object`);
+  }
+
+  const record = item as Record<string, unknown>;
+  const projection =
+    collection === 'operations'
+      ? (record.operation as Record<string, unknown> | undefined)
+      : collection === 'results'
+        ? (record.result as Record<string, unknown> | undefined)?.projection
+        : record.projection;
+  if (typeof projection !== 'object' || projection === null || Array.isArray(projection)) {
+    fail('snapshot_integrity_failed', `${collection} item projection is missing`);
+  }
+
+  const idFields: Record<RecoveryCollectionName, string> = {
+    activeGrants: 'grantId',
+    decisions: 'decisionId',
+    operations: 'requestId',
+    pendingProposals: 'proposalId',
+    results: 'resultId',
+  };
+  const id = (projection as Record<string, unknown>)[idFields[collection]];
+  if (typeof id !== 'string') {
+    fail('snapshot_integrity_failed', `${collection} stable record identifier is missing`);
+  }
+
+  assertUuid(id, `${collection} stable record identifier`);
+  return id;
+}
+
+function assertSnapshotItemScope(
+  collection: RecoveryCollectionName,
+  item: unknown,
+  tenantId: string,
+  sessionId: string,
+): void {
+  if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+    fail('snapshot_integrity_failed', `${collection} item must be an object`);
+  }
+
+  const record = item as Record<string, unknown>;
+  const assertProjectionScope = (value: unknown, label: string): void => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      fail('snapshot_integrity_failed', `${label} is missing`);
+    }
+
+    const projection = (value as Record<string, unknown>).projection;
+    if (typeof projection !== 'object' || projection === null || Array.isArray(projection)) {
+      fail('snapshot_integrity_failed', `${label} projection is missing`);
+    }
+
+    const fields = projection as Record<string, unknown>;
+    if (fields.tenantId !== tenantId || fields.sessionId !== sessionId) {
+      fail('snapshot_integrity_failed', `${label} belongs to a different tenant or session`);
+    }
+  };
+
+  switch (collection) {
+    case 'operations': {
+      const operation = record.operation;
+      if (typeof operation !== 'object' || operation === null || Array.isArray(operation)) {
+        fail('snapshot_integrity_failed', 'recovered operation is missing');
+      }
+
+      if (
+        record.sessionId !== sessionId ||
+        (operation as Record<string, unknown>).tenantId !== tenantId
+      ) {
+        fail('snapshot_integrity_failed', 'operation belongs to a different tenant or session');
+      }
+
+      break;
+    }
+
+    case 'results': {
+      for (const lineagePart of ['proposal', 'decision', 'grant', 'result'] as const) {
+        assertProjectionScope(record[lineagePart], `recovered result ${lineagePart}`);
+      }
+
+      break;
+    }
+
+    default: {
+      assertProjectionScope(record, `${collection} item`);
+    }
+  }
+}
+
+function snapshotCollectionGenesis(collection: RecoveryCollectionName): string {
+  return sha256Bytes(Buffer.from(`${SNAPSHOT_COLLECTION_DOMAIN}\n${collection}\n`, 'ascii'));
+}
+
+function advanceSnapshotCollectionHash(
+  collection: RecoveryCollectionName,
+  previousHash: string,
+  item: unknown,
+): string {
+  const itemId = snapshotItemId(collection, item);
+  const itemDigest = digestCanonicalJson(item);
+  return sha256Bytes(
+    Buffer.from(
+      `${SNAPSHOT_COLLECTION_DOMAIN}\n${collection}\n${previousHash}\n${itemId}\n${itemDigest}\n`,
+      'ascii',
+    ),
+  );
+}
+
+export function snapshotCollectionBoundary(
+  collection: RecoveryCollectionName,
+  items: readonly unknown[],
+): RecoveryCollectionBoundary {
+  let collectionDigest = snapshotCollectionGenesis(collection);
+  let previousId: string | undefined;
+  for (const item of items) {
+    const itemId = snapshotItemId(collection, item);
+    if (previousId !== undefined && itemId <= previousId) {
+      fail('snapshot_integrity_failed', `${collection} items are not strictly ordered`);
+    }
+
+    collectionDigest = advanceSnapshotCollectionHash(collection, collectionDigest, item);
+    previousId = itemId;
+  }
+
+  return {collectionDigest, itemCount: items.length};
+}
+
+function assertSnapshotBoundaries(boundaries: RecoveryCollectionBoundaries): void {
+  if (typeof boundaries !== 'object' || boundaries === null) {
+    fail('snapshot_integrity_failed', 'snapshot collection boundaries are missing');
+  }
+
+  if (
+    Object.keys(boundaries).sort().join(',') !==
+    [...SNAPSHOT_COLLECTIONS].sort().join(',')
+  ) {
+    fail('snapshot_integrity_failed', 'snapshot collection boundaries are incomplete');
+  }
+
+  for (const collection of SNAPSHOT_COLLECTIONS) {
+    const boundary = boundaries[collection];
+    if (
+      !boundary ||
+      !Number.isSafeInteger(boundary.itemCount) ||
+      boundary.itemCount < 0
+    ) {
+      fail('snapshot_integrity_failed', `${collection} itemCount is invalid`);
+    }
+
+    assertDigest(boundary.collectionDigest, `${collection} collectionDigest`);
+  }
+}
+
+function assertSnapshotPageContext(context: SnapshotPageContext): void {
+  if (
+    !SNAPSHOT_COLLECTIONS.includes(context.collection) ||
+    !Number.isSafeInteger(context.expectedPageStart) ||
+    context.expectedPageStart < 0
+  ) {
+    fail('snapshot_cursor_mismatch', 'expected snapshot page scope is invalid');
+  }
+}
+
+function assertSnapshotPageItemOrderAndScope(
+  page: SnapshotPage,
+  context: SnapshotPageContext,
+): void {
+  let previousId: string | undefined;
+  for (const item of page.items) {
+    assertSnapshotItemScope(page.collection, item, context.tenantId, context.sessionId);
+    const itemId = snapshotItemId(page.collection, item);
+    if (previousId !== undefined && itemId <= previousId) {
+      fail('snapshot_integrity_failed', 'snapshot page items are not strictly ordered');
+    }
+
+    previousId = itemId;
+  }
+}
+
+export function verifySnapshotPage(
+  page: SnapshotPage,
+  context: SnapshotPageContext,
+  authority: SigningAuthority,
+  now: number = Date.now(),
+): void {
+  assertEqual(page.protocolVersion, PROTOCOL_VERSION, 'snapshot protocolVersion');
+  assertUuid(page.tenantId, 'snapshot tenantId');
+  assertUuid(page.sessionId, 'snapshot sessionId');
+  assertUuid(page.snapshotId, 'snapshot snapshotId');
+  if (!Number.isSafeInteger(page.snapshotVersion) || page.snapshotVersion < 1) {
+    fail('snapshot_integrity_failed', 'snapshotVersion is invalid');
+  }
+
+  if (!SNAPSHOT_COLLECTIONS.includes(page.collection)) {
+    fail('snapshot_integrity_failed', 'snapshot collection is invalid');
+  }
+
+  assertSnapshotPageContext(context);
+
+  const createdAt = parseTimestamp(page.snapshotCreatedAt, 'snapshotCreatedAt');
+  const expiresAt = parseTimestamp(page.snapshotExpiresAt, 'snapshotExpiresAt');
+  if (expiresAt - createdAt < 15 * 60 * 1000) {
+    fail('snapshot_integrity_failed', 'snapshot retention is shorter than 15 minutes');
+  }
+
+  if (now >= expiresAt) {
+    fail('snapshot_expired', 'snapshot has expired; discard partial recovery and restart');
+  }
+
+  assertSnapshotBoundaries(page.collectionBoundaries);
+  if (
+    page.collection !== context.collection ||
+    page.pageStart !== context.expectedPageStart ||
+    snapshotPageIdentity(page) !== snapshotPageIdentity(context)
+  ) {
+    fail('snapshot_cursor_mismatch', 'snapshot page does not match the requested frozen scope');
+  }
+
+  if (
+    !Number.isSafeInteger(page.pageStart) ||
+    page.pageStart < 0 ||
+    page.items.length > 128
+  ) {
+    fail('snapshot_integrity_failed', 'snapshot page bounds are invalid');
+  }
+
+  const boundary = page.collectionBoundaries[page.collection];
+  const nextOffset = page.pageStart + page.items.length;
+  if (nextOffset > boundary.itemCount) {
+    fail('snapshot_integrity_failed', 'snapshot page exceeds its frozen boundary');
+  }
+
+  assertSnapshotPageItemOrderAndScope(page, context);
+
+  if (nextOffset < boundary.itemCount) {
+    if (page.items.length === 0 || page.nextCursor === null) {
+      fail('snapshot_integrity_failed', 'non-terminal snapshot page lacks a continuation');
+    }
+
+    verifySnapshotCursor(
+      decodeSnapshotCursor(page.nextCursor),
+      {
+        collection: page.collection,
+        collectionDigest: boundary.collectionDigest,
+        expectedOffset: nextOffset,
+        sessionId: page.sessionId,
+        snapshotExpiresAt: page.snapshotExpiresAt,
+        snapshotId: page.snapshotId,
+        snapshotVersion: page.snapshotVersion,
+        tenantId: page.tenantId,
+      },
+      authority,
+      now,
+    );
+  } else if (page.nextCursor !== null) {
+    fail('snapshot_integrity_failed', 'terminal snapshot page must not have a cursor');
+  }
+}
+
+function snapshotPageIdentity(
+  page: SnapshotCollectionContext | SnapshotPage,
+): string {
+  return canonicalizeJson({
+    collection: page.collection,
+    collectionBoundaries: page.collectionBoundaries,
+    createdAt: page.createdAt,
+    eventHead: page.eventHead,
+    protocolVersion: page.protocolVersion,
+    sessionId: page.sessionId,
+    snapshotCreatedAt: page.snapshotCreatedAt,
+    snapshotExpiresAt: page.snapshotExpiresAt,
+    snapshotId: page.snapshotId,
+    snapshotVersion: page.snapshotVersion,
+    state: page.state,
+    tenantId: page.tenantId,
+    updatedAt: page.updatedAt,
+  });
+}
+
+export function assembleSnapshotCollection(
+  pages: readonly SnapshotPage[],
+  context: SnapshotCollectionContext,
+  authority: SigningAuthority,
+  now: number = Date.now(),
+): readonly unknown[] {
+  if (pages.length === 0) {
+    fail('snapshot_integrity_failed', 'at least one snapshot page is required');
+  }
+
+  const identity = snapshotPageIdentity(context);
+  const {collection} = context;
+  const boundary = context.collectionBoundaries[collection];
+  const items: unknown[] = [];
+  let expectedOffset = 0;
+  let previousId: string | undefined;
+  let collectionDigest = snapshotCollectionGenesis(collection);
+  let terminalSeen = false;
+
+  for (const page of pages) {
+    if (terminalSeen) {
+      fail('snapshot_integrity_failed', 'snapshot page appears after terminal completion');
+    }
+
+    if (page.pageStart !== expectedOffset) {
+      fail('snapshot_integrity_failed', 'snapshot pages contain a gap or duplicate');
+    }
+
+    verifySnapshotPage(
+      page,
+      {...context, expectedPageStart: expectedOffset},
+      authority,
+      now,
+    );
+    if (snapshotPageIdentity(page) !== identity) {
+      fail('snapshot_cursor_mismatch', 'snapshot page identity changed during pagination');
+    }
+
+    for (const item of page.items) {
+      const itemId = snapshotItemId(collection, item);
+      if (previousId !== undefined && itemId <= previousId) {
+        fail('snapshot_integrity_failed', 'snapshot records contain duplicates or reordering');
+      }
+
+      collectionDigest = advanceSnapshotCollectionHash(
+        collection,
+        collectionDigest,
+        item,
+      );
+      previousId = itemId;
+      items.push(item);
+    }
+
+    expectedOffset += page.items.length;
+    terminalSeen = page.nextCursor === null;
+  }
+
+  if (expectedOffset !== boundary.itemCount) {
+    fail('snapshot_integrity_failed', 'snapshot collection is incomplete');
+  }
+
+  if (collectionDigest !== boundary.collectionDigest) {
+    fail('snapshot_integrity_failed', 'snapshot collection digest does not match');
+  }
+
+  return items;
+}
+
+export function verifyRecoveredToolResult(
+  recovered: RecoveredToolResultLineage,
+  authorities: Pick<
+    ToolLifecycleAuthorities,
+    'decision' | 'grant' | 'proposal' | 'result'
+  >,
+): void {
+  verifyToolResult(
+    recovered.result,
+    recovered.proposal,
+    recovered.decision,
+    recovered.grant,
+    authorities,
   );
 }
 

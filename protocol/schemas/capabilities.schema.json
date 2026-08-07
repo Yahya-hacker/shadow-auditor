@@ -64,6 +64,7 @@
         "canonical-request-signing",
         "durable-idempotency",
         "operation-recovery",
+        "snapshot-pagination-v1",
         "pinned-server-event-keys",
         "signed-hash-chain-sse",
         "tool-authority-v1",
@@ -82,7 +83,7 @@
             "$ref": "#/$defs/Feature"
           },
           "maxItems": 16,
-          "minItems": 8,
+          "minItems": 9,
           "type": "array",
           "uniqueItems": true
         },

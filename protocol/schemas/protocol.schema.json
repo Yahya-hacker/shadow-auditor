@@ -30,7 +30,10 @@
       "$ref": "sessions.schema.json#/$defs/SessionControlRequest"
     },
     {
-      "$ref": "sessions.schema.json#/$defs/SessionSnapshot"
+      "$ref": "sessions.schema.json#/$defs/SessionCheckpoint"
+    },
+    {
+      "$ref": "sessions.schema.json#/$defs/SessionSnapshotPage"
     },
     {
       "$ref": "events.schema.json#/$defs/EventEnvelope"
@@ -49,6 +52,9 @@
     },
     {
       "$ref": "tools.schema.json#/$defs/ToolResult"
+    },
+    {
+      "$ref": "tools.schema.json#/$defs/RecoveredToolResult"
     },
     {
       "$ref": "usage.schema.json#/$defs/UsageRecord"
@@ -78,14 +84,23 @@
     "Operation": "operations.schema.json#/$defs/Operation",
     "Problem": "problem.schema.json#/$defs/Problem",
     "ProtocolManifest": "manifest.schema.json",
+    "RecoveredOperation": "sessions.schema.json#/$defs/RecoveredOperation",
+    "RecoveredToolResult": "tools.schema.json#/$defs/RecoveredToolResult",
     "RefreshRequest": "auth.schema.json#/$defs/RefreshRequest",
     "RequestSigningProjection": "request-signing.schema.json#/$defs/RequestSigningProjection",
     "RevokeKeyRequest": "auth.schema.json#/$defs/RevokeKeyRequest",
     "RotateKeyRequest": "auth.schema.json#/$defs/RotateKeyRequest",
     "ServerEventSigningKey": "capabilities.schema.json#/$defs/ServerEventSigningKey",
     "ServerToolSigningKey": "capabilities.schema.json#/$defs/ServerToolSigningKey",
+    "SessionCheckpoint": "sessions.schema.json#/$defs/SessionCheckpoint",
     "SessionControlRequest": "sessions.schema.json#/$defs/SessionControlRequest",
-    "SessionSnapshot": "sessions.schema.json#/$defs/SessionSnapshot",
+    "SessionSnapshotPage": "sessions.schema.json#/$defs/SessionSnapshotPage",
+    "SnapshotCollectionBoundaries": "sessions.schema.json#/$defs/SnapshotCollectionBoundaries",
+    "SnapshotCollectionBoundary": "sessions.schema.json#/$defs/SnapshotCollectionBoundary",
+    "SnapshotCollectionName": "sessions.schema.json#/$defs/SnapshotCollectionName",
+    "SnapshotCursor": "sessions.schema.json#/$defs/SnapshotCursor",
+    "SnapshotCursorProjection": "sessions.schema.json#/$defs/SnapshotCursorProjection",
+    "SnapshotCursorToken": "sessions.schema.json#/$defs/SnapshotCursorToken",
     "ToolDecision": "tools.schema.json#/$defs/ToolDecision",
     "ToolDescriptor": "tools.schema.json#/$defs/ToolDescriptor",
     "ToolGrant": "tools.schema.json#/$defs/ToolGrant",

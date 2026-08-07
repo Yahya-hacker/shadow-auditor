@@ -10,15 +10,21 @@
       "maxStringBytes": 65536,
       "maxToolDescriptors": 128
     },
-    "profile": "RFC 8785 JCS over strict I-JSON"
+    "profile": "RFC 8785 JCS over strict I-JSON",
+    "unitSemantics": "maxStringBytes and maxBodyBytes count UTF-8 bytes; maxCanonicalDepth and maxCanonicalNodes are aggregate runtime limits not expressible by JSON Schema.",
+    "validationSteps": [
+      "strict-json-parse",
+      "json-schema-2020-12",
+      "bounded-canonical-json"
+    ]
   },
   "digestAlgorithm": "sha256",
   "fileDigestSemantics": "SHA-256 over UTF-8 text after CRLF and CR normalization to LF; manifest.json is excluded to avoid self-reference.",
   "files": [
     {
-      "bytes": 44779,
+      "bytes": 50684,
       "path": "protocol/openapi.json",
-      "sha256": "sha256:72833352c2a53522504eb85c10ef0dac00766be99a2a445ea791d6fb5c1446c0"
+      "sha256": "sha256:63f8cd1af0df1054bde51b947d42466569555cbff44463a1da30a5645ebbdb07"
     },
     {
       "bytes": 8522,
@@ -26,14 +32,14 @@
       "sha256": "sha256:18a6df02c0c7fe7726c0de7661b74a35a496223be3580a8ad9fc7501431855b5"
     },
     {
-      "bytes": 6673,
+      "bytes": 6707,
       "path": "protocol/schemas/capabilities.schema.json",
-      "sha256": "sha256:f41d35c5fb984aa1707eb159d85ae87e6d433230ea1a754c319bafd917385cdd"
+      "sha256": "sha256:96b02e21442feda022e9fd02e00d8f13f7e4867e23c845a81c050f6d0623b50f"
     },
     {
-      "bytes": 4211,
+      "bytes": 4655,
       "path": "protocol/schemas/common.schema.json",
-      "sha256": "sha256:1f8ac275c512c0539c9b29723198a2fbf4e33b2a89e607378682133749aeb9a3"
+      "sha256": "sha256:0bc7ddc443048d0c9d13192fa571f207bf563037efede803dd14462983e1697f"
     },
     {
       "bytes": 9468,
@@ -41,9 +47,9 @@
       "sha256": "sha256:b6c3fc6f29aa73f33bf9319938ecc9d06709d4cce16f10e5646c533ec4da1ad1"
     },
     {
-      "bytes": 9140,
+      "bytes": 9947,
       "path": "protocol/schemas/manifest.schema.json",
-      "sha256": "sha256:6189f32cf8c414bc668624dd05d25c20ca251e3453347164704b2523d9c64085"
+      "sha256": "sha256:84c6d900b1a69381b2a01daf74d6735061d957b9200254a57bdef451f1035aa2"
     },
     {
       "bytes": 5405,
@@ -51,14 +57,14 @@
       "sha256": "sha256:08260c43dbbf1ca73ae9de3be8500fc4b0829ac7bf9db0c20b3da3f79ce09a32"
     },
     {
-      "bytes": 2318,
+      "bytes": 2419,
       "path": "protocol/schemas/problem.schema.json",
-      "sha256": "sha256:392776651bedf0ef00aa782fa493b48c86037659385e9a57401d624e511f1f28"
+      "sha256": "sha256:9053d3979d09d1b21fe78f673abe29c1ce2c5d09b36c7382b838914a2b3afb34"
     },
     {
-      "bytes": 3553,
+      "bytes": 4445,
       "path": "protocol/schemas/protocol.schema.json",
-      "sha256": "sha256:4bd7aa3cf6a22edf9e1faae7ce21eb7b2980cd681f3133253ab3f78ef608c772"
+      "sha256": "sha256:dfe1e7dfe41212e346245c45d9ce90b37343872023ff75973d94863f1dc1a4f9"
     },
     {
       "bytes": 4864,
@@ -66,14 +72,14 @@
       "sha256": "sha256:042240a395f715da06f3df6cc2c19225486617636a603d03adbb15e83531fdbd"
     },
     {
-      "bytes": 6820,
+      "bytes": 14642,
       "path": "protocol/schemas/sessions.schema.json",
-      "sha256": "sha256:2124b55efdc72c8a096d50433b25a21d6ba3d7e693fa9741624b81a4e2e53057"
+      "sha256": "sha256:aab9dc7c28e7ae27bc6a83b3ac40fd374d4b4f11cd2aa6238b4787d8c1a4c025"
     },
     {
-      "bytes": 16365,
+      "bytes": 17074,
       "path": "protocol/schemas/tools.schema.json",
-      "sha256": "sha256:5353a7a689bdc5f3bc784dbfa947958ec267bcc8fedad54081fc1185a051e90d"
+      "sha256": "sha256:82d5fcf27064087239b2ad9be7a46700ea6a9fff30fd2114908836b9bdcb2757"
     },
     {
       "bytes": 6273,
@@ -81,24 +87,24 @@
       "sha256": "sha256:2e500bb4f504dee362af9dfad703bb8bfe4d85e5830a7fd4b75e199d979b064b"
     },
     {
-      "bytes": 14247,
+      "bytes": 16640,
       "path": "protocol/signing-vectors.json",
-      "sha256": "sha256:e986accc0c18829fcd77a6b49549cda7642a9be5e6cfb948a63bd495e5ed59f7"
+      "sha256": "sha256:8cac893a118d6a797b0796cbc400d9529ba5006c77ba2ac7950308042f6d59eb"
     },
     {
-      "bytes": 23491,
+      "bytes": 25549,
       "path": "scripts/generate-protocol.mjs",
-      "sha256": "sha256:9e8460c3e97e1b908897d57ae6dd5ca18f575f3566b23a166a6bc5adc1c67481"
+      "sha256": "sha256:9a9ec259a0a3b967ffc5332f53986f7972ff60b9ce5c0b963e702826c9907ebd"
     },
     {
-      "bytes": 12973,
+      "bytes": 14212,
       "path": "src/protocol/canonical-json.ts",
-      "sha256": "sha256:17667d440c41d5ccfeecba3669589e5695a6b2ae5a22a284f1c86e1061e83587"
+      "sha256": "sha256:1013cb4dbac6b1ddb0fe5a1f98a6a0e8c64cd5d8589e30ea869182bfbc8f5240"
     },
     {
-      "bytes": 26756,
+      "bytes": 32570,
       "path": "src/protocol/generated/dtos.ts",
-      "sha256": "sha256:361a2246fcefc7eeffaf73e9a6e6e7bc7d8246dec3164281029c253d9d8895cb"
+      "sha256": "sha256:ba10fa34b119a9581002321d862d3e515b31aafdbe3434c3cc9870fc5df6f334"
     },
     {
       "bytes": 104,
@@ -106,12 +112,12 @@
       "sha256": "sha256:e4b34beca49d073fc4210c6ed2b593188bb67ed3569987dd659477e166d3e694"
     },
     {
-      "bytes": 54240,
+      "bytes": 75440,
       "path": "src/protocol/signing.ts",
-      "sha256": "sha256:53ca1fcef199a39fb49bfc4373ac5036da528da3e0d3fba1d1381587959e3bef"
+      "sha256": "sha256:29d3549744f05c74d87ece76b8efa6863830bc93419af04f6d33de00bae41f6b"
     }
   ],
-  "protocolDigest": "sha256:64cd095cd45e050e1f6d9415b3c42ab139872a0974b4a336a13b2a99b0cedf53",
+  "protocolDigest": "sha256:1ec720d7b46c1340235b2deda3a149276b8a2817ad2c712d0acd8ed7bbaa0fa3",
   "protocolDigestSemantics": "SHA-256 over strict canonical JSON of every manifest member except protocolDigest.",
   "protocolVersion": "1.0",
   "release": "1.0.0",
@@ -120,6 +126,7 @@
     "canonical-request-signing",
     "durable-idempotency",
     "operation-recovery",
+    "snapshot-pagination-v1",
     "pinned-server-event-keys",
     "signed-hash-chain-sse",
     "tool-authority-v1",
@@ -127,6 +134,7 @@
   ],
   "signingDomains": [
     "shadow-auditor/request-signature/v1",
+    "shadow-auditor/snapshot-cursor/v1",
     "shadow-auditor/key-rotation/v1",
     "shadow-auditor/tool-descriptor/v1",
     "shadow-auditor/tool-proposal/v1",

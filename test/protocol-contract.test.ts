@@ -13,7 +13,11 @@ import type {
 } from '../src/protocol/generated/dtos.js';
 import type {
   EventProjection,
+  RecoveredToolResultLineage,
+  RecoveryCollectionBoundaries,
   RequestBindingContext,
+  SnapshotCollectionContext,
+  SnapshotPage,
   ToolDecisionProjection,
   ToolDescriptorProjection,
   ToolGrantProjection,
@@ -22,6 +26,7 @@ import type {
 } from '../src/protocol/signing.js';
 
 import {
+  assembleSnapshotCollection,
   assertIdenticalIdempotentRetry,
   authorizeToolGrantExecution,
   canonicalizeJson,
@@ -32,8 +37,11 @@ import {
   createIdempotentRequestIdentity,
   createKeyRotationProjection,
   createRequestProjection,
+  createSnapshotCursor,
+  decodeSnapshotCursor,
   digestCanonicalJson,
   EMPTY_BODY_SHA256,
+  encodeSnapshotCursor,
   EVENT_ENVELOPE_DOMAIN,
   eventHash,
   type JsonValue,
@@ -52,6 +60,7 @@ import {
   type SignedToolProposal,
   type SignedToolResult,
   signProjection,
+  snapshotCollectionBoundary,
   TOOL_DECISION_DOMAIN,
   TOOL_DESCRIPTOR_DOMAIN,
   TOOL_GRANT_DOMAIN,
@@ -63,11 +72,15 @@ import {
   type ToolLifecycleAuthorities,
   toolProposalDigest,
   toolResultDigest,
+  validateBoundedCanonicalJson,
   validateServerEventSigningKeys,
   verifyBoundRequest,
   verifyEventEnvelope,
   verifyKeyRotationRequest,
   verifyProjection,
+  verifyRecoveredToolResult,
+  verifySnapshotCursor,
+  verifySnapshotPage,
   verifyToolDecision,
   verifyToolDescriptor,
   verifyToolGrant,
@@ -121,6 +134,25 @@ interface SigningVectors {
     projection: RequestSigningProjection;
     signature: string;
     signingInput: string;
+  };
+  snapshotCursor: {
+    canonicalCursor: string;
+    collectionGenesisDigest: string;
+    domain: string;
+    negative: string[];
+    projection: {
+      collection: 'operations';
+      collectionDigest: string;
+      expiresAt: string;
+      nextOffset: number;
+      protocolVersion: '1.0';
+      sessionId: string;
+      snapshotId: string;
+      snapshotVersion: number;
+      tenantId: string;
+    };
+    signature: string;
+    token: string;
   };
   toolLifecycle: {
     decision: {digest: string; projection: ToolDecisionProjection; signature: string};
@@ -328,6 +360,121 @@ function eventVerification(
     expectedTenantId,
     serverSigningKeys: [structuredClone(vectors.eventChain.serverSigningKey)],
     validateEnvelope: (envelope: SignedEventEnvelope) => eventEnvelopeSchema(envelope),
+  };
+}
+
+function indexedUuid(index: number): string {
+  return `00000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`;
+}
+
+function recoveryOperation(index: number) {
+  return {
+    operation: {
+      deviceId: vectors.request.projection.deviceId,
+      idempotencyKey: indexedUuid(index + 0x1_00_00),
+      kind: 'session.control',
+      outcome: {
+        bodyDigest: EMPTY_BODY_SHA256,
+        committedAt: '2026-01-02T03:04:10.000Z',
+        httpStatus: 204,
+        mediaType: 'none',
+        replayToken: 'Z3JhbnQtb25lLXVzZS0wMQ',
+      },
+      protocolVersion: '1.0',
+      requestDigest: createIdempotentRequestIdentity(vectors.request.projection).requestDigest,
+      requestId: indexedUuid(index),
+      resourceId: null,
+      status: 'committed',
+      tenantId: vectors.request.projection.tenantId,
+    },
+    sessionId: vectors.request.projection.sessionId as string,
+  };
+}
+
+function recoveryBoundaries(operations: readonly unknown[]): RecoveryCollectionBoundaries {
+  return {
+    activeGrants: snapshotCollectionBoundary('activeGrants', []),
+    decisions: snapshotCollectionBoundary('decisions', []),
+    operations: snapshotCollectionBoundary('operations', operations),
+    pendingProposals: snapshotCollectionBoundary('pendingProposals', []),
+    results: snapshotCollectionBoundary('results', []),
+  };
+}
+
+function snapshotAuthority() {
+  return {
+    expectedKeyId: vectors.eventChain.serverSigningKey.keyId,
+    publicKey: vectors.eventChain.serverSigningKey.publicKey,
+  };
+}
+
+function recoveryPages(
+  operations: readonly unknown[],
+  snapshotId = vectors.snapshotCursor.projection.snapshotId,
+  snapshotCreatedAt = '2026-01-02T03:04:08.000Z',
+  snapshotExpiresAt = vectors.snapshotCursor.projection.expiresAt,
+): SnapshotPage[] {
+  const boundaries = recoveryBoundaries(operations);
+  const pages: SnapshotPage[] = [];
+  for (let pageStart = 0; pageStart < operations.length || pageStart === 0; pageStart += 128) {
+    const items = operations.slice(pageStart, pageStart + 128);
+    const nextOffset = pageStart + items.length;
+    const nextCursor = nextOffset < operations.length
+      ? encodeSnapshotCursor(createSnapshotCursor(
+        {
+          collection: 'operations',
+          collectionDigest: boundaries.operations.collectionDigest,
+          expiresAt: snapshotExpiresAt,
+          nextOffset,
+          protocolVersion: '1.0',
+          sessionId: vectors.request.projection.sessionId as string,
+          snapshotId,
+          snapshotVersion: 1,
+          tenantId: vectors.request.projection.tenantId,
+        },
+        vectors.eventChain.serverSigningKey.keyId,
+        vectors.privateSeed,
+      ))
+      : null;
+    pages.push({
+      collection: 'operations',
+      collectionBoundaries: boundaries,
+      createdAt: '2026-01-02T03:04:05.000Z',
+      eventHead: {cursor: 1, eventHash: vectors.eventChain.eventHash},
+      items,
+      nextCursor,
+      pageStart,
+      protocolVersion: '1.0',
+      sessionId: vectors.request.projection.sessionId as string,
+      snapshotCreatedAt,
+      snapshotExpiresAt,
+      snapshotId,
+      snapshotVersion: 1,
+      state: 'awaiting-result',
+      tenantId: vectors.request.projection.tenantId,
+      updatedAt: '2026-01-02T03:04:10.000Z',
+    });
+    if (operations.length === 0) break;
+  }
+
+  return pages;
+}
+
+function snapshotContext(page: SnapshotPage): SnapshotCollectionContext {
+  return {
+    collection: page.collection,
+    collectionBoundaries: page.collectionBoundaries,
+    createdAt: page.createdAt,
+    eventHead: page.eventHead,
+    protocolVersion: page.protocolVersion,
+    sessionId: page.sessionId,
+    snapshotCreatedAt: page.snapshotCreatedAt,
+    snapshotExpiresAt: page.snapshotExpiresAt,
+    snapshotId: page.snapshotId,
+    snapshotVersion: page.snapshotVersion,
+    state: page.state,
+    tenantId: page.tenantId,
+    updatedAt: page.updatedAt,
   };
 }
 
@@ -1446,6 +1593,75 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       expect(timestamp('2026-01-02T03:04:05+00:00')).to.equal(false);
     });
 
+    it('requires bounded canonical validation after structural schema validation', () => {
+      const jsonValue = validator(ajv, 'common', 'JsonValue');
+      const multibyte = '\u00E9'.repeat(32_769);
+      expect(jsonValue(multibyte)).to.equal(true);
+      expectCanonicalError(
+        () => validateBoundedCanonicalJson(multibyte),
+        'string_too_large',
+      );
+
+      let nested: unknown = 0;
+      for (let index = 0; index < 33; index++) nested = [nested];
+      expect(jsonValue(nested)).to.equal(true);
+      expectCanonicalError(
+        () => validateBoundedCanonicalJson(nested),
+        'too_deep',
+      );
+
+      const excessiveNodes = Array.from(
+        {length: 100},
+        () => Array.from({length: 100}, () => null),
+      );
+      expect(jsonValue(excessiveNodes)).to.equal(true);
+      expectCanonicalError(
+        () => validateBoundedCanonicalJson(excessiveNodes),
+        'too_many_nodes',
+      );
+
+      const excessiveKeys = Object.fromEntries(
+        Array.from({length: 257}, (_, index) => [`key${index}`, null]),
+      );
+      expect(jsonValue(excessiveKeys)).to.equal(false);
+      expectCanonicalError(
+        () => validateBoundedCanonicalJson(excessiveKeys),
+        'object_too_large',
+      );
+
+      const excessiveItems = Array.from({length: 1025}, () => null);
+      expect(jsonValue(excessiveItems)).to.equal(false);
+      expectCanonicalError(
+        () => validateBoundedCanonicalJson(excessiveItems),
+        'array_too_large',
+      );
+
+      const oversizedKey = {['k'.repeat(65_537)]: null};
+      expect(jsonValue(oversizedKey)).to.equal(true);
+      expectCanonicalError(
+        () => validateBoundedCanonicalJson(oversizedKey),
+        'string_too_large',
+      );
+
+      const aggregatePayload = Array.from({length: 16}, () => 'a'.repeat(65_536));
+      expect(jsonValue(aggregatePayload)).to.equal(true);
+      expectCanonicalError(
+        () => validateBoundedCanonicalJson(aggregatePayload),
+        'payload_too_large',
+      );
+      const expansionString = '\u0000'.repeat(65_536);
+      const expansionPayload = Array.from({length: 1024}, () => expansionString);
+      expectCanonicalError(
+        () => validateBoundedCanonicalJson(expansionPayload),
+        'payload_too_large',
+      );
+
+      const valid = validateBoundedCanonicalJson({snowman: '\u2603'});
+      expect(valid.canonicalJson).to.equal('{"snowman":"\u2603"}');
+      expect(valid.payloadBytes).to.equal(Buffer.byteLength(valid.canonicalJson, 'utf8'));
+      expect(valid.nodeCount).to.equal(3);
+    });
+
     it('rejects unknown DTO fields and malformed key/signature encodings', () => {
       const request = validator(ajv, 'request-signing', 'RequestSigningProjection');
       expect(request(vectors.request.projection)).to.equal(true);
@@ -1544,6 +1760,7 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
           'canonical-request-signing',
           'durable-idempotency',
           'operation-recovery',
+          'snapshot-pagination-v1',
           'pinned-server-event-keys',
           'signed-hash-chain-sse',
           'tool-authority-v1',
@@ -1624,62 +1841,300 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       expect(usage({...billing, provider: 'must-not-appear'})).to.equal(false);
     });
 
-    it('validates complete durable operation and session snapshot recovery state', () => {
-      const operation = {
-        deviceId: vectors.request.projection.deviceId,
-        idempotencyKey: vectors.request.projection.idempotencyKey,
-        kind: 'tool.result',
-        outcome: {
-          bodyDigest: EMPTY_BODY_SHA256,
-          committedAt: '2026-01-02T03:04:10.000Z',
-          httpStatus: 204,
-          mediaType: 'none',
-          replayToken: 'Z3JhbnQtb25lLXVzZS0wMQ',
-        },
-        protocolVersion: '1.0',
-        requestDigest: createIdempotentRequestIdentity(vectors.request.projection).requestDigest,
-        requestId: vectors.request.projection.requestId,
-        resourceId: vectors.toolLifecycle.result.projection.resultId,
-        status: 'committed',
-        tenantId: vectors.request.projection.tenantId,
-      };
-      expect(validator(ajv, 'operations', 'Operation')(operation)).to.equal(true);
+    it('validates bounded immutable recovery pages and session checkpoints', () => {
+      const operation = recoveryOperation(1);
+      expect(validator(ajv, 'operations', 'Operation')(operation.operation)).to.equal(true);
       expect(validator(ajv, 'operations', 'Operation')({
-        ...operation,
+        ...operation.operation,
         kind: 'auth.enroll',
       })).to.equal(true);
       expect(validator(ajv, 'operations', 'Operation')({
-        ...operation,
+        ...operation.operation,
         kind: 'auth.refresh',
       })).to.equal(true);
-      const snapshot = {
-        activeGrants: [],
+      const checkpoint = {
         createdAt: '2026-01-02T03:04:05.000Z',
-        decisions: [],
         eventHead: {cursor: 1, eventHash: vectors.eventChain.eventHash},
-        operations: [operation],
-        pendingProposals: [],
         protocolVersion: '1.0',
-        results: [],
         sessionId: vectors.request.projection.sessionId,
-        snapshotId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-        snapshotVersion: 1,
         state: 'awaiting-result',
         tenantId: vectors.request.projection.tenantId,
         updatedAt: '2026-01-02T03:04:10.000Z',
       };
-      const validateSnapshot = validator(ajv, 'sessions', 'SessionSnapshot');
-      expect(validateSnapshot(snapshot), JSON.stringify(validateSnapshot.errors)).to.equal(true);
-      expect(validateSnapshot({...snapshot, operations: undefined})).to.equal(false);
-      expect(validateSnapshot({
-        ...snapshot,
+      const validateCheckpoint = validator(ajv, 'sessions', 'SessionCheckpoint');
+      expect(
+        validateCheckpoint(checkpoint),
+        JSON.stringify(validateCheckpoint.errors),
+      ).to.equal(true);
+      expect(validateCheckpoint({
+        ...checkpoint,
         eventHead: {cursor: 0, eventHash: vectors.eventChain.eventHash},
       })).to.equal(false);
-      expect(validateSnapshot({
-        ...snapshot,
+      expect(validateCheckpoint({
+        ...checkpoint,
         eventHead: {cursor: 1, eventHash: null},
       })).to.equal(false);
-      expect(validateSnapshot({...snapshot, eventHead: {cursor: 0, eventHash: null}})).to.equal(true);
+      expect(
+        validateCheckpoint({...checkpoint, eventHead: {cursor: 0, eventHash: null}}),
+      ).to.equal(true);
+
+      const [page] = recoveryPages([operation]);
+      const validateSnapshotPage = validator(ajv, 'sessions', 'SessionSnapshotPage');
+      expect(
+        validateSnapshotPage(page),
+        JSON.stringify(validateSnapshotPage.errors),
+      ).to.equal(true);
+      expect(validateSnapshotPage({...page, unexpected: true})).to.equal(false);
+      expect(validateSnapshotPage({
+        ...page,
+        collection: 'decisions',
+      })).to.equal(false);
+      verifySnapshotPage(
+        page,
+        {...snapshotContext(page), expectedPageStart: 0},
+        snapshotAuthority(),
+        Date.parse('2026-01-02T03:05:00.000Z'),
+      );
+
+      const expectedContext = {...snapshotContext(page), expectedPageStart: 0};
+      for (const alteredPage of [
+        {...page, tenantId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'},
+        {...page, snapshotId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'},
+        {...page, snapshotVersion: 2},
+        {...page, collection: 'decisions'},
+        {
+          ...page,
+          collectionBoundaries: {
+            ...page.collectionBoundaries,
+            operations: {
+              ...page.collectionBoundaries.operations,
+              collectionDigest: `sha256:${'ef'.repeat(32)}`,
+            },
+          },
+        },
+      ]) {
+        expectSigningError(
+          () => verifySnapshotPage(
+            alteredPage as SnapshotPage,
+            expectedContext,
+            snapshotAuthority(),
+            Date.parse('2026-01-02T03:05:00.000Z'),
+          ),
+          'snapshot_cursor_mismatch',
+        );
+      }
+
+      const foreignTerminalRecord = structuredClone(page);
+      (foreignTerminalRecord.items[0] as {sessionId: string}).sessionId =
+        'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+      expectSigningError(
+        () => verifySnapshotPage(
+          foreignTerminalRecord,
+          expectedContext,
+          snapshotAuthority(),
+          Date.parse('2026-01-02T03:05:00.000Z'),
+        ),
+        'snapshot_integrity_failed',
+      );
+    });
+
+    it('reconstructs more than 1,024 records without gaps or duplicates', () => {
+      const operations = Array.from({length: 1025}, (_, index) => recoveryOperation(index));
+      const pages = recoveryPages(operations);
+      const validateSnapshotPage = validator(ajv, 'sessions', 'SessionSnapshotPage');
+      expect(pages).to.have.length(9);
+      for (const page of pages) {
+        expect(
+          validateSnapshotPage(page),
+          JSON.stringify(validateSnapshotPage.errors),
+        ).to.equal(true);
+      }
+
+      const now = Date.parse('2026-01-02T03:05:00.000Z');
+      const context = snapshotContext(pages[0]);
+      const assembled = assembleSnapshotCollection(pages, context, snapshotAuthority(), now);
+      expect(assembled).to.deep.equal(operations);
+      expect(() => assembleSnapshotCollection(
+        pages.filter((_, index) => index !== 3),
+        context,
+        snapshotAuthority(),
+        now,
+      )).to.throw(ProtocolSigningError).with.property('code', 'snapshot_integrity_failed');
+      expect(() => assembleSnapshotCollection(
+        [pages[0], pages[0], ...pages.slice(1)],
+        context,
+        snapshotAuthority(),
+        now,
+      )).to.throw(ProtocolSigningError).with.property('code', 'snapshot_integrity_failed');
+      const emptyPages = recoveryPages([]);
+      expectSigningError(
+        () => assembleSnapshotCollection(
+          [emptyPages[0], emptyPages[0]],
+          snapshotContext(emptyPages[0]),
+          snapshotAuthority(),
+          now,
+        ),
+        'snapshot_integrity_failed',
+      );
+      expectSigningError(
+        () => assembleSnapshotCollection(
+          pages,
+          {...context, tenantId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'},
+          snapshotAuthority(),
+          now,
+        ),
+        'snapshot_cursor_mismatch',
+      );
+
+      const foreignItemPages = structuredClone(pages);
+      (foreignItemPages[0].items[0] as {sessionId: string}).sessionId =
+        'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+      expectSigningError(
+        () => assembleSnapshotCollection(
+          foreignItemPages,
+          context,
+          snapshotAuthority(),
+          now,
+        ),
+        'snapshot_integrity_failed',
+      );
+
+      const firstCursorToken = pages[0].nextCursor as string;
+      const firstCursor = decodeSnapshotCursor(firstCursorToken);
+      expect(encodeSnapshotCursor(firstCursor)).to.equal(firstCursorToken);
+      const cursorContext = {
+        ...firstCursor.projection,
+        expectedOffset: firstCursor.projection.nextOffset,
+        snapshotExpiresAt: firstCursor.projection.expiresAt,
+      };
+      verifySnapshotCursor(firstCursor, cursorContext, snapshotAuthority(), now);
+      expectSigningError(
+        () => verifySnapshotCursor(
+          firstCursor,
+          {...cursorContext, snapshotId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'},
+          snapshotAuthority(),
+          now,
+        ),
+        'snapshot_cursor_mismatch',
+      );
+      expectSigningError(
+        () => verifySnapshotCursor(
+          firstCursor,
+          {
+            ...cursorContext,
+            collection: 'decisions',
+            collectionDigest: pages[0].collectionBoundaries.decisions.collectionDigest,
+          },
+          snapshotAuthority(),
+          now,
+        ),
+        'snapshot_cursor_mismatch',
+      );
+      expectSigningError(
+        () => verifySnapshotPage(
+          pages[0],
+          {...snapshotContext(pages[0]), expectedPageStart: 0},
+          snapshotAuthority(),
+          Date.parse(pages[0].snapshotExpiresAt),
+        ),
+        'snapshot_expired',
+      );
+
+      const repeated = recoveryPages(operations);
+      expect(repeated[0].nextCursor).to.equal(pages[0].nextCursor);
+      const restarted = recoveryPages(
+        operations,
+        'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        '2026-01-02T03:24:08.000Z',
+        '2026-01-02T03:44:08.000Z',
+      );
+      expect(
+        assembleSnapshotCollection(
+          restarted,
+          snapshotContext(restarted[0]),
+          snapshotAuthority(),
+          Date.parse('2026-01-02T03:25:00.000Z'),
+        ),
+      ).to.deep.equal(operations);
+    });
+
+    it('matches the deterministic signed snapshot cursor vector', () => {
+      const vector = vectors.snapshotCursor;
+      const cursor = decodeSnapshotCursor(vector.token);
+      expect(canonicalizeJson(cursor)).to.equal(vector.canonicalCursor);
+      expect(cursor.authorization.signature).to.equal(vector.signature);
+      expect(encodeSnapshotCursor(cursor)).to.equal(vector.token);
+      expect(snapshotCollectionBoundary('operations', []).collectionDigest)
+        .to.equal(vector.collectionGenesisDigest);
+      expect(vector.negative).to.deep.equal([
+        'cross-snapshot-reuse',
+        'cross-collection-reuse',
+        'altered-offset',
+        'altered-boundary-digest',
+        'expired-snapshot',
+        'noncanonical-token',
+      ]);
+      verifySnapshotCursor(
+        cursor,
+        {
+          ...vector.projection,
+          expectedOffset: vector.projection.nextOffset,
+          snapshotExpiresAt: vector.projection.expiresAt,
+        },
+        snapshotAuthority(),
+        Date.parse('2026-01-02T03:05:00.000Z'),
+      );
+    });
+
+    it('verifies completed result lineage from recovery artifacts alone', () => {
+      const {decision, grant, proposal, result} = toolRecords();
+      const recovered = {decision, grant, proposal, result};
+      const validateRecovered = validator(ajv, 'tools', 'RecoveredToolResult');
+      expect(
+        validateRecovered(recovered),
+        JSON.stringify(validateRecovered.errors),
+      ).to.equal(true);
+
+      const resultsBoundary = snapshotCollectionBoundary('results', [recovered]);
+      const collectionBoundaries = {
+        ...recoveryBoundaries([]),
+        results: resultsBoundary,
+      };
+      const page: SnapshotPage = {
+        collection: 'results',
+        collectionBoundaries,
+        createdAt: '2026-01-02T03:04:05.000Z',
+        eventHead: {cursor: 1, eventHash: vectors.eventChain.eventHash},
+        items: [recovered],
+        nextCursor: null,
+        pageStart: 0,
+        protocolVersion: '1.0',
+        sessionId: vectors.request.projection.sessionId as string,
+        snapshotCreatedAt: '2026-01-02T03:04:08.000Z',
+        snapshotExpiresAt: '2026-01-02T03:24:08.000Z',
+        snapshotId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        snapshotVersion: 1,
+        state: 'completed',
+        tenantId: vectors.request.projection.tenantId,
+        updatedAt: '2026-01-02T03:04:10.000Z',
+      };
+      const validatePage = validator(ajv, 'sessions', 'SessionSnapshotPage');
+      expect(validatePage(page), JSON.stringify(validatePage.errors)).to.equal(true);
+      const [recoveredOnly] = assembleSnapshotCollection(
+        [page],
+        snapshotContext(page),
+        snapshotAuthority(),
+        Date.parse('2026-01-02T03:05:00.000Z'),
+      ) as readonly RecoveredToolResultLineage[];
+      verifyRecoveredToolResult(recoveredOnly, toolAuthorities());
+
+      const tampered = structuredClone(recovered);
+      tampered.decision.projection.proposalId =
+        'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+      expectSigningError(
+        () => verifyRecoveredToolResult(tampered, toolAuthorities()),
+        'binding_mismatch',
+      );
     });
 
     it('exposes every valid top-level wire document through the closed root union', () => {
@@ -1700,13 +2155,15 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
         'auth.schema.json#/$defs/RevokeKeyRequest',
         'sessions.schema.json#/$defs/CreateSessionRequest',
         'sessions.schema.json#/$defs/SessionControlRequest',
-        'sessions.schema.json#/$defs/SessionSnapshot',
+        'sessions.schema.json#/$defs/SessionCheckpoint',
+        'sessions.schema.json#/$defs/SessionSnapshotPage',
         'events.schema.json#/$defs/EventEnvelope',
         'tools.schema.json#/$defs/ToolDescriptor',
         'tools.schema.json#/$defs/ToolProposal',
         'tools.schema.json#/$defs/ToolDecision',
         'tools.schema.json#/$defs/ToolGrant',
         'tools.schema.json#/$defs/ToolResult',
+        'tools.schema.json#/$defs/RecoveredToolResult',
         'usage.schema.json#/$defs/UsageRecord',
         'operations.schema.json#/$defs/Operation',
         'problem.schema.json#/$defs/Problem',
@@ -1716,7 +2173,8 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       const protocolMessage = ajv.getSchema(protocolSchema.$id);
       expect(protocolMessage).to.be.a('function');
       if (!protocolMessage) throw new Error('missing root protocol validator');
-      const {decision, descriptor, result} = toolRecords();
+      const {decision, descriptor, grant, proposal, result} = toolRecords();
+      const [snapshotPage] = recoveryPages([recoveryOperation(1)]);
       const manifest = JSON.parse(
         fs.readFileSync(path.join(root, 'protocol', 'manifest.json'), 'utf8'),
       ) as JsonValue;
@@ -1734,6 +2192,8 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
         ['tool descriptor', descriptor],
         ['tool decision', decision],
         ['tool result', result],
+        ['recovered tool result', {decision, grant, proposal, result}],
+        ['snapshot page', snapshotPage],
         ['protocol manifest', manifest],
       ]) {
         expect(
@@ -1751,7 +2211,11 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       if (!validateManifest) throw new Error('missing manifest validator');
       const manifest = JSON.parse(
         fs.readFileSync(path.join(root, 'protocol', 'manifest.json'), 'utf8'),
-      ) as {files: Array<{path: string}>; requiredFeatures: string[]};
+      ) as {
+        canonicalJson: {limits: Record<string, number>};
+        files: Array<{path: string}>;
+        requiredFeatures: string[];
+      };
       expect(validateManifest(manifest), JSON.stringify(validateManifest.errors)).to.equal(true);
 
       const traversal = structuredClone(manifest);
@@ -1773,6 +2237,15 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       const featureDowngrade = structuredClone(manifest);
       featureDowngrade.requiredFeatures.pop();
       expect(validateManifest(featureDowngrade)).to.equal(false);
+
+      const validateCapabilities = validator(ajv, 'capabilities', 'ClientCapabilities');
+      expect(validateCapabilities({
+        compression: ['identity'],
+        limits: manifest.canonicalJson.limits,
+        optionalFeatures: [],
+        requiredFeatures: manifest.requiredFeatures,
+        supportedVersions: ['1.0'],
+      }), JSON.stringify(validateCapabilities.errors)).to.equal(true);
     });
 
     it('uses closed RFC 9457 problem details with stable codes and request IDs', () => {

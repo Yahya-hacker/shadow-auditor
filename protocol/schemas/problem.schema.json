@@ -77,6 +77,9 @@
         "request_stale",
         "revocation_store_unavailable",
         "resource_not_found",
+        "snapshot_cursor_mismatch",
+        "snapshot_expired",
+        "snapshot_integrity_failed",
         "state_conflict",
         "tool_digest_mismatch"
       ],

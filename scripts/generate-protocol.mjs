@@ -18,6 +18,17 @@ const schemaDirectory = path.join(root, 'protocol', 'schemas');
 const check = process.argv.includes('--check');
 const PRIVATE_KEY_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
 const PUBLIC_KEY_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+const REQUIRED_FEATURES = [
+  'bound-ed25519-auth',
+  'canonical-request-signing',
+  'durable-idempotency',
+  'operation-recovery',
+  'snapshot-pagination-v1',
+  'pinned-server-event-keys',
+  'signed-hash-chain-sse',
+  'tool-authority-v1',
+  'usage-reconciliation-v1',
+];
 
 function stable(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -392,6 +403,31 @@ function generateVectors() {
     sessionId,
     tenantId,
   };
+  const snapshotCollectionDigest = sha256(
+    Buffer.from('shadow-auditor/snapshot-collection/v1\noperations\n', 'ascii'),
+  );
+  const snapshotCursorProjection = {
+    collection: 'operations',
+    collectionDigest: snapshotCollectionDigest,
+    expiresAt: '2026-01-02T03:24:08.000Z',
+    nextOffset: 128,
+    protocolVersion: '1.0',
+    sessionId,
+    snapshotId: eventPayload.snapshotId,
+    snapshotVersion: eventPayload.snapshotVersion,
+    tenantId,
+  };
+  const snapshotCursor = {
+    authorization: {
+      algorithm: 'Ed25519',
+      keyId: serverKeyId,
+      signature: signer.sign(
+        'shadow-auditor/snapshot-cursor/v1',
+        snapshotCursorProjection,
+      ),
+    },
+    projection: snapshotCursorProjection,
+  };
 
   return {
     algorithm: 'Ed25519',
@@ -532,6 +568,22 @@ function generateVectors() {
       signature: signer.sign('shadow-auditor/request-signature/v1', requestProjection),
       signingInput: `shadow-auditor/request-signature/v1\n${stable(requestProjection)}`,
     },
+    snapshotCursor: {
+      canonicalCursor: stable(snapshotCursor),
+      collectionGenesisDigest: snapshotCollectionDigest,
+      domain: 'shadow-auditor/snapshot-cursor/v1',
+      negative: [
+        'cross-snapshot-reuse',
+        'cross-collection-reuse',
+        'altered-offset',
+        'altered-boundary-digest',
+        'expired-snapshot',
+        'noncanonical-token',
+      ],
+      projection: snapshotCursorProjection,
+      signature: snapshotCursor.authorization.signature,
+      token: Buffer.from(stable(snapshotCursor), 'utf8').toString('base64url'),
+    },
     toolLifecycle: {
       decision: {
         digest: decisionDigest,
@@ -625,6 +677,17 @@ async function writeOrCheck(relativePath, expected) {
 
 async function main() {
   const schemas = await readSchemas();
+  const featureEnum = schemas.get('capabilities.schema.json')?.$defs?.Feature?.enum;
+  if (!Array.isArray(featureEnum)) {
+    throw new TypeError('Capability feature enum is missing');
+  }
+
+  for (const feature of REQUIRED_FEATURES) {
+    if (!featureEnum.includes(feature)) {
+      throw new Error(`Manifest feature is not negotiable: ${feature}`);
+    }
+  }
+
   const schemaNames = [...schemas.keys()];
   const normalizedJson = new Map();
   for (const name of schemaNames) {
@@ -664,6 +727,12 @@ async function main() {
         maxToolDescriptors: 128,
       },
       profile: 'RFC 8785 JCS over strict I-JSON',
+      unitSemantics: 'maxStringBytes and maxBodyBytes count UTF-8 bytes; maxCanonicalDepth and maxCanonicalNodes are aggregate runtime limits not expressible by JSON Schema.',
+      validationSteps: [
+        'strict-json-parse',
+        'json-schema-2020-12',
+        'bounded-canonical-json',
+      ],
     },
     digestAlgorithm: 'sha256',
     fileDigestSemantics: 'SHA-256 over UTF-8 text after CRLF and CR normalization to LF; manifest.json is excluded to avoid self-reference.',
@@ -671,18 +740,10 @@ async function main() {
     protocolDigestSemantics: 'SHA-256 over strict canonical JSON of every manifest member except protocolDigest.',
     protocolVersion: '1.0',
     release: '1.0.0',
-    requiredFeatures: [
-      'bound-ed25519-auth',
-      'canonical-request-signing',
-      'durable-idempotency',
-      'operation-recovery',
-      'pinned-server-event-keys',
-      'signed-hash-chain-sse',
-      'tool-authority-v1',
-      'usage-reconciliation-v1',
-    ],
+    requiredFeatures: REQUIRED_FEATURES,
     signingDomains: [
       'shadow-auditor/request-signature/v1',
+      'shadow-auditor/snapshot-cursor/v1',
       'shadow-auditor/key-rotation/v1',
       'shadow-auditor/tool-descriptor/v1',
       'shadow-auditor/tool-proposal/v1',
