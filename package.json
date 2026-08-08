@@ -8,6 +8,7 @@
     "@tree-sitter-grammars/tree-sitter-toml": true,
     "@tree-sitter-grammars/tree-sitter-yaml": true,
     "tree-sitter": true,
+    "tree-sitter-bash": true,
     "tree-sitter-c": true,
     "tree-sitter-c-sharp": true,
     "tree-sitter-cpp": true,
@@ -23,6 +24,7 @@
     "tree-sitter-ruby": true,
     "tree-sitter-rust": true,
     "tree-sitter-scala": true,
+    "tree-sitter-sql": true,
     "tree-sitter-typescript": true,
     "unrs-resolver": true
   },
@@ -53,6 +55,7 @@
     "ink-text-input": "^6.0.0",
     "react": "^19.2.0",
     "tree-sitter": "^0.21.1",
+    "tree-sitter-bash": "0.21.0",
     "tree-sitter-c": "^0.21.4",
     "tree-sitter-c-sharp": "^0.21.3",
     "tree-sitter-cpp": "0.23.2",
@@ -68,6 +71,7 @@
     "tree-sitter-ruby": "^0.23.1",
     "tree-sitter-rust": "^0.21.0",
     "tree-sitter-scala": "^0.24.0",
+    "tree-sitter-sql": "0.1.0",
     "tree-sitter-typescript": "^0.23.2",
     "zod": "^3.25.76",
     "zustand": "^5.0.14"
