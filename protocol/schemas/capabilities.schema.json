@@ -12,14 +12,14 @@
           "type": "array",
           "uniqueItems": true
         },
-        "limits": {
-          "$ref": "common.schema.json#/$defs/PayloadLimits"
+        "operationalLimits": {
+          "$ref": "common.schema.json#/$defs/OperationalLimits"
         },
         "optionalFeatures": {
           "items": {
             "$ref": "#/$defs/Feature"
           },
-          "maxItems": 16,
+          "maxItems": 11,
           "type": "array",
           "uniqueItems": true
         },
@@ -27,10 +27,13 @@
           "items": {
             "$ref": "#/$defs/Feature"
           },
-          "maxItems": 16,
+          "maxItems": 11,
           "minItems": 1,
           "type": "array",
           "uniqueItems": true
+        },
+        "structuralProfile": {
+          "$ref": "common.schema.json#/$defs/ProtocolStructuralProfile"
         },
         "supportedVersions": {
           "items": {
@@ -47,7 +50,8 @@
         "requiredFeatures",
         "optionalFeatures",
         "compression",
-        "limits"
+        "structuralProfile",
+        "operationalLimits"
       ],
       "type": "object"
     },
@@ -84,7 +88,7 @@
           "items": {
             "$ref": "#/$defs/Feature"
           },
-          "maxItems": 16,
+          "maxItems": 11,
           "minItems": 11,
           "type": "array",
           "uniqueItems": true
@@ -93,9 +97,9 @@
           "$ref": "common.schema.json#/$defs/Sha256Digest",
           "description": "SHA-256 over canonical JSON of the complete semantically validated effective limits object. The client independently recomputes this value and pins it to the token family and every session."
         },
-        "limits": {
-          "$ref": "common.schema.json#/$defs/PayloadLimits",
-          "description": "Each value is the deterministic fieldwise minimum of the client and server offers. The complete result MUST pass the exported semantic negotiateProtocolLimits helper before enrollment or session creation; incompatible combinations fail with incompatible_limit_profile."
+        "operationalLimits": {
+          "$ref": "common.schema.json#/$defs/OperationalLimits",
+          "description": "Each value is the deterministic fieldwise minimum of the client and server operational offers. Both peers combine this object with structuralProfile and call negotiateProtocolLimits before enrollment or session creation."
         },
         "protocolVersion": {
           "$ref": "common.schema.json#/$defs/ProtocolVersion"
@@ -154,13 +158,18 @@
           "minItems": 2,
           "type": "array",
           "uniqueItems": true
+        },
+        "structuralProfile": {
+          "$ref": "common.schema.json#/$defs/ProtocolStructuralProfile",
+          "description": "Exact frozen Protocol 1.0 structural capacity. Any differing value is an incompatible protocol profile."
         }
       },
       "required": [
         "protocolVersion",
         "features",
         "compression",
-        "limits",
+        "structuralProfile",
+        "operationalLimits",
         "limitProfileDigest",
         "serverManifestDigest",
         "serverEventSigningKeys",

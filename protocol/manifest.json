@@ -1,6 +1,7 @@
 {
   "canonicalJson": {
     "generatedStrings": {
+      "fixedMaxStringBytes": 8192,
       "limits": {
         "accessToken": 8192,
         "base64Url32": 43,
@@ -19,7 +20,6 @@
         "timestamp": 24,
         "uuid": 36
       },
-      "minimumNegotiatedMaxStringBytes": 8192,
       "snapshotCursor": {
         "canonicalMaxBytes": 705,
         "encoding": "unpadded-base64url",
@@ -29,38 +29,73 @@
       "unitSemantics": "All values are maximum UTF-8 bytes; snapshotCursor.tokenMaxCharacters is also bytes because base64url is ASCII. Problem title, detail, and instance conservatively allow four UTF-8 bytes per schema code point."
     },
     "limitInvariants": {
-      "minimumArrayItems": 7,
-      "minimumObjectKeys": 32,
-      "minimumRecoveryPageOverheadBytes": 16384,
-      "minimumRecoveryPageOverheadNodes": 256,
-      "minimumStringBytes": 8192,
-      "profileDigestSemantics": "SHA-256 over strict canonical JSON of the complete effective limits object.",
-      "recoveryPageDepthOverhead": 2,
-      "semanticValidator": "negotiateProtocolLimits",
-      "toolProposalEventOverheadBytes": 16384,
-      "toolProposalEventOverheadNodes": 256,
-      "toolProposalItemOverheadBytes": 4096,
-      "toolProposalItemOverheadNodes": 64
+      "cardinalities": {
+        "invariantMatrix": "protocol/invariant-matrix.json",
+        "largestMandatoryArray": "protocol/invariant-matrix.json#/mandatoryDtos",
+        "largestMandatoryClosedObject": "protocol/schemas/common.schema.json#/$defs/EffectiveProtocolLimits",
+        "mandatoryDtoCount": 37,
+        "manifestFileCount": 23,
+        "minimumArrayItems": 37,
+        "minimumObjectKeys": 16,
+        "requiredFeatureCount": 11
+      },
+      "compositions": {
+        "createSessionDescriptorDepthOverhead": 4,
+        "maximumToolInputSchemaDepth": 5,
+        "minimumCanonicalDepth": 9,
+        "relationship": "maxCanonicalDepth >= maximumToolInputSchemaDepth + createSessionDescriptorDepthOverhead"
+      },
+      "recovery": {
+        "minimumCanonicalDepth": 9,
+        "minimumRecoveryItemDepth": 3,
+        "minimumRecoveryPageOverheadBytes": 16384,
+        "minimumRecoveryPageOverheadNodes": 256,
+        "recoveryPageDepthOverhead": 2
+      },
+      "semantics": {
+        "minimumStringBytes": 8192,
+        "profileDigestSemantics": "SHA-256 over strict canonical JSON of the complete effective limits object.",
+        "semanticValidator": "negotiateProtocolLimits"
+      },
+      "toolProposal": {
+        "eventOverheadBytes": 16384,
+        "eventOverheadNodes": 256,
+        "itemOverheadBytes": 4096,
+        "itemOverheadNodes": 64
+      }
     },
-    "limits": {
-      "maxArrayItems": 1024,
-      "maxBodyBytes": 1048576,
-      "maxCanonicalDepth": 32,
-      "maxCanonicalNodes": 10000,
-      "maxEventBytes": 262144,
-      "maxObjectKeys": 256,
-      "maxRecoveryItemBytes": 786432,
-      "maxRecoveryItemDepth": 30,
-      "maxRecoveryItemNodes": 9744,
-      "maxRecoveryPageItems": 128,
-      "maxRecoveryPageOverheadBytes": 262144,
-      "maxRecoveryPageOverheadNodes": 256,
-      "maxStringBytes": 65536,
-      "maxToolArgumentsBytes": 245760,
-      "maxToolDescriptors": 128,
-      "maxToolResultValueBytes": 524288
+    "operationalQuotas": {
+      "minimumCompatible": {
+        "maxBodyBytes": 21504,
+        "maxEventBytes": 17408,
+        "maxRecoveryItemBytes": 5120,
+        "maxRecoveryPageItems": 1,
+        "maxToolArgumentsBytes": 1024,
+        "maxToolDescriptors": 1,
+        "maxToolResultValueBytes": 1024
+      },
+      "serverHardMaximum": {
+        "maxBodyBytes": 1048576,
+        "maxEventBytes": 262144,
+        "maxRecoveryItemBytes": 786432,
+        "maxRecoveryPageItems": 37,
+        "maxToolArgumentsBytes": 245760,
+        "maxToolDescriptors": 37,
+        "maxToolResultValueBytes": 524288
+      }
     },
     "profile": "RFC 8785 JCS over strict I-JSON",
+    "structuralProfile": {
+      "maxArrayItems": 37,
+      "maxCanonicalDepth": 9,
+      "maxCanonicalNodes": 577,
+      "maxObjectKeys": 16,
+      "maxRecoveryItemDepth": 3,
+      "maxRecoveryItemNodes": 321,
+      "maxRecoveryPageOverheadBytes": 16384,
+      "maxRecoveryPageOverheadNodes": 256,
+      "maxStringBytes": 8192
+    },
     "unitSemantics": "maxStringBytes and maxBodyBytes count UTF-8 bytes; maxCanonicalDepth and maxCanonicalNodes are aggregate runtime limits not expressible by JSON Schema.",
     "validationSteps": [
       "strict-json-parse",
@@ -72,9 +107,14 @@
   "fileDigestSemantics": "SHA-256 over UTF-8 text after CRLF and CR normalization to LF; manifest.json is excluded to avoid self-reference.",
   "files": [
     {
-      "bytes": 56048,
+      "bytes": 56254,
+      "path": "protocol/invariant-matrix.json",
+      "sha256": "sha256:0e6037bf52bfc75c5b2c73a06c0f16bdd7f275c320cf7d9c6119aeddc799119c"
+    },
+    {
+      "bytes": 57970,
       "path": "protocol/openapi.json",
-      "sha256": "sha256:ab65ace91865f62c14d3ba8f72f5913e7bc4ebf56b24f3dbd91b12babacd3413"
+      "sha256": "sha256:677944a3faa8ed3f209d7563b5449157df7ef67dbe3e544b316242b49e9a0c8f"
     },
     {
       "bytes": 8819,
@@ -82,14 +122,14 @@
       "sha256": "sha256:68cdfd9321b385d28a5eb3b259fe57a3ed71acfdbdd2aa909dbcdeaf603a4b10"
     },
     {
-      "bytes": 7313,
+      "bytes": 7735,
       "path": "protocol/schemas/capabilities.schema.json",
-      "sha256": "sha256:22ac8dca350a393bc594249e8083361b47e6c3f693d43bccd37edfb972778047"
+      "sha256": "sha256:a6428a99f7dba75efa3fe641a62f1fb34372e07b5fc5e234fb5a9b90769d73ae"
     },
     {
-      "bytes": 7316,
+      "bytes": 10199,
       "path": "protocol/schemas/common.schema.json",
-      "sha256": "sha256:1e9bf76901abb1ab91f1fae763a0bc27576d09cf6f85a0c3c36d2763015bffce"
+      "sha256": "sha256:f0b899e846059d49c2cc1dbf65bc2f8d4a61a9d1a7e2ef8f19caadbe43d1edb9"
     },
     {
       "bytes": 9468,
@@ -97,9 +137,14 @@
       "sha256": "sha256:b6c3fc6f29aa73f33bf9319938ecc9d06709d4cce16f10e5646c533ec4da1ad1"
     },
     {
-      "bytes": 18081,
+      "bytes": 9492,
+      "path": "protocol/schemas/invariant-matrix.schema.json",
+      "sha256": "sha256:9dd4a4bc5ec79e5b5632139fdb3b40c24af36d7b95278e34817ec618303cb9de"
+    },
+    {
+      "bytes": 20445,
       "path": "protocol/schemas/manifest.schema.json",
-      "sha256": "sha256:5488db34560080ffe1e5c05235832dbb500378c005e73d7e6022f01b4dacaca1"
+      "sha256": "sha256:11695cfa73e643c8d747b5cc74d5ff6dc6bb01a75860f46c4ce2e695564cf5e5"
     },
     {
       "bytes": 5405,
@@ -112,9 +157,9 @@
       "sha256": "sha256:e398c66afed8105c009b08aa7cc46b827cbaff8f7cdd19d1a844fcf7c83312a3"
     },
     {
-      "bytes": 4296,
+      "bytes": 4352,
       "path": "protocol/schemas/protocol.schema.json",
-      "sha256": "sha256:854a628d9104d9d73f8d798a1c86f8d1f8b7f68eb3c60d84d8767d2d34c88ad2"
+      "sha256": "sha256:ad1222fd74fe2e5a138ce583f9f3a269e8af02f72d0930fce6f25d44c8734dfd"
     },
     {
       "bytes": 4864,
@@ -122,29 +167,29 @@
       "sha256": "sha256:042240a395f715da06f3df6cc2c19225486617636a603d03adbb15e83531fdbd"
     },
     {
-      "bytes": 17355,
+      "bytes": 17982,
       "path": "protocol/schemas/sessions.schema.json",
-      "sha256": "sha256:39abbdbb37491714f14296373b8eaa0568441ebff0923f32c1fcdaba38e48e8b"
+      "sha256": "sha256:6e07473623a75736ec654bbaa173ad6855648f0c8664b6a19e8c4a2cd08cb75d"
     },
     {
-      "bytes": 16897,
+      "bytes": 17504,
       "path": "protocol/schemas/tools.schema.json",
-      "sha256": "sha256:db71c5e7275f6f3d00f8c494ef9e600764bb1d6ed7b0cd03c4d00eac112f6fbe"
+      "sha256": "sha256:6be2caf2ae48958719938bbec46bb413f18fcd30e2dd7dae548c3d598ed94abc"
     },
     {
-      "bytes": 6273,
+      "bytes": 6271,
       "path": "protocol/schemas/usage.schema.json",
-      "sha256": "sha256:2e500bb4f504dee362af9dfad703bb8bfe4d85e5830a7fd4b75e199d979b064b"
+      "sha256": "sha256:af51e036c82757f0874a4a067a12902c59317f09c6ae52b92de392b1c4ac9f36"
     },
     {
-      "bytes": 16969,
+      "bytes": 16966,
       "path": "protocol/signing-vectors.json",
-      "sha256": "sha256:5cc93a1d1bee881097a8b6ffd74e359e8cac4b81aa3c71074df20cbb07d7854e"
+      "sha256": "sha256:84f49d18d59e3863072fb3b14e9808be94014be7c798c84380c71890f64ec882"
     },
     {
-      "bytes": 30092,
+      "bytes": 48458,
       "path": "scripts/generate-protocol.mjs",
-      "sha256": "sha256:d7bf15195c5de1f4eb39993e96d92cb8229620f81d2626fe840cc91fd8a51170"
+      "sha256": "sha256:c90b931a4d493556ac2c01cf4c1429c1c826e0c5733cca6f2a763fdf8427f6f2"
     },
     {
       "bytes": 15292,
@@ -152,9 +197,14 @@
       "sha256": "sha256:fa20da538c609b5bc5eabec6f7332f9331d5520b4d9f61552903b9927bb833e0"
     },
     {
-      "bytes": 37640,
+      "bytes": 44411,
       "path": "src/protocol/generated/dtos.ts",
-      "sha256": "sha256:adfae410f48552c00965c571f2e203bf87cf7bc3e8f9f4c1ff3189feee5f323e"
+      "sha256": "sha256:ad9d5afd5c27aa22921c23068b4bb61954e77f3f8abecbdff4bb6952c6c9faec"
+    },
+    {
+      "bytes": 3986,
+      "path": "src/protocol/generated/profile.ts",
+      "sha256": "sha256:7e81ea84fff669786dc257b5b4397221b6668c63aa48e5989eb830daa5e15c29"
     },
     {
       "bytes": 144,
@@ -162,17 +212,17 @@
       "sha256": "sha256:e9fe8d9e27cc9f202e49ea4d957521b40d6a7e988d16c01e7b2e0ae5528867b5"
     },
     {
-      "bytes": 11512,
+      "bytes": 11411,
       "path": "src/protocol/negotiated-limits.ts",
-      "sha256": "sha256:c96c99b22357b8b19e39e3d0664877da8bf7e72396c027cb1d481909c80d5d21"
+      "sha256": "sha256:7b136f10da514b0f3c019ecd0627ee4e5c52fe335cb3011ab68ead7ded7fdfc8"
     },
     {
-      "bytes": 89361,
+      "bytes": 91060,
       "path": "src/protocol/signing.ts",
-      "sha256": "sha256:f1ebf4531209914626eedca162c481544bf8fbaef4fd684cf02fed70a0da624d"
+      "sha256": "sha256:3f2738547b4fe338a0c7c797ad6d28cc123a5e635e7117e37efdddfaed736ee1"
     }
   ],
-  "protocolDigest": "sha256:9584b1db3dde0473e07c1fddff3cbfbd54328a7a65c111cdeb74cd47894307de",
+  "protocolDigest": "sha256:3451fbbc944f0e904177b253150fd765cfe91c653bb6f86ebea4c10f25841d3b",
   "protocolDigestSemantics": "SHA-256 over strict canonical JSON of every manifest member except protocolDigest.",
   "protocolVersion": "1.0",
   "release": "1.0.0",

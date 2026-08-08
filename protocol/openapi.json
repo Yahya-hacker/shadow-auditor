@@ -1248,8 +1248,19 @@
     ]
   },
   "x-shadow-limit-negotiation": {
-    "algorithm": "Compute the fieldwise minimum of the complete client and server PayloadLimits offers, then call the exported negotiateProtocolLimits semantic validator. The operation is symmetric and deterministic.",
+    "algorithm": "Require exact equality with the frozen Protocol 1.0 structuralProfile, compute fieldwise minima only across the seven closed operationalLimits fields, combine both objects, then call the exported negotiateProtocolLimits semantic validator. The operation is symmetric and deterministic.",
     "failure": "Any violated cross-limit invariant fails before enrollment or session creation with RFC 9457 code incompatible_limit_profile, status 422, retryable false, and no token, session, or partial authority.",
+    "frozenStructuralProfile": {
+      "maxArrayItems": 37,
+      "maxCanonicalDepth": 9,
+      "maxCanonicalNodes": 577,
+      "maxObjectKeys": 16,
+      "maxRecoveryItemDepth": 3,
+      "maxRecoveryItemNodes": 321,
+      "maxRecoveryPageOverheadBytes": 16384,
+      "maxRecoveryPageOverheadNodes": 256,
+      "maxStringBytes": 8192
+    },
     "generatedStrings": {
       "audit": {
         "accessToken": 8192,
@@ -1269,7 +1280,7 @@
         "timestamp": 24,
         "uuid": 36
       },
-      "minimumMaxStringBytes": 8192,
+      "frozenMaxStringBytes": 8192,
       "snapshotCursor": {
         "canonicalMaxBytes": 705,
         "derivation": "Strict canonical JSON of the closed SnapshotCursor v1 envelope with the longest collection enum, maximum safe integers, maximum valid fixed-width UUID/date-time/digest/signature encodings, and every authorization/projection field; unpadded base64url expands 705 bytes to 940 characters.",
@@ -1278,6 +1289,7 @@
       },
       "units": "Audit values are maximum UTF-8 bytes. The cursor token is ASCII, so its character and byte lengths are equal. Any future cursor field requires a newly versioned closed envelope and a newly derived bound."
     },
+    "invariantMatrix": "./invariant-matrix.json",
     "invariants": [
       "maxBodyBytes >= maxRecoveryItemBytes + maxRecoveryPageOverheadBytes",
       "maxCanonicalNodes >= maxRecoveryItemNodes + maxRecoveryPageOverheadNodes",
@@ -1287,9 +1299,30 @@
       "maxRecoveryItemBytes >= maxToolArgumentsBytes + 4096",
       "maxEventBytes >= maxToolArgumentsBytes + 16384",
       "maxToolResultValueBytes <= maxBodyBytes",
-      "maxStringBytes >= 8192 for every mandatory generated string, maxObjectKeys >= 32, maxArrayItems >= 7, maxRecoveryItemNodes >= 65"
+      "maxStringBytes = 8192 for every mandatory generated string, maxObjectKeys = 16 for the complete effective profile and every mandatory wire object, maxArrayItems = 37 for the 37 generated DTOs, 23-file manifest inventory, and 11-feature set, maxRecoveryItemNodes = 321, maxCanonicalNodes = 577"
     ],
-    "pinning": "Both peers recompute SHA-256 over strict canonical JSON of the effective limits object. NegotiatedCapabilities.limitProfileDigest is pinned to the enrollment token family and every session. It is bound into every recovery page and signed cursor; substitution or restart under a different profile fails closed.",
+    "operationalQuotas": {
+      "hardMaximum": {
+        "maxBodyBytes": 1048576,
+        "maxEventBytes": 262144,
+        "maxRecoveryItemBytes": 786432,
+        "maxRecoveryPageItems": 37,
+        "maxToolArgumentsBytes": 245760,
+        "maxToolDescriptors": 37,
+        "maxToolResultValueBytes": 524288
+      },
+      "minimumCompatible": {
+        "maxBodyBytes": 21504,
+        "maxEventBytes": 17408,
+        "maxRecoveryItemBytes": 5120,
+        "maxRecoveryPageItems": 1,
+        "maxToolArgumentsBytes": 1024,
+        "maxToolDescriptors": 1,
+        "maxToolResultValueBytes": 1024
+      }
+    },
+    "pinning": "Both peers recompute SHA-256 over strict canonical JSON of the complete effective object formed from frozenStructuralProfile plus negotiated operationalQuotas. NegotiatedCapabilities.limitProfileDigest is pinned to the enrollment token family and every session. It is bound into every recovery page and signed cursor; substitution or restart under a different profile fails closed.",
+    "sessionRequestValidation": "After JSON Schema validation, call the exported validateCreateSessionRequest helper with the pinned effective profile before committing session creation. It enforces the profile digest, maxToolDescriptors, and complete bounded canonical body limits.",
     "use": "After negotiation, original body/event/tool acceptance, canonical hashing, snapshot item hashing, longest-prefix packing, cursor/page verification, assembly, and recovery-only lineage verification MUST use the pinned effective profile. Server defaults are never substituted into a negotiated session."
   },
   "x-shadow-protocol-manifest": {
@@ -1337,7 +1370,7 @@
     "unknownEvents": "Unknown event types, invalid payload/type pairs, sequence gaps, cursor gaps, digest failures, and hash-chain failures are fatal and MUST NOT be skipped."
   },
   "x-shadow-tool-authority": {
-    "descriptor": "Each bounded local tool descriptor is signed by the enrollment-pinned device key and includes an object-root input schema from the Protocol 1.0 closed, recursive subset: every node has exactly one supported type; object nodes declare bounded properties, required, maxProperties, and additionalProperties:false; array and string nodes declare hard maxima; unsupported keywords fail closed. Its schemaDigest covers canonical JSON of that schema, descriptorDigest covers the non-circular descriptor signing projection, and authorization signs that exact projection in the tool-descriptor domain.",
+    "descriptor": "Each bounded local tool descriptor is signed by the enrollment-pinned device key and includes an object-root input schema from the Protocol 1.0 closed, recursive subset: every node has exactly one supported type; object nodes declare bounded properties, required, maxProperties, and additionalProperties:false; array and string nodes declare hard maxima; unsupported keywords fail closed. Schema validation MUST be followed by assertSupportedToolInputSchema under the pinned profile, including the fixed canonical depth-5 schema cap. The frozen maxCanonicalDepth of 9 covers that schema plus the four-level CreateSessionRequest embedding, so every accepted descriptor remains session-encodable. Its schemaDigest covers canonical JSON of that bounded schema, descriptorDigest covers the non-circular descriptor signing projection, and authorization signs that exact projection in the tool-descriptor domain.",
     "grant": "A grant is valid only for an approved, timely decision. It binds the proposal and decision digests, expires only according to its own signed expiry after issuance, carries a one-use nonce, and cannot increase any proposed budget estimate or any Protocol 1.0 hard maximum. Immediately before atomic one-use consumption, the client MUST revalidate the device-signed descriptor/schema digest and the canonical arguments digest against the exact local descriptor and arguments to be executed.",
     "proposalAndDecision": "A proposal binds tenant, session, proposal ID, tool name, descriptor digest, canonical arguments digest, risk, budget estimate, and expiry. Before original proposal acceptance, arguments MUST pass bounded canonical validation with the pinned effective tool-argument byte/node/depth limits; the complete signed proposal MUST pass the effective recovery-item limits; and its signed SSE envelope MUST pass effective event limits. Semantic negotiation reserves 4096 item bytes, 64 item nodes, 16384 event bytes, and 256 event nodes so oversize fails at original acceptance, never during recovery. Every proposal-chain verifier recomputes argumentsDigest under that same pinned profile. The human decision binds the complete proposal digest and must be recorded no later than proposal expiry.",
     "result": "A result binds the proposal, decision, and consumed grant plus execution ledger ID, status, and canonical JSON output/evidence/error digests. Each supplied output, evidence, or error value MUST pass maxToolResultValueBytes before its digest is accepted; the signed result carries only those digests and MUST pass maxRecoveryItemBytes. succeeded forbids an error digest; failed, timeout, and ambiguous require one. cancelled and denied remain explicit outcomes. Durable normalized proposal, decision, grant, and result histories preserve recovery-only verification without embedding large artifacts.",

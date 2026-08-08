@@ -75,6 +75,7 @@
     "EnrollmentRequest": "auth.schema.json#/$defs/EnrollmentRequest",
     "EnrollmentResponse": "auth.schema.json#/$defs/EnrollmentResponse",
     "EventEnvelope": "events.schema.json#/$defs/EventEnvelope",
+    "InvariantMatrix": "invariant-matrix.schema.json#",
     "KeyRotationProjection": "auth.schema.json#/$defs/KeyRotationProjection",
     "KeyRotationResponse": "auth.schema.json#/$defs/KeyRotationResponse",
     "NegotiatedCapabilities": "capabilities.schema.json#/$defs/NegotiatedCapabilities",

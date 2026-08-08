@@ -8,6 +8,7 @@ import {
 
 import type {
   BoundTokenClaims,
+  CreateSessionRequest,
   KeyRotationProjection,
   RequestSigningProjection,
   RotateKeyRequest,
@@ -40,6 +41,7 @@ import {
   SNAPSHOT_CURSOR_COLLECTION_NAMES,
   SNAPSHOT_CURSOR_PROJECTION_FIELDS,
   toolArgumentsCanonicalLimits,
+  toolInputSchemaCanonicalLimits,
   toolResultValueCanonicalLimits,
 } from './negotiated-limits.js';
 
@@ -293,7 +295,6 @@ export interface SnapshotCursorContext {
 export interface SnapshotPage {
   collection: RecoveryCollectionName;
   collectionBoundaries: RecoveryCollectionBoundaries;
-  createdAt: string;
   eventHead: EventHead;
   items: readonly unknown[];
   limitProfileDigest: string;
@@ -301,13 +302,16 @@ export interface SnapshotPage {
   pageStart: number;
   protocolVersion: typeof PROTOCOL_VERSION;
   sessionId: string;
+  sessionTimestamps: {
+    createdAt: string;
+    updatedAt: string;
+  };
   snapshotCreatedAt: string;
   snapshotExpiresAt: string;
   snapshotId: string;
   snapshotVersion: number;
   state: string;
   tenantId: string;
-  updatedAt: string;
 }
 
 export interface SnapshotCollectionContext {
@@ -382,6 +386,22 @@ function assertLimitProfile(
   if (digest !== protocolLimitProfileDigest(limits)) {
     fail('incompatible_limit_profile', 'limitProfileDigest does not match the pinned effective limits');
   }
+}
+
+export function validateCreateSessionRequest(
+  request: CreateSessionRequest,
+  limits: EffectiveProtocolLimits,
+): void {
+  const effectiveLimits = resolveEffectiveLimits(limits);
+  assertLimitProfile(request.negotiatedCapabilitiesDigest, effectiveLimits);
+  if (request.toolDescriptors.length > effectiveLimits.maxToolDescriptors) {
+    fail(
+      'invalid_request',
+      `toolDescriptors exceeds the pinned maxToolDescriptors quota of ${effectiveLimits.maxToolDescriptors}`,
+    );
+  }
+
+  validateBoundedCanonicalJson(request, bodyCanonicalLimits(effectiveLimits));
 }
 
 function assertDigest(value: string, label: string): void {
@@ -935,7 +955,10 @@ export function createToolDescriptorProjection(
   return {
     ...descriptor,
     protocolVersion: PROTOCOL_VERSION,
-    schemaDigest: digestCanonicalJson(descriptor.inputSchema, bodyCanonicalLimits(effectiveLimits)),
+    schemaDigest: digestCanonicalJson(
+      descriptor.inputSchema,
+      toolInputSchemaCanonicalLimits(effectiveLimits),
+    ),
   };
 }
 
@@ -1129,7 +1152,7 @@ export function assertSupportedToolInputSchema(
   limits: EffectiveProtocolLimits,
 ): void {
   const effectiveLimits = resolveEffectiveLimits(limits);
-  canonicalizeJson(inputSchema, bodyCanonicalLimits(effectiveLimits));
+  canonicalizeJson(inputSchema, toolInputSchemaCanonicalLimits(effectiveLimits));
   const pending: JsonValue[] = [inputSchema];
   let nodes = 0;
   while (pending.length > 0) {
@@ -1376,7 +1399,7 @@ export function verifyToolDescriptor(
     descriptor.projection.schemaDigest,
     digestCanonicalJson(
       descriptor.projection.inputSchema,
-      bodyCanonicalLimits(effectiveLimits),
+      toolInputSchemaCanonicalLimits(effectiveLimits),
     ),
     'tool descriptor schemaDigest',
   );
@@ -1403,6 +1426,12 @@ export function verifyToolProposal(
 ): void {
   const effectiveLimits = resolveEffectiveLimits(limits);
   verifyToolDescriptor(descriptor, authorities.descriptor, effectiveLimits);
+  assertGrantLimits(
+    proposal.projection.budgetEstimate,
+    proposal.projection.budgetEstimate,
+    effectiveLimits.maxToolResultValueBytes,
+    'invalid_proposal',
+  );
   assertUuid(proposal.projection.proposalId, 'proposalId');
   parseTimestamp(proposal.projection.expiresAt, 'proposal expiresAt');
   assertEqual(proposal.projection.tenantId, descriptor.projection.tenantId, 'proposal tenantId');
@@ -1510,7 +1539,12 @@ export function verifyToolGrant(
     fail('invalid_nonce', 'grant one-use nonce must encode between 16 and 64 bytes');
   }
 
-  assertGrantLimits(proposal.projection.budgetEstimate, grant.projection.allowedLimits);
+  assertGrantLimits(
+    proposal.projection.budgetEstimate,
+    grant.projection.allowedLimits,
+    effectiveLimits.maxToolResultValueBytes,
+    'invalid_grant',
+  );
   assertEqual(
     grant.grantDigest,
     toolGrantDigest(grant.projection, effectiveLimits),
@@ -1527,7 +1561,12 @@ export function verifyToolGrant(
   validateBoundedCanonicalJson(grant, recoveryItemCanonicalLimits(effectiveLimits));
 }
 
-function assertGrantLimits(budget: JsonValue, allowed: JsonValue): void {
+function assertGrantLimits(
+  budget: JsonValue,
+  allowed: JsonValue,
+  maximumOutputBytes: number,
+  errorCode: string,
+): void {
   if (
     !budget ||
     !allowed ||
@@ -1536,12 +1575,12 @@ function assertGrantLimits(budget: JsonValue, allowed: JsonValue): void {
     typeof budget !== 'object' ||
     typeof allowed !== 'object'
   ) {
-    fail('invalid_grant', 'budget and allowed limits must be JSON objects');
+    fail(errorCode, 'budget and allowed limits must be JSON objects');
   }
 
   const maxima = {
     networkRequests: 1024,
-    outputBytes: 1_048_576,
+    outputBytes: maximumOutputBytes,
     wallClockMs: 3_600_000,
   } as const;
   const names = Object.keys(maxima) as Array<keyof typeof maxima>;
@@ -1551,7 +1590,7 @@ function assertGrantLimits(budget: JsonValue, allowed: JsonValue): void {
     || Object.keys(budget).some((name) => !Object.hasOwn(maxima, name))
     || Object.keys(allowed).some((name) => !Object.hasOwn(maxima, name))
   ) {
-    fail('invalid_grant', 'budget and allowed limits must use the closed limit contract');
+    fail(errorCode, 'budget and allowed limits must use the closed limit contract');
   }
 
   for (const name of names) {
@@ -1563,7 +1602,7 @@ function assertGrantLimits(budget: JsonValue, allowed: JsonValue): void {
       !isValidGrantLimit(allowedValue, minimum, maxima[name]) ||
       allowedValue > budgetValue
     ) {
-      fail('invalid_grant', `${name} violates the protocol maximum or proposed budget estimate`);
+      fail(errorCode, `${name} violates the effective profile or proposed budget estimate`);
     }
   }
 }
@@ -1632,12 +1671,25 @@ export function verifyToolResult(
   assertUuid(result.projection.executionLedgerId, 'executionLedgerId');
   parseTimestamp(result.projection.completedAt, 'result completedAt');
   if (options.output !== undefined) {
+    const outputValidation = validateBoundedCanonicalJson(
+      options.output,
+      toolResultValueCanonicalLimits(effectiveLimits),
+    );
+    const allowedLimits = grant.projection.allowedLimits as Record<string, JsonValue>;
+    const allowedOutputBytes = allowedLimits.outputBytes;
+    if (
+      typeof allowedOutputBytes !== 'number'
+      || outputValidation.payloadBytes > allowedOutputBytes
+    ) {
+      fail(
+        'payload_too_large',
+        'result output exceeds the grant-approved outputBytes limit',
+      );
+    }
+
     assertEqual(
       result.projection.outputDigest,
-      digestCanonicalJson(
-        options.output,
-        toolResultValueCanonicalLimits(effectiveLimits),
-      ),
+      sha256Bytes(Buffer.from(outputValidation.canonicalJson, 'utf8')),
       'result outputDigest',
     );
   }
@@ -2345,10 +2397,16 @@ function snapshotPageIdentity(
   page: SnapshotCollectionContext | SnapshotPage,
   limits: EffectiveProtocolLimits,
 ): string {
+  const createdAt = 'sessionTimestamps' in page
+    ? page.sessionTimestamps.createdAt
+    : page.createdAt;
+  const updatedAt = 'sessionTimestamps' in page
+    ? page.sessionTimestamps.updatedAt
+    : page.updatedAt;
   return canonicalizeJson({
     collection: page.collection,
     collectionBoundaries: page.collectionBoundaries,
-    createdAt: page.createdAt,
+    createdAt,
     eventHead: page.eventHead,
     limitProfileDigest: page.limitProfileDigest,
     protocolVersion: page.protocolVersion,
@@ -2359,7 +2417,7 @@ function snapshotPageIdentity(
     snapshotVersion: page.snapshotVersion,
     state: page.state,
     tenantId: page.tenantId,
-    updatedAt: page.updatedAt,
+    updatedAt,
   }, bodyCanonicalLimits(limits));
 }
 

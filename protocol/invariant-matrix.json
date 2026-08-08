@@ -1,0 +1,1865 @@
+{
+  "derivations": {
+    "arrayCardinality": "max(requiredFeatures.length, manifest.files.length, mandatoryDtos.length)",
+    "createSessionDescriptorDepth": "tool input schema depth 5 plus CreateSessionRequest embedding depth 4",
+    "objectKeys": "max(effective Protocol 1.0 limit-profile keys, mandatory snapshot-page keys)",
+    "recoveryDepth": "max recovery item depth 3 plus page wrapper depth 2"
+  },
+  "flowGuarantees": [
+    {
+      "collection": "activeGrants",
+      "itemLimit": "maxRecoveryItemBytes/maxRecoveryItemNodes/maxRecoveryItemDepth",
+      "ordering": "strict ascending stable UUID within one immutable snapshot",
+      "pageLimit": "maxBodyBytes/maxCanonicalNodes/maxCanonicalDepth/maxRecoveryPageItems",
+      "progress": "longest fitting prefix; at least one accepted record per non-terminal page"
+    },
+    {
+      "collection": "decisions",
+      "itemLimit": "maxRecoveryItemBytes/maxRecoveryItemNodes/maxRecoveryItemDepth",
+      "ordering": "strict ascending stable UUID within one immutable snapshot",
+      "pageLimit": "maxBodyBytes/maxCanonicalNodes/maxCanonicalDepth/maxRecoveryPageItems",
+      "progress": "longest fitting prefix; at least one accepted record per non-terminal page"
+    },
+    {
+      "collection": "grants",
+      "itemLimit": "maxRecoveryItemBytes/maxRecoveryItemNodes/maxRecoveryItemDepth",
+      "ordering": "strict ascending stable UUID within one immutable snapshot",
+      "pageLimit": "maxBodyBytes/maxCanonicalNodes/maxCanonicalDepth/maxRecoveryPageItems",
+      "progress": "longest fitting prefix; at least one accepted record per non-terminal page"
+    },
+    {
+      "collection": "operations",
+      "itemLimit": "maxRecoveryItemBytes/maxRecoveryItemNodes/maxRecoveryItemDepth",
+      "ordering": "strict ascending stable UUID within one immutable snapshot",
+      "pageLimit": "maxBodyBytes/maxCanonicalNodes/maxCanonicalDepth/maxRecoveryPageItems",
+      "progress": "longest fitting prefix; at least one accepted record per non-terminal page"
+    },
+    {
+      "collection": "pendingProposals",
+      "itemLimit": "maxRecoveryItemBytes/maxRecoveryItemNodes/maxRecoveryItemDepth",
+      "ordering": "strict ascending stable UUID within one immutable snapshot",
+      "pageLimit": "maxBodyBytes/maxCanonicalNodes/maxCanonicalDepth/maxRecoveryPageItems",
+      "progress": "longest fitting prefix; at least one accepted record per non-terminal page"
+    },
+    {
+      "collection": "proposals",
+      "itemLimit": "maxRecoveryItemBytes/maxRecoveryItemNodes/maxRecoveryItemDepth",
+      "ordering": "strict ascending stable UUID within one immutable snapshot",
+      "pageLimit": "maxBodyBytes/maxCanonicalNodes/maxCanonicalDepth/maxRecoveryPageItems",
+      "progress": "longest fitting prefix; at least one accepted record per non-terminal page"
+    },
+    {
+      "collection": "results",
+      "itemLimit": "maxRecoveryItemBytes/maxRecoveryItemNodes/maxRecoveryItemDepth",
+      "ordering": "strict ascending stable UUID within one immutable snapshot",
+      "pageLimit": "maxBodyBytes/maxCanonicalNodes/maxCanonicalDepth/maxRecoveryPageItems",
+      "progress": "longest fitting prefix; at least one accepted record per non-terminal page"
+    }
+  ],
+  "generatedStringLimits": {
+    "accessToken": 8192,
+    "base64Url32": 43,
+    "ed25519Signature": 86,
+    "nonce": 86,
+    "problemCode": 28,
+    "problemDetail": 2048,
+    "problemInstance": 8192,
+    "problemTitle": 512,
+    "problemType": 128,
+    "protocolVersion": 3,
+    "refreshToken": 8192,
+    "replayToken": 256,
+    "sha256Digest": 71,
+    "snapshotCursorToken": 940,
+    "timestamp": 24,
+    "uuid": 36
+  },
+  "mandatoryDtos": [
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "enrollment-and-bound-authentication",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "BoundTokenClaims",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "auth.schema.json#/$defs/BoundTokenClaims",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "enrollment-and-bound-authentication",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "BoundTokenSet",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "auth.schema.json#/$defs/BoundTokenSet",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "capability-negotiation",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "ClientCapabilities",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "capabilities.schema.json#/$defs/ClientCapabilities",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems and maxToolDescriptors",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth; tool input schema depth 5 plus CreateSessionRequest embedding depth 4",
+        "unit": "levels"
+      },
+      "flow": "session-lifecycle",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "CreateSessionRequest",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "sessions.schema.json#/$defs/CreateSessionRequest",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "enrollment-and-bound-authentication",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "EnrollmentRequest",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "auth.schema.json#/$defs/EnrollmentRequest",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "enrollment-and-bound-authentication",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "EnrollmentResponse",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "auth.schema.json#/$defs/EnrollmentResponse",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxEventBytes",
+        "hardMaximum": 262144,
+        "minimumOperational": 17408,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "durable-signed-events",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "EventEnvelope",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "events.schema.json#/$defs/EventEnvelope",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": null,
+      "canonicalBytes": null,
+      "depth": null,
+      "flow": "protocol-pinning",
+      "generatedStrings": null,
+      "name": "InvariantMatrix",
+      "nodes": null,
+      "objectKeys": null,
+      "safeIntegers": null,
+      "schema": "invariant-matrix.schema.json#",
+      "scope": "package-artifact"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "key-rotation-and-revocation",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "KeyRotationProjection",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "auth.schema.json#/$defs/KeyRotationProjection",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "key-rotation-and-revocation",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "KeyRotationResponse",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "auth.schema.json#/$defs/KeyRotationResponse",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "capability-negotiation",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "NegotiatedCapabilities",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "capabilities.schema.json#/$defs/NegotiatedCapabilities",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": "operations",
+        "guarantee": "accepted-record-is-recoverable",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxRecoveryItemBytes",
+        "hardMaximum": 786432,
+        "minimumOperational": 5120,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 3,
+        "governingLimit": "maxRecoveryItemDepth and maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "durable-idempotency-and-recovery",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "Operation",
+      "nodes": {
+        "fixedMaximum": 321,
+        "governingLimit": "maxRecoveryItemNodes and maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "operations.schema.json#/$defs/Operation",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "rfc-9457-problems",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "Problem",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "problem.schema.json#/$defs/Problem",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "protocol-pinning",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "ProtocolManifest",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "manifest.schema.json",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": "operations",
+        "guarantee": "accepted-record-is-recoverable",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxRecoveryItemBytes",
+        "hardMaximum": 786432,
+        "minimumOperational": 5120,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 3,
+        "governingLimit": "maxRecoveryItemDepth and maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "snapshot-consistent-recovery",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "RecoveredOperation",
+      "nodes": {
+        "fixedMaximum": 321,
+        "governingLimit": "maxRecoveryItemNodes and maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "sessions.schema.json#/$defs/RecoveredOperation",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "enrollment-and-bound-authentication",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "RefreshRequest",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "auth.schema.json#/$defs/RefreshRequest",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "bound-request-signing",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "RequestSigningProjection",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "request-signing.schema.json#/$defs/RequestSigningProjection",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "key-rotation-and-revocation",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "RevokeKeyRequest",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "auth.schema.json#/$defs/RevokeKeyRequest",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "key-rotation-and-revocation",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "RotateKeyRequest",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "auth.schema.json#/$defs/RotateKeyRequest",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "key-rotation-and-revocation",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "ServerEventSigningKey",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "capabilities.schema.json#/$defs/ServerEventSigningKey",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "key-rotation-and-revocation",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "ServerToolSigningKey",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "capabilities.schema.json#/$defs/ServerToolSigningKey",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "session-lifecycle",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "SessionCheckpoint",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "sessions.schema.json#/$defs/SessionCheckpoint",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "session-lifecycle",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "SessionControlRequest",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "sessions.schema.json#/$defs/SessionControlRequest",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "recovery-page-envelope",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems and maxRecoveryPageItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "snapshot-consistent-recovery",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "SessionSnapshotPage",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "sessions.schema.json#/$defs/SessionSnapshotPage",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "snapshot-consistent-recovery",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "SnapshotCollectionBoundaries",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "sessions.schema.json#/$defs/SnapshotCollectionBoundaries",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "snapshot-consistent-recovery",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "SnapshotCollectionBoundary",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "sessions.schema.json#/$defs/SnapshotCollectionBoundary",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "snapshot-consistent-recovery",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "SnapshotCollectionName",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "sessions.schema.json#/$defs/SnapshotCollectionName",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "snapshot-consistent-recovery",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "SnapshotCursor",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "sessions.schema.json#/$defs/SnapshotCursor",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "snapshot-consistent-recovery",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "SnapshotCursorProjection",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "sessions.schema.json#/$defs/SnapshotCursorProjection",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "snapshot-consistent-recovery",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "SnapshotCursorToken",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "sessions.schema.json#/$defs/SnapshotCursorToken",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": "decisions",
+        "guarantee": "accepted-record-is-recoverable",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxRecoveryItemBytes",
+        "hardMaximum": 786432,
+        "minimumOperational": 5120,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 3,
+        "governingLimit": "maxRecoveryItemDepth and maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "local-tool-authority",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "ToolDecision",
+      "nodes": {
+        "fixedMaximum": 321,
+        "governingLimit": "maxRecoveryItemNodes and maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "tools.schema.json#/$defs/ToolDecision",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth; tool input schema depth is independently capped at 5",
+        "unit": "levels"
+      },
+      "flow": "local-tool-authority",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "ToolDescriptor",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "tools.schema.json#/$defs/ToolDescriptor",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": "grants",
+        "guarantee": "accepted-record-is-recoverable",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxRecoveryItemBytes",
+        "hardMaximum": 786432,
+        "minimumOperational": 5120,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 3,
+        "governingLimit": "maxRecoveryItemDepth and maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "local-tool-authority",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "ToolGrant",
+      "nodes": {
+        "fixedMaximum": 321,
+        "governingLimit": "maxRecoveryItemNodes and maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "tools.schema.json#/$defs/ToolGrant",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "local-tool-authority",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "ToolInputSchema",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "tools.schema.json#/$defs/ToolInputSchema",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": "proposals",
+        "guarantee": "accepted-record-is-recoverable",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxRecoveryItemBytes; arguments additionally maxToolArgumentsBytes",
+        "hardMaximum": 786432,
+        "minimumOperational": 5120,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 3,
+        "governingLimit": "maxRecoveryItemDepth and maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "local-tool-authority",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "ToolProposal",
+      "nodes": {
+        "fixedMaximum": 321,
+        "governingLimit": "maxRecoveryItemNodes and maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "tools.schema.json#/$defs/ToolProposal",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": "results",
+        "guarantee": "accepted-record-is-recoverable",
+        "lineageCollections": [
+          "decisions",
+          "grants",
+          "proposals"
+        ]
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxRecoveryItemBytes; supplied values additionally maxToolResultValueBytes and output additionally grant.allowedLimits.outputBytes",
+        "hardMaximum": 786432,
+        "minimumOperational": 5120,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 3,
+        "governingLimit": "maxRecoveryItemDepth and maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "local-tool-authority",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "ToolResult",
+      "nodes": {
+        "fixedMaximum": 321,
+        "governingLimit": "maxRecoveryItemNodes and maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "tools.schema.json#/$defs/ToolResult",
+      "scope": "wire"
+    },
+    {
+      "acceptanceToRecovery": {
+        "collection": null,
+        "guarantee": "not-a-recovery-record",
+        "lineageCollections": []
+      },
+      "arrayCardinality": {
+        "fixedMaximum": 37,
+        "governingLimit": "maxArrayItems",
+        "unit": "items"
+      },
+      "canonicalBytes": {
+        "governingLimit": "maxBodyBytes",
+        "hardMaximum": 1048576,
+        "minimumOperational": 21504,
+        "unit": "utf8-bytes"
+      },
+      "depth": {
+        "fixedMaximum": 9,
+        "governingLimit": "maxCanonicalDepth",
+        "unit": "levels"
+      },
+      "flow": "provider-usage-reconciliation",
+      "generatedStrings": {
+        "fixedMaximum": 8192,
+        "governingLimit": "maxStringBytes",
+        "unit": "utf8-bytes"
+      },
+      "name": "UsageRecord",
+      "nodes": {
+        "fixedMaximum": 577,
+        "governingLimit": "maxCanonicalNodes",
+        "unit": "nodes"
+      },
+      "objectKeys": {
+        "fixedMaximum": 16,
+        "governingLimit": "maxObjectKeys",
+        "unit": "keys"
+      },
+      "safeIntegers": {
+        "fixedMaximum": 9007199254740991,
+        "fixedMinimum": -9007199254740991,
+        "governingLimit": "I-JSON safe integer range plus referenced schema-specific constraints",
+        "unit": "safe-integer"
+      },
+      "schema": "usage.schema.json#/$defs/UsageRecord",
+      "scope": "wire"
+    }
+  ],
+  "operationalQuotas": {
+    "hardMaximum": {
+      "maxBodyBytes": 1048576,
+      "maxEventBytes": 262144,
+      "maxRecoveryItemBytes": 786432,
+      "maxRecoveryPageItems": 37,
+      "maxToolArgumentsBytes": 245760,
+      "maxToolDescriptors": 37,
+      "maxToolResultValueBytes": 524288
+    },
+    "minimumCompatible": {
+      "maxBodyBytes": 21504,
+      "maxEventBytes": 17408,
+      "maxRecoveryItemBytes": 5120,
+      "maxRecoveryPageItems": 1,
+      "maxToolArgumentsBytes": 1024,
+      "maxToolDescriptors": 1,
+      "maxToolResultValueBytes": 1024
+    }
+  },
+  "protocolVersion": "1.0",
+  "safeInteger": {
+    "maximum": 9007199254740991,
+    "minimum": -9007199254740991
+  },
+  "structuralProfile": {
+    "maxArrayItems": 37,
+    "maxCanonicalDepth": 9,
+    "maxCanonicalNodes": 577,
+    "maxObjectKeys": 16,
+    "maxRecoveryItemDepth": 3,
+    "maxRecoveryItemNodes": 321,
+    "maxRecoveryPageOverheadBytes": 16384,
+    "maxRecoveryPageOverheadNodes": 256,
+    "maxStringBytes": 8192
+  }
+}

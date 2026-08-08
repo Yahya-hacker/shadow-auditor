@@ -34,7 +34,7 @@
           "items": {
             "$ref": "common.schema.json#/$defs/Uuid"
           },
-          "maxItems": 1024,
+          "maxItems": 37,
           "minItems": 1,
           "type": "array",
           "uniqueItems": true

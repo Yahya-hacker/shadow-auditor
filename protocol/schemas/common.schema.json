@@ -34,6 +34,119 @@
       ],
       "type": "object"
     },
+    "EffectiveProtocolLimits": {
+      "additionalProperties": false,
+      "description": "The frozen structural profile combined with negotiated operational quotas. Both peers MUST reconstruct this exact closed object, run assertCompatibleProtocolLimits, and pin its canonical SHA-256 digest before enrollment or session creation.",
+      "properties": {
+        "maxArrayItems": {
+          "const": 37,
+          "type": "integer"
+        },
+        "maxBodyBytes": {
+          "maximum": 1048576,
+          "minimum": 21504,
+          "type": "integer"
+        },
+        "maxCanonicalDepth": {
+          "const": 9,
+          "type": "integer"
+        },
+        "maxCanonicalNodes": {
+          "const": 577,
+          "type": "integer"
+        },
+        "maxEventBytes": {
+          "maximum": 262144,
+          "minimum": 17408,
+          "type": "integer"
+        },
+        "maxObjectKeys": {
+          "const": 16,
+          "type": "integer"
+        },
+        "maxRecoveryItemBytes": {
+          "maximum": 786432,
+          "minimum": 5120,
+          "type": "integer"
+        },
+        "maxRecoveryItemDepth": {
+          "const": 3,
+          "type": "integer"
+        },
+        "maxRecoveryItemNodes": {
+          "const": 321,
+          "type": "integer"
+        },
+        "maxRecoveryPageItems": {
+          "maximum": 37,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxRecoveryPageOverheadBytes": {
+          "const": 16384,
+          "type": "integer"
+        },
+        "maxRecoveryPageOverheadNodes": {
+          "const": 256,
+          "type": "integer"
+        },
+        "maxStringBytes": {
+          "const": 8192,
+          "description": "UTF-8 byte capacity. Protocol 1.0 requires at least 8192 bytes so every mandatory generated cursor, token, identifier, timestamp, digest, signature, and RFC 9457 field fits the effective canonical profile.",
+          "type": "integer"
+        },
+        "maxToolArgumentsBytes": {
+          "maximum": 245760,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        "maxToolDescriptors": {
+          "maximum": 37,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxToolResultValueBytes": {
+          "maximum": 524288,
+          "minimum": 1024,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxArrayItems",
+        "maxBodyBytes",
+        "maxCanonicalDepth",
+        "maxCanonicalNodes",
+        "maxEventBytes",
+        "maxRecoveryItemBytes",
+        "maxRecoveryItemDepth",
+        "maxRecoveryItemNodes",
+        "maxRecoveryPageItems",
+        "maxRecoveryPageOverheadBytes",
+        "maxRecoveryPageOverheadNodes",
+        "maxObjectKeys",
+        "maxStringBytes",
+        "maxToolArgumentsBytes",
+        "maxToolDescriptors",
+        "maxToolResultValueBytes"
+      ],
+      "type": "object",
+      "x-shadow-limit-invariants": [
+        "maxBodyBytes >= maxRecoveryItemBytes + maxRecoveryPageOverheadBytes",
+        "maxCanonicalNodes >= maxRecoveryItemNodes + maxRecoveryPageOverheadNodes",
+        "maxCanonicalDepth >= maxRecoveryItemDepth + 2",
+        "maxCanonicalDepth >= tool input schema depth 5 + CreateSessionRequest embedding depth 4",
+        "maxArrayItems >= maxRecoveryPageItems",
+        "maxArrayItems >= maxToolDescriptors",
+        "maxBodyBytes >= maxEventBytes",
+        "maxRecoveryItemBytes >= maxToolArgumentsBytes + 4096",
+        "maxEventBytes >= maxToolArgumentsBytes + 16384",
+        "maxBodyBytes >= maxToolResultValueBytes",
+        "maxStringBytes >= 8192",
+        "maxRecoveryItemNodes >= 321",
+        "maxCanonicalNodes >= 577"
+      ],
+      "x-shadow-semantic-validator": "negotiateProtocolLimits"
+    },
     "Identifier": {
       "maxLength": 128,
       "minLength": 1,
@@ -85,131 +198,116 @@
       "pattern": "^(?:(?:[A-Za-z0-9_-]{4}){6,21}|(?:[A-Za-z0-9_-]{4}){5,21}[A-Za-z0-9_-][AQgw]|(?:[A-Za-z0-9_-]{4}){5,20}[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])$",
       "type": "string"
     },
-    "PayloadLimits": {
+    "OperationalLimits": {
       "additionalProperties": false,
-      "description": "A syntactically valid offer is not necessarily compatible. Before enrollment or session creation, both peers MUST call the Protocol 1.0 semantic negotiation helper, select the fieldwise minima, enforce every x-shadow-limit-invariants relation, and pin the resulting profile digest. JSON Schema does not enforce these cross-field relations.",
+      "description": "Only these resource quotas are negotiated. Offers are closed positive-safe-integer objects. Both peers select fieldwise minima, combine them with ProtocolStructuralProfile, and run negotiateProtocolLimits before enrollment or session creation.",
       "properties": {
-        "maxArrayItems": {
-          "maximum": 1024,
-          "minimum": 7,
-          "type": "integer"
-        },
         "maxBodyBytes": {
-          "maximum": 1048576,
+          "maximum": 9007199254740991,
           "minimum": 21504,
           "type": "integer"
         },
-        "maxCanonicalDepth": {
-          "maximum": 32,
-          "minimum": 4,
-          "type": "integer"
-        },
-        "maxCanonicalNodes": {
-          "maximum": 10000,
-          "minimum": 321,
-          "type": "integer"
-        },
         "maxEventBytes": {
-          "maximum": 262144,
+          "maximum": 9007199254740991,
           "minimum": 17408,
           "type": "integer"
         },
-        "maxObjectKeys": {
-          "maximum": 256,
-          "minimum": 32,
-          "type": "integer"
-        },
         "maxRecoveryItemBytes": {
-          "maximum": 786432,
+          "maximum": 9007199254740991,
           "minimum": 5120,
           "type": "integer"
         },
-        "maxRecoveryItemDepth": {
-          "maximum": 30,
-          "minimum": 2,
-          "type": "integer"
-        },
-        "maxRecoveryItemNodes": {
-          "maximum": 9744,
-          "minimum": 65,
-          "type": "integer"
-        },
         "maxRecoveryPageItems": {
-          "maximum": 128,
+          "maximum": 9007199254740991,
           "minimum": 1,
           "type": "integer"
         },
-        "maxRecoveryPageOverheadBytes": {
-          "maximum": 262144,
-          "minimum": 16384,
-          "type": "integer"
-        },
-        "maxRecoveryPageOverheadNodes": {
-          "maximum": 256,
-          "minimum": 256,
-          "type": "integer"
-        },
-        "maxStringBytes": {
-          "description": "UTF-8 byte capacity. Protocol 1.0 requires at least 8192 bytes so every mandatory generated cursor, token, identifier, timestamp, digest, signature, and RFC 9457 field fits the effective canonical profile.",
-          "maximum": 65536,
-          "minimum": 8192,
-          "type": "integer"
-        },
         "maxToolArgumentsBytes": {
-          "maximum": 524288,
+          "maximum": 9007199254740991,
           "minimum": 1024,
           "type": "integer"
         },
         "maxToolDescriptors": {
-          "maximum": 128,
+          "maximum": 9007199254740991,
           "minimum": 1,
           "type": "integer"
         },
         "maxToolResultValueBytes": {
-          "maximum": 524288,
+          "maximum": 9007199254740991,
           "minimum": 1024,
           "type": "integer"
         }
       },
       "required": [
-        "maxArrayItems",
         "maxBodyBytes",
-        "maxCanonicalDepth",
-        "maxCanonicalNodes",
         "maxEventBytes",
         "maxRecoveryItemBytes",
-        "maxRecoveryItemDepth",
-        "maxRecoveryItemNodes",
         "maxRecoveryPageItems",
-        "maxRecoveryPageOverheadBytes",
-        "maxRecoveryPageOverheadNodes",
-        "maxObjectKeys",
-        "maxStringBytes",
         "maxToolArgumentsBytes",
         "maxToolDescriptors",
         "maxToolResultValueBytes"
       ],
       "type": "object",
-      "x-shadow-limit-invariants": [
-        "maxBodyBytes >= maxRecoveryItemBytes + maxRecoveryPageOverheadBytes",
-        "maxCanonicalNodes >= maxRecoveryItemNodes + maxRecoveryPageOverheadNodes",
-        "maxCanonicalDepth >= maxRecoveryItemDepth + 2",
-        "maxArrayItems >= maxRecoveryPageItems",
-        "maxArrayItems >= maxToolDescriptors",
-        "maxBodyBytes >= maxEventBytes",
-        "maxRecoveryItemBytes >= maxToolArgumentsBytes + 4096",
-        "maxEventBytes >= maxToolArgumentsBytes + 16384",
-        "maxBodyBytes >= maxToolResultValueBytes",
-        "maxStringBytes >= 8192",
-        "maxRecoveryItemNodes >= 65",
-        "maxCanonicalNodes >= 257"
-      ],
       "x-shadow-semantic-validator": "negotiateProtocolLimits"
     },
     "PositiveSafeInteger": {
       "maximum": 9007199254740991,
       "minimum": 1,
       "type": "integer"
+    },
+    "ProtocolStructuralProfile": {
+      "additionalProperties": false,
+      "description": "Frozen Protocol 1.0 structural capacity. It is conformance metadata, never independently negotiated. Any differing field is an incompatible protocol profile.",
+      "properties": {
+        "maxArrayItems": {
+          "const": 37,
+          "type": "integer"
+        },
+        "maxCanonicalDepth": {
+          "const": 9,
+          "type": "integer"
+        },
+        "maxCanonicalNodes": {
+          "const": 577,
+          "type": "integer"
+        },
+        "maxObjectKeys": {
+          "const": 16,
+          "type": "integer"
+        },
+        "maxRecoveryItemDepth": {
+          "const": 3,
+          "type": "integer"
+        },
+        "maxRecoveryItemNodes": {
+          "const": 321,
+          "type": "integer"
+        },
+        "maxRecoveryPageOverheadBytes": {
+          "const": 16384,
+          "type": "integer"
+        },
+        "maxRecoveryPageOverheadNodes": {
+          "const": 256,
+          "type": "integer"
+        },
+        "maxStringBytes": {
+          "const": 8192,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxArrayItems",
+        "maxCanonicalDepth",
+        "maxCanonicalNodes",
+        "maxObjectKeys",
+        "maxRecoveryItemDepth",
+        "maxRecoveryItemNodes",
+        "maxRecoveryPageOverheadBytes",
+        "maxRecoveryPageOverheadNodes",
+        "maxStringBytes"
+      ],
+      "type": "object"
     },
     "ProtocolVersion": {
       "const": "1.0",

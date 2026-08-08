@@ -15,7 +15,7 @@
           "items": {
             "$ref": "tools.schema.json#/$defs/ToolGrant"
           },
-          "maxItems": 128,
+          "maxItems": 37,
           "type": "array"
         }
       },
@@ -28,6 +28,7 @@
     },
     "CreateSessionRequest": {
       "additionalProperties": false,
+      "description": "After schema validation, both peers MUST call validateCreateSessionRequest with the pinned effective profile before creating a session. The semantic validator enforces the profile digest, the negotiated maxToolDescriptors quota, and complete bounded canonical body limits.",
       "properties": {
         "deviceId": {
           "$ref": "common.schema.json#/$defs/Uuid"
@@ -54,7 +55,7 @@
           "items": {
             "$ref": "tools.schema.json#/$defs/ToolDescriptor"
           },
-          "maxItems": 128,
+          "maxItems": 37,
           "type": "array"
         }
       },
@@ -68,7 +69,8 @@
         "toolDescriptors",
         "negotiatedCapabilitiesDigest"
       ],
-      "type": "object"
+      "type": "object",
+      "x-shadow-semantic-validator": "validateCreateSessionRequest"
     },
     "DecisionsSnapshotPage": {
       "allOf": [
@@ -85,7 +87,7 @@
           "items": {
             "$ref": "tools.schema.json#/$defs/ToolDecision"
           },
-          "maxItems": 128,
+          "maxItems": 37,
           "type": "array"
         }
       },
@@ -151,7 +153,7 @@
           "items": {
             "$ref": "tools.schema.json#/$defs/ToolGrant"
           },
-          "maxItems": 128,
+          "maxItems": 37,
           "type": "array"
         }
       },
@@ -180,7 +182,7 @@
           "items": {
             "$ref": "common.schema.json#/$defs/Identifier"
           },
-          "maxItems": 32,
+          "maxItems": 37,
           "minItems": 1,
           "type": "array",
           "uniqueItems": true
@@ -213,7 +215,7 @@
           "items": {
             "$ref": "#/$defs/RecoveredOperation"
           },
-          "maxItems": 128,
+          "maxItems": 37,
           "type": "array"
         }
       },
@@ -239,7 +241,7 @@
           "items": {
             "$ref": "tools.schema.json#/$defs/ToolProposal"
           },
-          "maxItems": 128,
+          "maxItems": 37,
           "type": "array"
         }
       },
@@ -265,7 +267,7 @@
           "items": {
             "$ref": "tools.schema.json#/$defs/ToolProposal"
           },
-          "maxItems": 128,
+          "maxItems": 37,
           "type": "array"
         }
       },
@@ -308,7 +310,7 @@
           "items": {
             "$ref": "tools.schema.json#/$defs/ToolResult"
           },
-          "maxItems": 128,
+          "maxItems": 37,
           "type": "array"
         }
       },
@@ -440,6 +442,22 @@
         "failed"
       ],
       "type": "string"
+    },
+    "SessionTimestamps": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "updatedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "createdAt",
+        "updatedAt"
+      ],
+      "type": "object"
     },
     "SnapshotCollectionBoundaries": {
       "additionalProperties": false,
@@ -586,9 +604,6 @@
         "collectionBoundaries": {
           "$ref": "#/$defs/SnapshotCollectionBoundaries"
         },
-        "createdAt": {
-          "$ref": "common.schema.json#/$defs/Timestamp"
-        },
         "eventHead": {
           "$ref": "#/$defs/EventHead"
         },
@@ -614,6 +629,9 @@
         "sessionId": {
           "$ref": "common.schema.json#/$defs/Uuid"
         },
+        "sessionTimestamps": {
+          "$ref": "#/$defs/SessionTimestamps"
+        },
         "snapshotCreatedAt": {
           "$ref": "common.schema.json#/$defs/Timestamp"
         },
@@ -631,9 +649,6 @@
         },
         "tenantId": {
           "$ref": "common.schema.json#/$defs/Uuid"
-        },
-        "updatedAt": {
-          "$ref": "common.schema.json#/$defs/Timestamp"
         }
       },
       "required": [
@@ -645,8 +660,7 @@
         "snapshotCreatedAt",
         "snapshotExpiresAt",
         "state",
-        "createdAt",
-        "updatedAt",
+        "sessionTimestamps",
         "eventHead",
         "limitProfileDigest",
         "collectionBoundaries",

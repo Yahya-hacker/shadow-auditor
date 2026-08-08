@@ -1,0 +1,382 @@
+{
+  "$defs": {
+    "Dimension": {
+      "additionalProperties": false,
+      "properties": {
+        "fixedMaximum": {
+          "$ref": "common.schema.json#/$defs/SafeNonNegativeInteger"
+        },
+        "fixedMinimum": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "governingLimit": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "hardMaximum": {
+          "$ref": "common.schema.json#/$defs/SafeNonNegativeInteger"
+        },
+        "minimumOperational": {
+          "$ref": "common.schema.json#/$defs/SafeNonNegativeInteger"
+        },
+        "unit": {
+          "enum": [
+            "items",
+            "keys",
+            "levels",
+            "nodes",
+            "safe-integer",
+            "utf8-bytes"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "governingLimit",
+        "unit"
+      ],
+      "type": "object"
+    },
+    "MandatoryDtoInvariant": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "arrayCardinality": {
+                "type": "null"
+              },
+              "canonicalBytes": {
+                "type": "null"
+              },
+              "depth": {
+                "type": "null"
+              },
+              "generatedStrings": {
+                "type": "null"
+              },
+              "nodes": {
+                "type": "null"
+              },
+              "objectKeys": {
+                "type": "null"
+              },
+              "safeIntegers": {
+                "type": "null"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "scope": {
+                "const": "wire"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arrayCardinality": {
+                "$ref": "#/$defs/Dimension"
+              },
+              "canonicalBytes": {
+                "$ref": "#/$defs/Dimension"
+              },
+              "depth": {
+                "$ref": "#/$defs/Dimension"
+              },
+              "generatedStrings": {
+                "$ref": "#/$defs/Dimension"
+              },
+              "nodes": {
+                "$ref": "#/$defs/Dimension"
+              },
+              "objectKeys": {
+                "$ref": "#/$defs/Dimension"
+              },
+              "safeIntegers": {
+                "$ref": "#/$defs/Dimension"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "acceptanceToRecovery": {
+          "additionalProperties": false,
+          "properties": {
+            "collection": {
+              "oneOf": [
+                {
+                  "$ref": "sessions.schema.json#/$defs/SnapshotCollectionName"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "guarantee": {
+              "enum": [
+                "accepted-record-is-recoverable",
+                "not-a-recovery-record",
+                "recovery-page-envelope"
+              ],
+              "type": "string"
+            },
+            "lineageCollections": {
+              "items": {
+                "$ref": "sessions.schema.json#/$defs/SnapshotCollectionName"
+              },
+              "maxItems": 7,
+              "type": "array",
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "collection",
+            "guarantee",
+            "lineageCollections"
+          ],
+          "type": "object"
+        },
+        "arrayCardinality": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Dimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "canonicalBytes": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Dimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depth": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Dimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "flow": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "generatedStrings": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Dimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "nodes": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Dimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "objectKeys": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Dimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "safeIntegers": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Dimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema": {
+          "pattern": "^[a-z-]+\\.schema\\.json(?:#(?:/.+)?)?$",
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "package-artifact",
+            "wire"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "schema",
+        "flow",
+        "canonicalBytes",
+        "nodes",
+        "depth",
+        "objectKeys",
+        "arrayCardinality",
+        "generatedStrings",
+        "safeIntegers",
+        "acceptanceToRecovery",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "OperationalQuotaProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "hardMaximum": {
+          "$ref": "common.schema.json#/$defs/OperationalLimits"
+        },
+        "minimumCompatible": {
+          "$ref": "common.schema.json#/$defs/OperationalLimits"
+        }
+      },
+      "required": [
+        "minimumCompatible",
+        "hardMaximum"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://shadow-auditor.dev/protocol/1.0/schemas/invariant-matrix.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "derivations": {
+      "additionalProperties": false,
+      "properties": {
+        "arrayCardinality": {
+          "const": "max(requiredFeatures.length, manifest.files.length, mandatoryDtos.length)"
+        },
+        "createSessionDescriptorDepth": {
+          "const": "tool input schema depth 5 plus CreateSessionRequest embedding depth 4"
+        },
+        "objectKeys": {
+          "const": "max(effective Protocol 1.0 limit-profile keys, mandatory snapshot-page keys)"
+        },
+        "recoveryDepth": {
+          "const": "max recovery item depth 3 plus page wrapper depth 2"
+        }
+      },
+      "required": [
+        "arrayCardinality",
+        "createSessionDescriptorDepth",
+        "objectKeys",
+        "recoveryDepth"
+      ],
+      "type": "object"
+    },
+    "flowGuarantees": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "collection": {
+            "$ref": "sessions.schema.json#/$defs/SnapshotCollectionName"
+          },
+          "itemLimit": {
+            "const": "maxRecoveryItemBytes/maxRecoveryItemNodes/maxRecoveryItemDepth"
+          },
+          "ordering": {
+            "const": "strict ascending stable UUID within one immutable snapshot"
+          },
+          "pageLimit": {
+            "const": "maxBodyBytes/maxCanonicalNodes/maxCanonicalDepth/maxRecoveryPageItems"
+          },
+          "progress": {
+            "const": "longest fitting prefix; at least one accepted record per non-terminal page"
+          }
+        },
+        "required": [
+          "collection",
+          "itemLimit",
+          "pageLimit",
+          "ordering",
+          "progress"
+        ],
+        "type": "object"
+      },
+      "maxItems": 7,
+      "minItems": 7,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "generatedStringLimits": {
+      "additionalProperties": {
+        "$ref": "common.schema.json#/$defs/SafeNonNegativeInteger"
+      },
+      "type": "object"
+    },
+    "mandatoryDtos": {
+      "items": {
+        "$ref": "#/$defs/MandatoryDtoInvariant"
+      },
+      "maxItems": 37,
+      "minItems": 37,
+      "type": "array"
+    },
+    "operationalQuotas": {
+      "$ref": "#/$defs/OperationalQuotaProfile"
+    },
+    "protocolVersion": {
+      "$ref": "common.schema.json#/$defs/ProtocolVersion"
+    },
+    "safeInteger": {
+      "additionalProperties": false,
+      "properties": {
+        "maximum": {
+          "const": 9007199254740991,
+          "type": "integer"
+        },
+        "minimum": {
+          "const": -9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "minimum",
+        "maximum"
+      ],
+      "type": "object"
+    },
+    "structuralProfile": {
+      "$ref": "common.schema.json#/$defs/ProtocolStructuralProfile"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "structuralProfile",
+    "operationalQuotas",
+    "generatedStringLimits",
+    "safeInteger",
+    "mandatoryDtos",
+    "flowGuarantees",
+    "derivations"
+  ],
+  "title": "Generated Protocol 1.0 Invariant Matrix",
+  "type": "object"
+}

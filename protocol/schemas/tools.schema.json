@@ -9,7 +9,7 @@
           "type": "integer"
         },
         "outputBytes": {
-          "maximum": 1048576,
+          "maximum": 524288,
           "minimum": 0,
           "type": "integer"
         },
@@ -35,7 +35,7 @@
           "type": "integer"
         },
         "outputBytes": {
-          "maximum": 1048576,
+          "maximum": 524288,
           "minimum": 0,
           "type": "integer"
         },
@@ -378,7 +378,7 @@
           "items": {
             "$ref": "common.schema.json#/$defs/Identifier"
           },
-          "maxItems": 256,
+          "maxItems": 37,
           "type": "array",
           "uniqueItems": true
         },
@@ -397,6 +397,7 @@
       "type": "object"
     },
     "ToolInputSchema": {
+      "description": "Protocol 1.0 closed tool-input schema subset. Schema validation MUST be followed by assertSupportedToolInputSchema with the pinned effective profile. The schema value itself is capped at canonical depth 5 so every accepted descriptor remains encodable inside CreateSessionRequest, whose embedding overhead is 4 levels.",
       "oneOf": [
         {
           "$ref": "#/$defs/ToolInputArraySchema"
@@ -416,7 +417,10 @@
         {
           "$ref": "#/$defs/ToolInputStringSchema"
         }
-      ]
+      ],
+      "x-shadow-bounded-canonical-required": true,
+      "x-shadow-max-canonical-depth": 5,
+      "x-shadow-semantic-validator": "assertSupportedToolInputSchema"
     },
     "ToolInputStringSchema": {
       "additionalProperties": false,
@@ -447,7 +451,7 @@
       "properties": {
         "arguments": {
           "$ref": "common.schema.json#/$defs/JsonObject",
-          "description": "Canonical arguments MUST pass bounded canonical validation with maxPayloadBytes 524288 before proposal acceptance. This acceptance-time limit guarantees the signed proposal is recoverable within maxRecoveryItemBytes."
+          "description": "Canonical arguments MUST pass bounded canonical validation under the pinned effective maxToolArgumentsBytes quota before proposal acceptance. The complete proposal MUST also fit maxRecoveryItemBytes, guaranteeing recovery."
         },
         "authorization": {
           "$ref": "common.schema.json#/$defs/DetachedSignature"
@@ -518,7 +522,7 @@
     },
     "ToolResult": {
       "additionalProperties": false,
-      "description": "The signed result contains digests only. Any supplied output, evidence, or error value MUST pass bounded canonical validation with maxPayloadBytes 524288 before its digest is accepted.",
+      "description": "The signed result contains digests only. Any supplied output, evidence, or error value MUST pass bounded canonical validation under the pinned effective maxToolResultValueBytes quota before its digest is accepted. Output MUST additionally fit the grant's approved outputBytes limit.",
       "properties": {
         "authorization": {
           "$ref": "common.schema.json#/$defs/DetachedSignature"

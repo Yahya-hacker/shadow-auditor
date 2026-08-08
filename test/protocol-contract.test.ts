@@ -5,6 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 import type {
+  CreateSessionRequest,
   KeyRotationProjection,
   RequestSigningProjection,
   RotateKeyRequest,
@@ -54,11 +55,15 @@ import {
   MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH,
   MAX_TOOL_ARGUMENTS_BYTES,
   MAX_TOOL_RESULT_VALUE_BYTES,
+  MIN_PROTOCOL_ARRAY_ITEMS,
+  MIN_PROTOCOL_OBJECT_KEYS,
   MIN_PROTOCOL_STRING_BYTES,
+  MINIMUM_OPERATIONAL_LIMITS,
   negotiateProtocolLimits,
   parseStrictJson,
   PROTOCOL_CANONICAL_LIMITS,
   PROTOCOL_GENERATED_STRING_MAX_BYTES,
+  PROTOCOL_STRUCTURAL_PROFILE,
   ProtocolLimitNegotiationError,
   protocolLimitProfileDigest,
   ProtocolSigningError,
@@ -66,6 +71,7 @@ import {
   REQUEST_SIGNATURE_DOMAIN,
   resolveServerToolSigningAuthorities,
   selectSnapshotPageItems,
+  SERVER_OPERATIONAL_LIMITS,
   SERVER_PROTOCOL_LIMITS,
   sha256Bytes,
   type SignedEventEnvelope,
@@ -85,11 +91,13 @@ import {
   toolDecisionDigest,
   toolDescriptorDigest,
   toolGrantDigest,
+  toolInputSchemaCanonicalLimits,
   type ToolLifecycleAuthorities,
   toolProposalDigest,
   toolResultDigest,
   toolResultValueCanonicalLimits,
   validateBoundedCanonicalJson,
+  validateCreateSessionRequest,
   validateServerEventSigningKeys,
   verifyBoundRequest,
   verifyEventEnvelope,
@@ -198,20 +206,10 @@ const requestTime = Date.parse(vectors.request.projection.timestamp);
 const limits = SERVER_PROTOCOL_LIMITS;
 const limitProfileDigest = protocolLimitProfileDigest(limits);
 const loweredLimitOffer = Object.freeze({
-  ...SERVER_PROTOCOL_LIMITS,
-  maxArrayItems: 64,
   maxBodyBytes: 524_288,
-  maxCanonicalDepth: 24,
-  maxCanonicalNodes: 5000,
   maxEventBytes: 131_072,
-  maxObjectKeys: 64,
   maxRecoveryItemBytes: 393_216,
-  maxRecoveryItemDepth: 22,
-  maxRecoveryItemNodes: 4744,
   maxRecoveryPageItems: 8,
-  maxRecoveryPageOverheadBytes: 131_072,
-  maxRecoveryPageOverheadNodes: 256,
-  maxStringBytes: 32_768,
   maxToolArgumentsBytes: 114_688,
   maxToolDescriptors: 8,
   maxToolResultValueBytes: 262_144,
@@ -240,7 +238,9 @@ function expectCanonicalError(run: () => unknown, code: string): void {
 function compileSchemas(): SchemaCompiler {
   const ajv = new Ajv2020({allErrors: true, strict: true});
   ajv.addKeyword({keyword: 'x-max-canonical-bytes', schemaType: 'number'});
+  ajv.addKeyword({keyword: 'x-shadow-bounded-canonical-required', schemaType: 'boolean'});
   ajv.addKeyword({keyword: 'x-shadow-limit-invariants', schemaType: 'array'});
+  ajv.addKeyword({keyword: 'x-shadow-max-canonical-depth', schemaType: 'number'});
   ajv.addKeyword({keyword: 'x-shadow-semantic-validator', schemaType: 'string'});
   ajv.addKeyword({keyword: 'x-typescript-exports', schemaType: 'object'});
   addFormats(ajv);
@@ -383,6 +383,132 @@ function toolRecords(): {
   };
 }
 
+function sizedToolLifecycle(
+  effective: typeof SERVER_PROTOCOL_LIMITS,
+  argumentBytes = effective.maxToolArgumentsBytes,
+  outputBytes = effective.maxToolResultValueBytes,
+  approvedOutputBytes = outputBytes,
+): ReturnType<typeof toolRecords> & {
+  output: JsonValue;
+} {
+  const base = toolRecords();
+  const argumentsValue = exactCanonicalSizeObject(argumentBytes, effective.maxStringBytes);
+  const output = exactCanonicalSizeTree(outputBytes);
+  const inputSchema: JsonValue = {
+    additionalProperties: false,
+    maxProperties: 1,
+    properties: {
+      chunks: {
+        items: {maxLength: effective.maxStringBytes, type: 'string'},
+        maxItems: effective.maxArrayItems,
+        type: 'array',
+      },
+    },
+    required: ['chunks'],
+    type: 'object',
+  };
+  const descriptorProjection: ToolDescriptorProjection = {
+    ...base.descriptor.projection,
+    inputSchema,
+    schemaDigest: digestCanonicalJson(inputSchema, bodyCanonicalLimits(effective)),
+  };
+  const descriptor: SignedToolDescriptor = {
+    authorization: authorization(
+      signProjection(
+        TOOL_DESCRIPTOR_DOMAIN,
+        descriptorProjection,
+        vectors.privateSeed,
+        effective,
+      ),
+    ),
+    descriptorDigest: toolDescriptorDigest(descriptorProjection, effective),
+    projection: descriptorProjection,
+  };
+  const proposalProjection: ToolProposalProjection = {
+    ...base.proposal.projection,
+    argumentsDigest: digestCanonicalJson(
+      argumentsValue,
+      toolArgumentsCanonicalLimits(effective),
+    ),
+    budgetEstimate: {
+      networkRequests: 0,
+      outputBytes: approvedOutputBytes,
+      wallClockMs: 1000,
+    },
+    descriptorDigest: descriptor.descriptorDigest,
+  };
+  const proposal: SignedToolProposal = {
+    arguments: argumentsValue,
+    authorization: authorization(
+      signProjection(
+        TOOL_PROPOSAL_DOMAIN,
+        proposalProjection,
+        vectors.toolLifecycle.proposalPrivateSeed,
+        effective,
+      ),
+      toolAuthorities().proposal.expectedKeyId,
+    ),
+    projection: proposalProjection,
+    proposalDigest: toolProposalDigest(proposalProjection, effective),
+  };
+  const decisionProjection: ToolDecisionProjection = {
+    ...base.decision.projection,
+    proposalDigest: proposal.proposalDigest,
+    proposalId: proposal.projection.proposalId,
+  };
+  const decision: SignedToolDecision = {
+    authorization: authorization(
+      signProjection(TOOL_DECISION_DOMAIN, decisionProjection, vectors.privateSeed, effective),
+    ),
+    decisionDigest: toolDecisionDigest(decisionProjection, effective),
+    projection: decisionProjection,
+  };
+  const grantProjection: ToolGrantProjection = {
+    ...base.grant.projection,
+    allowedLimits: {
+      networkRequests: 0,
+      outputBytes: approvedOutputBytes,
+      wallClockMs: 1000,
+    },
+    decisionDigest: decision.decisionDigest,
+    proposalDigest: proposal.proposalDigest,
+    proposalId: proposal.projection.proposalId,
+  };
+  const grant: SignedToolGrant = {
+    authorization: authorization(
+      signProjection(
+        TOOL_GRANT_DOMAIN,
+        grantProjection,
+        vectors.toolLifecycle.grantPrivateSeed,
+        effective,
+      ),
+      toolAuthorities().grant.expectedKeyId,
+    ),
+    grantDigest: toolGrantDigest(grantProjection, effective),
+    projection: grantProjection,
+  };
+  const resultProjection: ToolResultProjection = {
+    ...base.result.projection,
+    decisionDigest: decision.decisionDigest,
+    grantDigest: grant.grantDigest,
+    grantId: grant.projection.grantId,
+    outputDigest: digestCanonicalJson(
+      output,
+      toolResultValueCanonicalLimits(effective),
+    ),
+    proposalDigest: proposal.proposalDigest,
+    proposalId: proposal.projection.proposalId,
+  };
+  const result: SignedToolResult = {
+    authorization: authorization(
+      signProjection(TOOL_RESULT_DOMAIN, resultProjection, vectors.privateSeed, effective),
+    ),
+    projection: resultProjection,
+    resultDigest: toolResultDigest(resultProjection, effective),
+  };
+  return {decision, descriptor, grant, output, proposal, result};
+}
+
 function eventEnvelope(): SignedEventEnvelope {
   return {
     ...structuredClone(vectors.eventChain.projection),
@@ -427,6 +553,43 @@ function exactCanonicalSizeObject(
     }
 
     value.chunks.push('x'.repeat(maxChunkBytes));
+  }
+
+  if (Buffer.byteLength(canonicalizeJson(value), 'utf8') !== targetBytes) {
+    throw new Error(`failed to construct ${targetBytes}-byte canonical value`);
+  }
+
+  return value;
+}
+
+function exactCanonicalSizeTree(targetBytes: number): Record<string, string[]> {
+  const value: Record<string, string[]> = {chunks0: []};
+  while (true) {
+    const keys = Object.keys(value);
+    const currentKey = keys.at(-1)!;
+    const chunks = value[currentKey]!;
+    if (chunks.length === limits.maxArrayItems) {
+      if (keys.length === limits.maxObjectKeys) {
+        throw new Error(`cannot construct ${targetBytes}-byte canonical value`);
+      }
+
+      value[`chunks${keys.length}`] = [];
+      continue;
+    }
+
+    const currentBytes = Buffer.byteLength(canonicalizeJson(value), 'utf8');
+    const emptyCandidate = structuredClone(value);
+    emptyCandidate[currentKey]!.push('');
+    const entryOverhead =
+      Buffer.byteLength(canonicalizeJson(emptyCandidate), 'utf8') - currentBytes;
+    const remaining = targetBytes - currentBytes - entryOverhead;
+    if (remaining <= limits.maxStringBytes) {
+      if (remaining < 0) throw new Error(`cannot construct ${targetBytes}-byte canonical value`);
+      chunks.push('x'.repeat(remaining));
+      break;
+    }
+
+    chunks.push('x'.repeat(limits.maxStringBytes));
   }
 
   if (Buffer.byteLength(canonicalizeJson(value), 'utf8') !== targetBytes) {
@@ -497,7 +660,6 @@ function recoveryPages(
     const buildPage = (items: readonly unknown[], nextOffset: number): SnapshotPage => ({
       collection: 'operations',
       collectionBoundaries: boundaries,
-      createdAt: '2026-01-02T03:04:05.000Z',
       eventHead: {cursor: 1, eventHash: vectors.eventChain.eventHash},
       items,
       limitProfileDigest: profileDigest,
@@ -523,13 +685,16 @@ function recoveryPages(
       pageStart,
       protocolVersion: '1.0',
       sessionId: vectors.request.projection.sessionId as string,
+      sessionTimestamps: {
+        createdAt: '2026-01-02T03:04:05.000Z',
+        updatedAt: '2026-01-02T03:04:10.000Z',
+      },
       snapshotCreatedAt,
       snapshotExpiresAt,
       snapshotId,
       snapshotVersion: 1,
       state: 'awaiting-result',
       tenantId: vectors.request.projection.tenantId,
-      updatedAt: '2026-01-02T03:04:10.000Z',
     });
     const items = selectSnapshotPageItems(
       operations,
@@ -555,7 +720,6 @@ function recoveryPage(
   return {
     collection,
     collectionBoundaries,
-    createdAt: '2026-01-02T03:04:05.000Z',
     eventHead: {cursor: 1, eventHash: vectors.eventChain.eventHash},
     items,
     limitProfileDigest: protocolLimitProfileDigest(effectiveLimits),
@@ -563,13 +727,16 @@ function recoveryPage(
     pageStart: 0,
     protocolVersion: '1.0',
     sessionId: vectors.request.projection.sessionId as string,
+    sessionTimestamps: {
+      createdAt: '2026-01-02T03:04:05.000Z',
+      updatedAt: '2026-01-02T03:04:10.000Z',
+    },
     snapshotCreatedAt: '2026-01-02T03:04:08.000Z',
     snapshotExpiresAt: '2026-01-02T03:24:08.000Z',
     snapshotId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
     snapshotVersion: 1,
     state: 'completed',
     tenantId: vectors.request.projection.tenantId,
-    updatedAt: '2026-01-02T03:04:10.000Z',
   };
 }
 
@@ -580,7 +747,7 @@ function snapshotContext(
   return {
     collection: page.collection,
     collectionBoundaries: page.collectionBoundaries,
-    createdAt: page.createdAt,
+    createdAt: page.sessionTimestamps.createdAt,
     eventHead: page.eventHead,
     limitProfileDigest: page.limitProfileDigest,
     limits: effectiveLimits,
@@ -592,7 +759,7 @@ function snapshotContext(
     snapshotVersion: page.snapshotVersion,
     state: page.state,
     tenantId: page.tenantId,
-    updatedAt: page.updatedAt,
+    updatedAt: page.sessionTimestamps.updatedAt,
   };
 }
 
@@ -689,43 +856,142 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
 
   describe('negotiated limit profiles', () => {
     it('computes symmetric minima and rejects inconsistent profiles before use', () => {
-      const clientFirst = negotiateProtocolLimits(loweredLimitOffer, SERVER_PROTOCOL_LIMITS);
-      const serverFirst = negotiateProtocolLimits(SERVER_PROTOCOL_LIMITS, loweredLimitOffer);
-      expect(clientFirst).to.deep.equal(loweredLimitOffer);
+      const clientFirst = negotiateProtocolLimits(loweredLimitOffer, SERVER_OPERATIONAL_LIMITS);
+      const serverFirst = negotiateProtocolLimits(SERVER_OPERATIONAL_LIMITS, loweredLimitOffer);
+      expect(clientFirst).to.deep.equal({
+        ...PROTOCOL_STRUCTURAL_PROFILE,
+        ...loweredLimitOffer,
+      });
       expect(serverFirst).to.deep.equal(clientFirst);
       expect(protocolLimitProfileDigest(serverFirst)).to.equal(
         protocolLimitProfileDigest(clientFirst),
       );
       const largerCompatibleOffer = {
-        ...SERVER_PROTOCOL_LIMITS,
+        ...SERVER_OPERATIONAL_LIMITS,
         maxToolArgumentsBytes: 524_288,
       };
-      expect(negotiateProtocolLimits(largerCompatibleOffer, SERVER_PROTOCOL_LIMITS))
+      expect(negotiateProtocolLimits(largerCompatibleOffer, SERVER_OPERATIONAL_LIMITS))
         .to.deep.equal(SERVER_PROTOCOL_LIMITS);
-      expect(negotiateProtocolLimits(SERVER_PROTOCOL_LIMITS, largerCompatibleOffer))
+      expect(negotiateProtocolLimits(SERVER_OPERATIONAL_LIMITS, largerCompatibleOffer))
         .to.deep.equal(SERVER_PROTOCOL_LIMITS);
 
       for (const incompatible of [
-        {...loweredLimitOffer, maxBodyBytes: loweredLimitOffer.maxBodyBytes - 1},
-        {...loweredLimitOffer, maxCanonicalNodes: loweredLimitOffer.maxCanonicalNodes - 1},
-        {...loweredLimitOffer, maxCanonicalDepth: loweredLimitOffer.maxCanonicalDepth - 1},
+        {...MINIMUM_OPERATIONAL_LIMITS, maxBodyBytes: MINIMUM_OPERATIONAL_LIMITS.maxBodyBytes - 1},
         {...loweredLimitOffer, maxEventBytes: loweredLimitOffer.maxToolArgumentsBytes + 16_383},
-        {...loweredLimitOffer, maxRecoveryPageItems: loweredLimitOffer.maxArrayItems + 1},
-        {...loweredLimitOffer, maxStringBytes: MIN_PROTOCOL_STRING_BYTES - 1},
+        {...loweredLimitOffer, maxRecoveryPageItems: 0},
+        {
+          ...loweredLimitOffer,
+          maxToolArgumentsBytes: MINIMUM_OPERATIONAL_LIMITS.maxToolArgumentsBytes - 1,
+        },
       ]) {
-        expect(() => negotiateProtocolLimits(SERVER_PROTOCOL_LIMITS, incompatible))
+        expect(() => negotiateProtocolLimits(SERVER_OPERATIONAL_LIMITS, incompatible))
           .to.throw(ProtocolLimitNegotiationError)
           .with.property('code', 'incompatible_limit_profile');
       }
+
+      expect(() => negotiateProtocolLimits(
+        SERVER_OPERATIONAL_LIMITS,
+        {...loweredLimitOffer, maxStringBytes: MIN_PROTOCOL_STRING_BYTES} as never,
+      )).to.throw(ProtocolLimitNegotiationError)
+        .with.property('invariant', 'operational_offer_shape');
+      expect(() => negotiateProtocolLimits(
+        SERVER_OPERATIONAL_LIMITS,
+        {...SERVER_PROTOCOL_LIMITS, maxArrayItems: MIN_PROTOCOL_ARRAY_ITEMS - 1} as never,
+      )).to.throw(ProtocolLimitNegotiationError)
+        .with.property('code', 'incompatible_limit_profile');
     });
 
-    it('derives and enforces mandatory generated-string and cursor wire bounds', () => {
-      const minimumStringOffer = {
-        ...loweredLimitOffer,
-        maxStringBytes: MIN_PROTOCOL_STRING_BYTES,
+    it('pins every structural dimension and enforces feature and object-key boundaries', () => {
+      const commonSchema = JSON.parse(
+        fs.readFileSync(path.join(schemaDirectory, 'common.schema.json'), 'utf8'),
+      ) as {
+        $defs: {
+          ProtocolStructuralProfile: {
+            properties: Record<string, {const: number}>;
+          };
+        };
       };
-      const effective = negotiateProtocolLimits(SERVER_PROTOCOL_LIMITS, minimumStringOffer);
-      expect(negotiateProtocolLimits(minimumStringOffer, SERVER_PROTOCOL_LIMITS))
+      const capabilitySchema = JSON.parse(
+        fs.readFileSync(
+          path.join(schemaDirectory, 'capabilities.schema.json'),
+          'utf8',
+        ),
+      ) as {$id: string};
+      const manifest = JSON.parse(
+        fs.readFileSync(path.join(root, 'protocol', 'manifest.json'), 'utf8'),
+      ) as {
+        protocolDigest: string;
+        requiredFeatures: string[];
+      };
+      const schemaAjv = compileSchemas();
+      const effective = negotiateProtocolLimits(
+        MINIMUM_OPERATIONAL_LIMITS,
+        SERVER_OPERATIONAL_LIMITS,
+      );
+      for (const [name, value] of Object.entries(PROTOCOL_STRUCTURAL_PROFILE)) {
+        expect(
+          commonSchema.$defs.ProtocolStructuralProfile.properties[name]?.const,
+          name,
+        ).to.equal(value);
+        for (const incompatible of [value - 1, value + 1]) {
+          expect(() => protocolLimitProfileDigest({
+            ...effective,
+            [name]: incompatible,
+          })).to.throw(ProtocolLimitNegotiationError)
+            .with.property('invariant', 'frozen_structural_profile');
+        }
+      }
+
+      const validateCapabilities = schemaAjv.getSchema(
+        `${capabilitySchema.$id}#/$defs/NegotiatedCapabilities`,
+      );
+      expect(validateCapabilities).to.be.a('function');
+      const capabilities = {
+        compression: 'identity',
+        features: manifest.requiredFeatures,
+        limitProfileDigest: protocolLimitProfileDigest(effective),
+        operationalLimits: MINIMUM_OPERATIONAL_LIMITS,
+        protocolVersion: '1.0',
+        serverEventSigningKeys: [vectors.eventChain.serverSigningKey],
+        serverManifestDigest: manifest.protocolDigest,
+        serverToolSigningKeys: vectors.toolLifecycle.serverSigningKeys,
+        structuralProfile: PROTOCOL_STRUCTURAL_PROFILE,
+      };
+      expect(manifest.requiredFeatures).to.have.length(11);
+      expect(
+        validateCapabilities?.(capabilities),
+        JSON.stringify(validateCapabilities?.errors),
+      ).to.equal(true);
+      expect(
+        validateCapabilities?.({
+          ...capabilities,
+          features: manifest.requiredFeatures.slice(0, -1),
+        }),
+      ).to.equal(false);
+
+      const exactWidth = Object.fromEntries(
+        Array.from(
+          {length: PROTOCOL_STRUCTURAL_PROFILE.maxObjectKeys},
+          (_, index) => [`k${index.toString().padStart(2, '0')}`, index],
+        ),
+      );
+      const bodyLimits = bodyCanonicalLimits(SERVER_PROTOCOL_LIMITS);
+      expect(() => validateBoundedCanonicalJson(
+        exactWidth,
+        bodyLimits,
+      )).not.to.throw();
+      expectCanonicalError(
+        () => validateBoundedCanonicalJson(exactWidth, {
+          ...bodyLimits,
+          maxObjectKeys: PROTOCOL_STRUCTURAL_PROFILE.maxObjectKeys - 1,
+        }),
+        'object_too_large',
+      );
+    });
+
+    it('derives and enforces frozen generated-string and cursor wire bounds', () => {
+      const effective = negotiateProtocolLimits(SERVER_OPERATIONAL_LIMITS, loweredLimitOffer);
+      expect(negotiateProtocolLimits(loweredLimitOffer, SERVER_OPERATIONAL_LIMITS))
         .to.deep.equal(effective);
       expect(effective.maxStringBytes).to.equal(8192);
       expect(MIN_PROTOCOL_STRING_BYTES).to.equal(
@@ -775,20 +1041,15 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
         'snapshot_cursor_mismatch',
       );
 
-      expect(() => negotiateProtocolLimits(
-        SERVER_PROTOCOL_LIMITS,
-        {...minimumStringOffer, maxStringBytes: MIN_PROTOCOL_STRING_BYTES - 1},
-      )).to.throw(ProtocolLimitNegotiationError)
-        .with.property('invariant', 'mandatory_generated_strings');
+      expect(PROTOCOL_STRUCTURAL_PROFILE.maxStringBytes).to.equal(MIN_PROTOCOL_STRING_BYTES);
     });
 
     it('paginates completely at the minimum generated-string profile', () => {
       const minimumOffer = {
         ...loweredLimitOffer,
         maxRecoveryPageItems: 2,
-        maxStringBytes: MIN_PROTOCOL_STRING_BYTES,
       };
-      const effective = negotiateProtocolLimits(SERVER_PROTOCOL_LIMITS, minimumOffer);
+      const effective = negotiateProtocolLimits(SERVER_OPERATIONAL_LIMITS, minimumOffer);
       const operations = Array.from({length: 5}, (_, index) => recoveryOperation(index));
       const pages = recoveryPages(
         operations,
@@ -803,6 +1064,28 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       expect(new Set(pages.flatMap((page) => page.items.map(
         (item) => (item as ReturnType<typeof recoveryOperation>).operation.requestId,
       ))).size).to.equal(operations.length);
+      expect(() => validateBoundedCanonicalJson(
+        operations[0],
+        recoveryItemCanonicalLimits(effective),
+      )).not.to.throw();
+      expectCanonicalError(
+        () => validateBoundedCanonicalJson(operations[0], {
+          ...recoveryItemCanonicalLimits(effective),
+          maxDepth: PROTOCOL_STRUCTURAL_PROFILE.maxRecoveryItemDepth - 1,
+        }),
+        'too_deep',
+      );
+      expect(() => validateBoundedCanonicalJson(
+        pages[0],
+        bodyCanonicalLimits(effective),
+      )).not.to.throw();
+      expectCanonicalError(
+        () => validateBoundedCanonicalJson(pages[0], {
+          ...bodyCanonicalLimits(effective),
+          maxDepth: PROTOCOL_STRUCTURAL_PROFILE.maxRecoveryItemDepth + 1,
+        }),
+        'too_deep',
+      );
       expectSigningError(
         () => selectSnapshotPageItems(
           operations,
@@ -851,8 +1134,8 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
 
       const firstCursor = decodeSnapshotCursor(pages[0].nextCursor as string, effective);
       const alternate = negotiateProtocolLimits(
-        SERVER_PROTOCOL_LIMITS,
-        {...minimumOffer, maxStringBytes: MIN_PROTOCOL_STRING_BYTES + 1},
+        SERVER_OPERATIONAL_LIMITS,
+        {...minimumOffer, maxBodyBytes: minimumOffer.maxBodyBytes + 1},
       );
       expectSigningError(
         () => verifySnapshotCursor(
@@ -871,11 +1154,9 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
     });
 
     it('pins a compatible lowered profile across acceptance and paginated recovery', () => {
-      const effective = negotiateProtocolLimits(SERVER_PROTOCOL_LIMITS, loweredLimitOffer);
-      const maximumArguments = exactCanonicalSizeObject(
-        effective.maxToolArgumentsBytes,
-        effective.maxStringBytes,
-      );
+      const effective = negotiateProtocolLimits(SERVER_OPERATIONAL_LIMITS, loweredLimitOffer);
+      const lifecycle = sizedToolLifecycle(effective);
+      const maximumArguments = lifecycle.proposal.arguments;
       expect(validateBoundedCanonicalJson(
         maximumArguments,
         toolArgumentsCanonicalLimits(effective),
@@ -890,8 +1171,6 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
         ),
         'payload_too_large',
       );
-
-      const base = toolRecords();
       expectSigningError(
         () => assertSupportedToolInputSchema(
           {
@@ -903,130 +1182,93 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
         ),
         'invalid_tool_schema',
       );
-      const inputSchema: JsonValue = {
-        additionalProperties: false,
-        maxProperties: 1,
-        properties: {
-          chunks: {
-            items: {maxLength: effective.maxStringBytes, type: 'string'},
-            maxItems: effective.maxArrayItems,
-            type: 'array',
-          },
-        },
-        required: ['chunks'],
-        type: 'object',
+      verifyToolProposal(
+        lifecycle.proposal,
+        lifecycle.descriptor,
+        toolAuthorities(),
+        effective,
+      );
+      verifyToolDecision(
+        lifecycle.decision,
+        lifecycle.proposal,
+        toolAuthorities(),
+        effective,
+      );
+      verifyToolGrant(
+        lifecycle.grant,
+        lifecycle.proposal,
+        lifecycle.decision,
+        toolAuthorities(),
+        effective,
+      );
+      verifyToolResult(
+        lifecycle.result,
+        lifecycle.proposal,
+        lifecycle.decision,
+        lifecycle.grant,
+        toolAuthorities(),
+        {limits: effective, output: lifecycle.output},
+      );
+
+      const oversizedArguments = exactCanonicalSizeObject(
+        effective.maxToolArgumentsBytes + 1,
+        effective.maxStringBytes,
+      );
+      const oversizedProposalProjection: ToolProposalProjection = {
+        ...lifecycle.proposal.projection,
+        argumentsDigest: digestCanonicalJson(oversizedArguments),
+        proposalId: indexedUuid(0x21),
       };
-      const descriptorProjection: ToolDescriptorProjection = {
-        ...base.descriptor.projection,
-        inputSchema,
-        schemaDigest: digestCanonicalJson(inputSchema, bodyCanonicalLimits(effective)),
-      };
-      const descriptor: SignedToolDescriptor = {
+      const oversizedProposal: SignedToolProposal = {
+        arguments: oversizedArguments,
         authorization: authorization(
           signProjection(
-            TOOL_DESCRIPTOR_DOMAIN,
-            descriptorProjection,
-            vectors.privateSeed,
+            TOOL_PROPOSAL_DOMAIN,
+            oversizedProposalProjection,
+            vectors.toolLifecycle.proposalPrivateSeed,
             effective,
           ),
+          toolAuthorities().proposal.expectedKeyId,
         ),
-        descriptorDigest: toolDescriptorDigest(descriptorProjection, effective),
-        projection: descriptorProjection,
+        projection: oversizedProposalProjection,
+        proposalDigest: toolProposalDigest(oversizedProposalProjection, effective),
       };
-      const createProposal = (
-        argumentsValue: Record<string, JsonValue>,
-        proposalId: string,
-      ): SignedToolProposal => {
-        const projection: ToolProposalProjection = {
-          ...base.proposal.projection,
-          argumentsDigest: digestCanonicalJson(argumentsValue),
-          descriptorDigest: descriptor.descriptorDigest,
-          proposalId,
-        };
-        return {
-          arguments: argumentsValue,
-          authorization: authorization(
-            signProjection(
-              TOOL_PROPOSAL_DOMAIN,
-              projection,
-              vectors.toolLifecycle.proposalPrivateSeed,
-              effective,
-            ),
-            toolAuthorities().proposal.expectedKeyId,
-          ),
-          projection,
-          proposalDigest: toolProposalDigest(projection, effective),
-        };
-      };
-
-      const proposal = createProposal(maximumArguments, indexedUuid(0x20));
-      verifyToolProposal(proposal, descriptor, toolAuthorities(), effective);
-      const oversizedProposal = createProposal(
-        exactCanonicalSizeObject(
-          effective.maxToolArgumentsBytes + 1,
-          effective.maxStringBytes,
-        ),
-        indexedUuid(0x21),
-      );
       expectCanonicalError(
         () => verifyToolProposal(
           oversizedProposal,
-          descriptor,
+          lifecycle.descriptor,
           toolAuthorities(),
           effective,
         ),
         'payload_too_large',
       );
 
-      const maximumOutput = exactCanonicalSizeObject(
-        effective.maxToolResultValueBytes,
-        effective.maxStringBytes,
-      );
-      const resultProjection: ToolResultProjection = {
-        ...base.result.projection,
-        outputDigest: digestCanonicalJson(
-          maximumOutput,
-          toolResultValueCanonicalLimits(effective),
-        ),
-      };
-      const result: SignedToolResult = {
-        authorization: authorization(
-          signProjection(
-            TOOL_RESULT_DOMAIN,
-            resultProjection,
-            vectors.privateSeed,
-            effective,
-          ),
-        ),
-        projection: resultProjection,
-        resultDigest: toolResultDigest(resultProjection, effective),
-      };
-      verifyToolResult(
-        result,
-        base.proposal,
-        base.decision,
-        base.grant,
-        toolAuthorities(),
-        {limits: effective, output: maximumOutput},
-      );
-      const oversizedOutput = exactCanonicalSizeObject(
-        effective.maxToolResultValueBytes + 1,
-        effective.maxStringBytes,
-      );
+      const oversizedOutput = exactCanonicalSizeTree(effective.maxToolResultValueBytes + 1);
       expectCanonicalError(
         () => verifyToolResult(
-          {
-            ...result,
-            projection: {
-              ...resultProjection,
-              outputDigest: digestCanonicalJson(oversizedOutput),
-            },
-          },
-          base.proposal,
-          base.decision,
-          base.grant,
+          lifecycle.result,
+          lifecycle.proposal,
+          lifecycle.decision,
+          lifecycle.grant,
           toolAuthorities(),
           {limits: effective, output: oversizedOutput},
+        ),
+        'payload_too_large',
+      );
+      const grantBoundLifecycle = sizedToolLifecycle(
+        effective,
+        effective.maxToolArgumentsBytes,
+        effective.maxToolResultValueBytes,
+        effective.maxToolResultValueBytes - 1,
+      );
+      expectSigningError(
+        () => verifyToolResult(
+          grantBoundLifecycle.result,
+          grantBoundLifecycle.proposal,
+          grantBoundLifecycle.decision,
+          grantBoundLifecycle.grant,
+          toolAuthorities(),
+          {limits: effective, output: grantBoundLifecycle.output},
         ),
         'payload_too_large',
       );
@@ -1093,16 +1335,26 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
 
       const lineageBoundaries = {
         ...recoveryBoundaries([], effective),
-        decisions: snapshotCollectionBoundary('decisions', [base.decision], effective),
-        grants: snapshotCollectionBoundary('grants', [base.grant], effective),
-        proposals: snapshotCollectionBoundary('proposals', [base.proposal], effective),
-        results: snapshotCollectionBoundary('results', [base.result], effective),
+        decisions: snapshotCollectionBoundary('decisions', [lifecycle.decision], effective),
+        grants: snapshotCollectionBoundary('grants', [lifecycle.grant], effective),
+        proposals: snapshotCollectionBoundary('proposals', [lifecycle.proposal], effective),
+        results: snapshotCollectionBoundary('results', [lifecycle.result], effective),
       };
       const lineagePages = {
-        decisions: recoveryPage('decisions', [base.decision], lineageBoundaries, effective),
-        grants: recoveryPage('grants', [base.grant], lineageBoundaries, effective),
-        proposals: recoveryPage('proposals', [base.proposal], lineageBoundaries, effective),
-        results: recoveryPage('results', [base.result], lineageBoundaries, effective),
+        decisions: recoveryPage(
+          'decisions',
+          [lifecycle.decision],
+          lineageBoundaries,
+          effective,
+        ),
+        grants: recoveryPage('grants', [lifecycle.grant], lineageBoundaries, effective),
+        proposals: recoveryPage(
+          'proposals',
+          [lifecycle.proposal],
+          lineageBoundaries,
+          effective,
+        ),
+        results: recoveryPage('results', [lifecycle.result], lineageBoundaries, effective),
       };
       const recoveredCollections = {
         decisions: assembleSnapshotCollection(
@@ -1136,6 +1388,180 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
         toolAuthorities(),
         effective,
       );
+      expect(recoveredCollections.proposals[0]).to.deep.equal(lifecycle.proposal);
+      expect(recoveredCollections.decisions[0]).to.deep.equal(lifecycle.decision);
+      expect(recoveredCollections.grants[0]).to.deep.equal(lifecycle.grant);
+      expect(recoveredResult).to.deep.equal(lifecycle.result);
+    });
+
+    it('preserves acceptance and recoverability across deterministic valid operational profiles', () => {
+      let seed = 0x5a_17_c0_de;
+      const next = (minimum: number, maximum: number): number => {
+        seed = (
+          Math.imul(seed, 1_664_525)
+          + 1_013_904_223
+          + 0x1_00_00_00_00
+        ) % 0x1_00_00_00_00;
+        return minimum + (seed % (maximum - minimum + 1));
+      };
+
+      const profiles = Array.from({length: 24}, () => {
+        const maxToolArgumentsBytes = next(
+          MINIMUM_OPERATIONAL_LIMITS.maxToolArgumentsBytes,
+          SERVER_OPERATIONAL_LIMITS.maxToolArgumentsBytes,
+        );
+        const maxRecoveryItemBytes = next(
+          maxToolArgumentsBytes + 4096,
+          SERVER_OPERATIONAL_LIMITS.maxRecoveryItemBytes,
+        );
+        const minimumBody = Math.max(
+          maxRecoveryItemBytes + 16_384,
+          maxToolArgumentsBytes + 16_384,
+          MINIMUM_OPERATIONAL_LIMITS.maxToolResultValueBytes,
+        );
+        const maxBodyBytes = next(minimumBody, SERVER_OPERATIONAL_LIMITS.maxBodyBytes);
+        const maxEventBytes = next(
+          maxToolArgumentsBytes + 16_384,
+          Math.min(SERVER_OPERATIONAL_LIMITS.maxEventBytes, maxBodyBytes),
+        );
+        return {
+          maxBodyBytes,
+          maxEventBytes,
+          maxRecoveryItemBytes,
+          maxRecoveryPageItems: next(
+            MINIMUM_OPERATIONAL_LIMITS.maxRecoveryPageItems,
+            SERVER_OPERATIONAL_LIMITS.maxRecoveryPageItems,
+          ),
+          maxToolArgumentsBytes,
+          maxToolDescriptors: next(
+            MINIMUM_OPERATIONAL_LIMITS.maxToolDescriptors,
+            SERVER_OPERATIONAL_LIMITS.maxToolDescriptors,
+          ),
+          maxToolResultValueBytes: next(
+            MINIMUM_OPERATIONAL_LIMITS.maxToolResultValueBytes,
+            Math.min(SERVER_OPERATIONAL_LIMITS.maxToolResultValueBytes, maxBodyBytes),
+          ),
+        };
+      });
+      const operations = Array.from({length: 5}, (_, index) => recoveryOperation(index));
+      const now = Date.parse('2026-01-02T03:05:00.000Z');
+
+      for (const [profileIndex, offer] of profiles.entries()) {
+        const effective = negotiateProtocolLimits(offer, SERVER_OPERATIONAL_LIMITS);
+        const lifecycle = sizedToolLifecycle(effective);
+        expect(negotiateProtocolLimits(SERVER_OPERATIONAL_LIMITS, offer))
+          .to.deep.equal(effective);
+        expect(protocolLimitProfileDigest(effective)).to.equal(
+          protocolLimitProfileDigest(negotiateProtocolLimits(offer, SERVER_OPERATIONAL_LIMITS)),
+        );
+        expect(validateBoundedCanonicalJson(
+          exactCanonicalSizeObject(
+            effective.maxToolArgumentsBytes,
+            effective.maxStringBytes,
+          ),
+          toolArgumentsCanonicalLimits(effective),
+        ).payloadBytes).to.equal(effective.maxToolArgumentsBytes);
+        verifyToolProposal(
+          lifecycle.proposal,
+          lifecycle.descriptor,
+          toolAuthorities(),
+          effective,
+        );
+        verifyToolResult(
+          lifecycle.result,
+          lifecycle.proposal,
+          lifecycle.decision,
+          lifecycle.grant,
+          toolAuthorities(),
+          {limits: effective, output: lifecycle.output},
+        );
+
+        const pages = recoveryPages(
+          operations,
+          indexedUuid(0x40 + profileIndex),
+          '2026-01-02T03:04:08.000Z',
+          '2026-01-02T03:24:08.000Z',
+          effective,
+        );
+        expect(pages.flatMap(({items}) => items)).to.deep.equal(operations);
+        expect(new Set(pages.flatMap(({items}) => items.map(
+          (item) => (item as ReturnType<typeof recoveryOperation>).operation.requestId,
+        ))).size).to.equal(operations.length);
+        for (const page of pages) {
+          expect(page.items.length).to.be.within(1, effective.maxRecoveryPageItems);
+          const validation = validateBoundedCanonicalJson(
+            page,
+            bodyCanonicalLimits(effective),
+          );
+          expect(validation.payloadBytes).to.be.at.most(effective.maxBodyBytes);
+          expect(validation.nodeCount).to.be.at.most(effective.maxCanonicalNodes);
+        }
+
+        expect(assembleSnapshotCollection(
+          pages,
+          snapshotContext(pages[0], effective),
+          snapshotAuthority(),
+          now,
+        )).to.deep.equal(operations);
+
+        const boundaries = {
+          ...recoveryBoundaries([], effective),
+          decisions: snapshotCollectionBoundary('decisions', [lifecycle.decision], effective),
+          grants: snapshotCollectionBoundary('grants', [lifecycle.grant], effective),
+          proposals: snapshotCollectionBoundary('proposals', [lifecycle.proposal], effective),
+          results: snapshotCollectionBoundary('results', [lifecycle.result], effective),
+        };
+        const decisionPage = recoveryPage(
+          'decisions',
+          [lifecycle.decision],
+          boundaries,
+          effective,
+        );
+        const grantPage = recoveryPage('grants', [lifecycle.grant], boundaries, effective);
+        const proposalPage = recoveryPage(
+          'proposals',
+          [lifecycle.proposal],
+          boundaries,
+          effective,
+        );
+        const resultPage = recoveryPage('results', [lifecycle.result], boundaries, effective);
+        const recoveredCollections = {
+          decisions: assembleSnapshotCollection(
+            [decisionPage],
+            snapshotContext(decisionPage, effective),
+            snapshotAuthority(),
+            now,
+          ) as readonly SignedToolDecision[],
+          grants: assembleSnapshotCollection(
+            [grantPage],
+            snapshotContext(grantPage, effective),
+            snapshotAuthority(),
+            now,
+          ) as readonly SignedToolGrant[],
+          proposals: assembleSnapshotCollection(
+            [proposalPage],
+            snapshotContext(proposalPage, effective),
+            snapshotAuthority(),
+            now,
+          ) as readonly SignedToolProposal[],
+        };
+        const [recoveredResult] = assembleSnapshotCollection(
+          [resultPage],
+          snapshotContext(resultPage, effective),
+          snapshotAuthority(),
+          now,
+        ) as readonly SignedToolResult[];
+        verifyRecoveredToolResult(
+          recoveredResult,
+          recoveredCollections,
+          toolAuthorities(),
+          effective,
+        );
+        expect(recoveredCollections.proposals[0]).to.deep.equal(lifecycle.proposal);
+        expect(recoveredCollections.decisions[0]).to.deep.equal(lifecycle.decision);
+        expect(recoveredCollections.grants[0]).to.deep.equal(lifecycle.grant);
+        expect(recoveredResult).to.deep.equal(lifecycle.result);
+      }
     });
   });
 
@@ -1349,9 +1775,10 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
           bootstrapToken: 'b'.repeat(32),
           clientCapabilities: {
             compression: ['identity'],
-            limits: PROTOCOL_CANONICAL_LIMITS,
+            operationalLimits: SERVER_OPERATIONAL_LIMITS,
             optionalFeatures: [],
             requiredFeatures: ['bound-ed25519-auth'],
+            structuralProfile: PROTOCOL_STRUCTURAL_PROFILE,
             supportedVersions: ['1.0'],
           },
           deviceId: vectors.request.projection.deviceId,
@@ -1803,6 +2230,43 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
         'invalid_tool_schema',
       );
 
+      const exactDepthSchema: JsonValue = {
+        additionalProperties: false,
+        maxProperties: 1,
+        properties: {
+          nested: {
+            items: {
+              items: {maxLength: 1, type: 'string'},
+              maxItems: 1,
+              type: 'array',
+            },
+            maxItems: 1,
+            type: 'array',
+          },
+        },
+        required: ['nested'],
+        type: 'object',
+      };
+      expect(() => assertSupportedToolInputSchema(exactDepthSchema, limits)).not.to.throw();
+      expect(() => validateBoundedCanonicalJson(
+        exactDepthSchema,
+        toolInputSchemaCanonicalLimits(limits),
+      )).not.to.throw();
+      const oneLevelTooDeep = structuredClone(exactDepthSchema) as Record<string, JsonValue>;
+      const nested = (
+        (oneLevelTooDeep.properties as Record<string, JsonValue>).nested as
+          Record<string, JsonValue>
+      );
+      nested.items = {
+        items: nested.items as JsonValue,
+        maxItems: 1,
+        type: 'array',
+      };
+      expectCanonicalError(
+        () => assertSupportedToolInputSchema(oneLevelTooDeep, limits),
+        'too_deep',
+      );
+
       const {descriptor, proposal} = toolRecords();
       proposal.arguments = {
         pathDigest: `sha256:${'0'.repeat(64)}`,
@@ -2185,16 +2649,21 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       expect(timestamp('2026-01-02T03:04:05+00:00')).to.equal(false);
     });
 
-    it('freezes generated-string minima and the derived cursor maximum in schemas', () => {
-      const payloadLimits = validator(ajv, 'common', 'PayloadLimits');
+    it('freezes structural minima and the derived cursor maximum in schemas', () => {
+      const structuralProfile = validator(ajv, 'common', 'ProtocolStructuralProfile');
       const snapshotCursorToken = validator(ajv, 'sessions', 'SnapshotCursorToken');
-      expect(payloadLimits({
-        ...SERVER_PROTOCOL_LIMITS,
-        maxStringBytes: MIN_PROTOCOL_STRING_BYTES,
-      })).to.equal(true);
-      expect(payloadLimits({
-        ...SERVER_PROTOCOL_LIMITS,
+      expect(structuralProfile(PROTOCOL_STRUCTURAL_PROFILE)).to.equal(true);
+      expect(structuralProfile({
+        ...PROTOCOL_STRUCTURAL_PROFILE,
         maxStringBytes: MIN_PROTOCOL_STRING_BYTES - 1,
+      })).to.equal(false);
+      expect(structuralProfile({
+        ...PROTOCOL_STRUCTURAL_PROFILE,
+        maxArrayItems: MIN_PROTOCOL_ARRAY_ITEMS - 1,
+      })).to.equal(false);
+      expect(structuralProfile({
+        ...PROTOCOL_STRUCTURAL_PROFILE,
+        maxObjectKeys: MIN_PROTOCOL_OBJECT_KEYS - 1,
       })).to.equal(false);
       expect(snapshotCursorToken('A'.repeat(MAX_SNAPSHOT_CURSOR_TOKEN_LENGTH)))
         .to.equal(true);
@@ -2220,8 +2689,8 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       );
 
       const excessiveNodes = Array.from(
-        {length: 100},
-        () => Array.from({length: 100}, () => null),
+        {length: limits.maxArrayItems},
+        () => Array.from({length: 16}, () => null),
       );
       expect(jsonValue(excessiveNodes)).to.equal(true);
       expectCanonicalError(
@@ -2252,14 +2721,25 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
         'string_too_large',
       );
 
-      const aggregatePayload = Array.from({length: 16}, () => 'a'.repeat(65_536));
+      const aggregatePayload = Array.from(
+        {length: 16},
+        (_, outerIndex) => Object.fromEntries(
+          Array.from(
+            {length: 8},
+            (_, innerIndex) => [`k${outerIndex}_${innerIndex}`, 'a'.repeat(limits.maxStringBytes)],
+          ),
+        ),
+      );
       expect(jsonValue(aggregatePayload)).to.equal(true);
       expectCanonicalError(
         () => validateBoundedCanonicalJson(aggregatePayload),
         'payload_too_large',
       );
-      const expansionString = '\u0000'.repeat(65_536);
-      const expansionPayload = Array.from({length: 1024}, () => expansionString);
+      const expansionString = '\u0000'.repeat(limits.maxStringBytes);
+      const expansionPayload = Array.from(
+        {length: limits.maxArrayItems},
+        () => expansionString,
+      );
       expectCanonicalError(
         () => validateBoundedCanonicalJson(expansionPayload),
         'payload_too_large',
@@ -2281,26 +2761,10 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
         bootstrapToken: 'a'.repeat(32),
         clientCapabilities: {
           compression: ['identity'],
-          limits: {
-            maxArrayItems: 1024,
-            maxBodyBytes: 1_048_576,
-            maxCanonicalDepth: 32,
-            maxCanonicalNodes: 10_000,
-            maxEventBytes: 262_144,
-            maxObjectKeys: 256,
-            maxRecoveryItemBytes: 786_432,
-            maxRecoveryItemDepth: 30,
-            maxRecoveryItemNodes: 9744,
-            maxRecoveryPageItems: 128,
-            maxRecoveryPageOverheadBytes: 262_144,
-            maxRecoveryPageOverheadNodes: 256,
-            maxStringBytes: 65_536,
-            maxToolArgumentsBytes: 524_288,
-            maxToolDescriptors: 128,
-            maxToolResultValueBytes: 524_288,
-          },
+          operationalLimits: SERVER_OPERATIONAL_LIMITS,
           optionalFeatures: [],
           requiredFeatures: ['bound-ed25519-auth'],
+          structuralProfile: PROTOCOL_STRUCTURAL_PROFILE,
           supportedVersions: ['1.0'],
         },
         deviceId: vectors.request.projection.deviceId,
@@ -2386,11 +2850,12 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
           'usage-reconciliation-v1',
         ],
         limitProfileDigest,
-        limits: base.clientCapabilities.limits,
+        operationalLimits: base.clientCapabilities.operationalLimits,
         protocolVersion: '1.0',
         serverEventSigningKeys: [vectors.eventChain.serverSigningKey],
         serverManifestDigest: `sha256:${'0'.repeat(64)}`,
         serverToolSigningKeys: vectors.toolLifecycle.serverSigningKeys,
+        structuralProfile: base.clientCapabilities.structuralProfile,
       };
       expect(negotiated(capabilities), JSON.stringify(negotiated.errors)).to.equal(true);
       expect(negotiated({...capabilities, serverToolSigningKeys: []})).to.equal(false);
@@ -2562,7 +3027,9 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       const operations = Array.from({length: 1025}, (_, index) => recoveryOperation(index));
       const pages = recoveryPages(operations);
       const validateSnapshotPage = validator(ajv, 'sessions', 'SessionSnapshotPage');
-      expect(pages).to.have.length(9);
+      expect(pages.length).to.be.greaterThan(
+        Math.ceil(operations.length / limits.maxRecoveryPageItems),
+      );
       for (const page of pages) {
         expect(
           validateSnapshotPage(page),
@@ -2773,8 +3240,8 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
         maxProperties: 1,
         properties: {
           chunks: {
-            items: {maxLength: 65_536, type: 'string'},
-            maxItems: 8,
+            items: {maxLength: limits.maxStringBytes, type: 'string'},
+            maxItems: limits.maxArrayItems,
             type: 'array',
           },
         },
@@ -2882,53 +3349,33 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
         'payload_too_large',
       );
 
-      const maximumOutput = exactCanonicalSizeObject(MAX_TOOL_RESULT_VALUE_BYTES);
-      const resultProjection: ToolResultProjection = {
-        ...base.result.projection,
-        outputDigest: digestCanonicalJson(maximumOutput),
-      };
-      const result: SignedToolResult = {
-        authorization: authorization(
-          signProjection(TOOL_RESULT_DOMAIN, resultProjection, vectors.privateSeed),
-        ),
-        projection: resultProjection,
-        resultDigest: toolResultDigest(resultProjection),
-      };
+      const maximumLifecycle = sizedToolLifecycle(limits);
       verifyToolResult(
-        result,
-        base.proposal,
-        base.decision,
-        base.grant,
+        maximumLifecycle.result,
+        maximumLifecycle.proposal,
+        maximumLifecycle.decision,
+        maximumLifecycle.grant,
         toolAuthorities(),
-        {limits, output: maximumOutput},
+        {limits, output: maximumLifecycle.output},
       );
-      expect(() => snapshotCollectionBoundary('results', [result], limits)).not.to.throw();
+      expect(
+        () => snapshotCollectionBoundary('results', [maximumLifecycle.result], limits),
+      ).not.to.throw();
       const resultBoundaries = {
         ...recoveryBoundaries([]),
-        results: snapshotCollectionBoundary('results', [result], limits),
+        results: snapshotCollectionBoundary('results', [maximumLifecycle.result], limits),
       };
       expect(validateBoundedCanonicalJson(
-        recoveryPage('results', [result], resultBoundaries),
+        recoveryPage('results', [maximumLifecycle.result], resultBoundaries),
       ).payloadBytes).to.be.at.most(PROTOCOL_CANONICAL_LIMITS.maxPayloadBytes);
 
-      const oversizedOutput = exactCanonicalSizeObject(MAX_TOOL_RESULT_VALUE_BYTES + 1);
-      const oversizedResultProjection: ToolResultProjection = {
-        ...result.projection,
-        outputDigest: digestCanonicalJson(oversizedOutput),
-      };
-      const oversizedResult: SignedToolResult = {
-        authorization: authorization(
-          signProjection(TOOL_RESULT_DOMAIN, oversizedResultProjection, vectors.privateSeed),
-        ),
-        projection: oversizedResultProjection,
-        resultDigest: toolResultDigest(oversizedResultProjection),
-      };
+      const oversizedOutput = exactCanonicalSizeTree(MAX_TOOL_RESULT_VALUE_BYTES + 1);
       expectCanonicalError(
         () => verifyToolResult(
-          oversizedResult,
-          base.proposal,
-          base.decision,
-          base.grant,
+          maximumLifecycle.result,
+          maximumLifecycle.proposal,
+          maximumLifecycle.decision,
+          maximumLifecycle.grant,
           toolAuthorities(),
           {limits, output: oversizedOutput},
         ),
@@ -2936,7 +3383,7 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       );
     });
 
-    it('exposes every valid top-level wire document through the closed root union', () => {
+    it('exposes and bounded-canonicalizes every top-level wire document at the minimum profile', () => {
       const protocolSchema = JSON.parse(fs.readFileSync(
         path.join(schemaDirectory, 'protocol.schema.json'),
         'utf8',
@@ -2971,32 +3418,210 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       const protocolMessage = ajv.getSchema(protocolSchema.$id);
       expect(protocolMessage).to.be.a('function');
       if (!protocolMessage) throw new Error('missing root protocol validator');
-      const {decision, descriptor, result} = toolRecords();
+      const {
+        decision,
+        descriptor,
+        grant,
+        proposal,
+        result,
+      } = toolRecords();
       const [snapshotPage] = recoveryPages([recoveryOperation(1)]);
       const manifest = JSON.parse(
         fs.readFileSync(path.join(root, 'protocol', 'manifest.json'), 'utf8'),
-      ) as JsonValue;
-      for (const [label, message] of [
-        ['bound tokens', {
-          accessClaims: requestContext().tokenClaims,
-          accessToken: 'a'.repeat(32),
-          refreshExpiresAt: '2026-02-02T03:04:05.000Z',
-          refreshToken: 'r'.repeat(32),
+      ) as {
+        protocolDigest: string;
+        requiredFeatures: string[];
+      };
+      const effective = negotiateProtocolLimits(
+        MINIMUM_OPERATIONAL_LIMITS,
+        SERVER_OPERATIONAL_LIMITS,
+      );
+      const ids = vectors.request.projection;
+      const tokens = {
+        accessClaims: requestContext().tokenClaims,
+        accessToken: 'a'.repeat(32),
+        refreshExpiresAt: '2026-02-02T03:04:05.000Z',
+        refreshToken: 'r'.repeat(32),
+      };
+      const clientCapabilities = {
+        compression: ['identity'],
+        operationalLimits: MINIMUM_OPERATIONAL_LIMITS,
+        optionalFeatures: [],
+        requiredFeatures: manifest.requiredFeatures,
+        structuralProfile: PROTOCOL_STRUCTURAL_PROFILE,
+        supportedVersions: ['1.0'],
+      };
+      const capabilities = {
+        compression: 'identity',
+        features: manifest.requiredFeatures,
+        limitProfileDigest: protocolLimitProfileDigest(effective),
+        operationalLimits: MINIMUM_OPERATIONAL_LIMITS,
+        protocolVersion: '1.0',
+        serverEventSigningKeys: [vectors.eventChain.serverSigningKey],
+        serverManifestDigest: manifest.protocolDigest,
+        serverToolSigningKeys: vectors.toolLifecycle.serverSigningKeys,
+        structuralProfile: PROTOCOL_STRUCTURAL_PROFILE,
+      };
+      const operation = recoveryOperation(1).operation;
+      const problem = {
+        code: 'idempotency_conflict',
+        detail: 'The signed identifiers were already committed with different metadata.',
+        instance: `/v1/operations/${ids.requestId}`,
+        requestId: ids.requestId,
+        retryable: false,
+        status: 409,
+        title: 'Idempotency conflict',
+        type: 'https://shadow-auditor.dev/problems/idempotency-conflict',
+      };
+      const usage = {
+        authoritative: false,
+        meters: [{amount: 1, meter: 'requests', unit: 'count'}],
+        model: 'private-model',
+        observedAt: '2026-01-02T03:04:05.000Z',
+        protocolVersion: '1.0',
+        provider: 'private-provider',
+        reconciliationId: indexedUuid(0x31),
+        sessionId: ids.sessionId,
+        tenantId: ids.tenantId,
+        usageId: indexedUuid(0x32),
+      };
+      const sessionDescriptor: CreateSessionRequest['toolDescriptors'][number] = {
+        ...descriptor,
+        projection: {
+          ...descriptor.projection,
+          inputSchema: {
+            additionalProperties: false,
+            maxProperties: 1,
+            properties: {},
+            required: [],
+            type: 'object',
+          },
+        },
+      };
+      const createSessionRequest: CreateSessionRequest = {
+        deviceId: ids.deviceId,
+        intent: {
+          missionKind: 'security-audit',
+          policyProfileId: 'default',
+          requestedCapabilities: ['local-tools'],
+          targetFingerprint: `sha256:${'1'.repeat(64)}`,
+        },
+        negotiatedCapabilitiesDigest: protocolLimitProfileDigest(effective),
+        protocolVersion: '1.0',
+        requestId: indexedUuid(0x33),
+        sessionId: vectors.eventChain.projection.sessionId,
+        tenantId: ids.tenantId,
+        toolDescriptors: [sessionDescriptor],
+      };
+      validateCreateSessionRequest(createSessionRequest, effective);
+      expectSigningError(
+        () => validateCreateSessionRequest(
+          {
+            ...createSessionRequest,
+            toolDescriptors: [sessionDescriptor, sessionDescriptor],
+          },
+          effective,
+        ),
+        'invalid_request',
+      );
+      expectSigningError(
+        () => validateCreateSessionRequest(
+          {
+            ...createSessionRequest,
+            negotiatedCapabilitiesDigest: protocolLimitProfileDigest(SERVER_PROTOCOL_LIMITS),
+          },
+          effective,
+        ),
+        'incompatible_limit_profile',
+      );
+      const wireDocuments: Array<readonly [string, unknown]> = [
+        ['enrollment request', {
+          bootstrapToken: 'b'.repeat(32),
+          clientCapabilities,
+          deviceId: ids.deviceId,
+          deviceLabel: 'workstation',
+          keyId: ids.keyId,
+          keyThumbprint: keyThumbprint(vectors.publicKey),
+          protocolVersion: '1.0',
+          publicKey: vectors.publicKey,
+          tenantId: ids.tenantId,
         }],
+        ['enrollment response', {
+          capabilities,
+          deviceId: ids.deviceId,
+          keyId: ids.keyId,
+          pinnedAt: '2026-01-02T03:04:05.000Z',
+          protocolVersion: '1.0',
+          tenantId: ids.tenantId,
+          tokens,
+        }],
+        ['refresh request', {
+          deviceId: ids.deviceId,
+          keyId: ids.keyId,
+          protocolVersion: '1.0',
+          refreshToken: tokens.refreshToken,
+          tenantId: ids.tenantId,
+        }],
+        ['bound tokens', tokens],
         ['rotation request', {
           newKeyProof: vectors.keyRotation.proof,
           projection: vectors.keyRotation.projection,
         }],
-        ['tool descriptor', descriptor],
-        ['tool decision', decision],
-        ['tool result', result],
+        ['rotation response', {
+          deviceId: ids.deviceId,
+          newKeyId: vectors.keyRotation.projection.newKeyId,
+          operation,
+          protocolVersion: '1.0',
+          tenantId: ids.tenantId,
+          tokens,
+        }],
+        ['revoke request', {
+          deviceId: ids.deviceId,
+          keyId: ids.keyId,
+          protocolVersion: '1.0',
+          reason: 'user-request',
+          tenantId: ids.tenantId,
+        }],
+        ['create session request', createSessionRequest],
+        ['session control request', {
+          action: 'pause',
+          deviceId: ids.deviceId,
+          protocolVersion: '1.0',
+          reasonCode: 'operator',
+          requestId: indexedUuid(0x34),
+          sessionId: ids.sessionId,
+          tenantId: ids.tenantId,
+        }],
+        ['session checkpoint', {
+          createdAt: '2026-01-02T03:04:05.000Z',
+          eventHead: {cursor: 0, eventHash: null},
+          protocolVersion: '1.0',
+          sessionId: ids.sessionId,
+          state: 'created',
+          tenantId: ids.tenantId,
+          updatedAt: '2026-01-02T03:04:05.000Z',
+        }],
         ['snapshot page', snapshotPage],
+        ['event envelope', eventEnvelope()],
+        ['tool descriptor', descriptor],
+        ['tool proposal', proposal],
+        ['tool decision', decision],
+        ['tool grant', grant],
+        ['tool result', result],
+        ['usage record', usage],
+        ['operation', operation],
+        ['problem', problem],
         ['protocol manifest', manifest],
-      ]) {
+      ];
+      for (const [label, message] of wireDocuments) {
         expect(
           protocolMessage(message),
           `${label}: ${JSON.stringify(protocolMessage.errors)}`,
         ).to.equal(true);
+        expect(
+          () => validateBoundedCanonicalJson(message, bodyCanonicalLimits(effective)),
+          label,
+        ).not.to.throw();
       }
     });
 
@@ -3011,14 +3636,18 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       ) as {
         canonicalJson: {
           generatedStrings: {
+            fixedMaxStringBytes: number;
             limits: Record<string, number>;
-            minimumNegotiatedMaxStringBytes: number;
             snapshotCursor: {
               canonicalMaxBytes: number;
               tokenMaxCharacters: number;
             };
           };
-          limits: Record<string, number>;
+          operationalQuotas: {
+            minimumCompatible: Record<string, number>;
+            serverHardMaximum: Record<string, number>;
+          };
+          structuralProfile: Record<string, number>;
         };
         files: Array<{path: string}>;
         requiredFeatures: string[];
@@ -3026,7 +3655,7 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       expect(validateManifest(manifest), JSON.stringify(validateManifest.errors)).to.equal(true);
       expect(manifest.canonicalJson.generatedStrings.limits)
         .to.deep.equal(PROTOCOL_GENERATED_STRING_MAX_BYTES);
-      expect(manifest.canonicalJson.generatedStrings.minimumNegotiatedMaxStringBytes)
+      expect(manifest.canonicalJson.generatedStrings.fixedMaxStringBytes)
         .to.equal(MIN_PROTOCOL_STRING_BYTES);
       expect(manifest.canonicalJson.generatedStrings.snapshotCursor).to.include({
         canonicalMaxBytes: MAX_SNAPSHOT_CURSOR_CANONICAL_BYTES,
@@ -3056,9 +3685,10 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       const validateCapabilities = validator(ajv, 'capabilities', 'ClientCapabilities');
       expect(validateCapabilities({
         compression: ['identity'],
-        limits: manifest.canonicalJson.limits,
+        operationalLimits: manifest.canonicalJson.operationalQuotas.serverHardMaximum,
         optionalFeatures: [],
         requiredFeatures: manifest.requiredFeatures,
+        structuralProfile: manifest.canonicalJson.structuralProfile,
         supportedVersions: ['1.0'],
       }), JSON.stringify(validateCapabilities.errors)).to.equal(true);
     });
@@ -3098,11 +3728,11 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       expect(openapi).to.have.property('x-shadow-version-negotiation');
       const limitNegotiation = openapi['x-shadow-limit-negotiation'] as {
         generatedStrings: {
-          minimumMaxStringBytes: number;
+          frozenMaxStringBytes: number;
           snapshotCursor: {canonicalMaxBytes: number; tokenMaxCharacters: number};
         };
       };
-      expect(limitNegotiation.generatedStrings.minimumMaxStringBytes)
+      expect(limitNegotiation.generatedStrings.frozenMaxStringBytes)
         .to.equal(MIN_PROTOCOL_STRING_BYTES);
       expect(limitNegotiation.generatedStrings.snapshotCursor).to.include({
         canonicalMaxBytes: MAX_SNAPSHOT_CURSOR_CANONICAL_BYTES,
@@ -3189,6 +3819,120 @@ describe('Shadow Auditor protocol 1.0 contract', () => {
       expect(generatedDtos).to.match(
         /export type ToolInputSchema = .*ToolInputSchema/,
       );
+    });
+
+    it('publishes a generated invariant matrix for every DTO and recovery flow', () => {
+      const matrix = JSON.parse(
+        fs.readFileSync(path.join(root, 'protocol', 'invariant-matrix.json'), 'utf8'),
+      ) as {
+        derivations: Record<string, string>;
+        flowGuarantees: Array<{
+          collection: string;
+          itemLimit: string;
+          pageLimit: string;
+          progress: string;
+        }>;
+        mandatoryDtos: Array<{
+          acceptanceToRecovery: {collection: null | string; guarantee: string};
+          arrayCardinality: null | {governingLimit: string};
+          canonicalBytes: null | {governingLimit: string};
+          depth: null | {governingLimit: string};
+          flow: string;
+          generatedStrings: null | {governingLimit: string};
+          name: string;
+          nodes: null | {governingLimit: string};
+          objectKeys: null | {governingLimit: string};
+          safeIntegers: null | {governingLimit: string};
+          scope: 'package-artifact' | 'wire';
+        }>;
+        structuralProfile: typeof PROTOCOL_STRUCTURAL_PROFILE;
+      };
+      const manifest = JSON.parse(
+        fs.readFileSync(path.join(root, 'protocol', 'manifest.json'), 'utf8'),
+      ) as {
+        files: unknown[];
+        requiredFeatures: string[];
+      };
+      const schema = JSON.parse(
+        fs.readFileSync(
+          path.join(schemaDirectory, 'invariant-matrix.schema.json'),
+          'utf8',
+        ),
+      ) as {$id: string};
+      const validate = compileSchemas().getSchema(schema.$id);
+      expect(validate).to.be.a('function');
+      expect(
+        validate?.(matrix),
+        JSON.stringify(validate?.errors),
+      ).to.equal(true);
+      expect(matrix.structuralProfile).to.deep.equal(PROTOCOL_STRUCTURAL_PROFILE);
+      expect(matrix.mandatoryDtos).to.have.length(
+        PROTOCOL_STRUCTURAL_PROFILE.maxArrayItems,
+      );
+      expect(matrix.flowGuarantees.map(({collection}) => collection)).to.deep.equal(
+        [
+          'activeGrants',
+          'decisions',
+          'grants',
+          'operations',
+          'pendingProposals',
+          'proposals',
+          'results',
+        ],
+      );
+      expect(matrix.flowGuarantees.every(
+        ({itemLimit, pageLimit, progress}) =>
+          itemLimit === 'maxRecoveryItemBytes/maxRecoveryItemNodes/maxRecoveryItemDepth'
+          && pageLimit === 'maxBodyBytes/maxCanonicalNodes/maxCanonicalDepth/maxRecoveryPageItems'
+          && progress.includes('at least one accepted record'),
+      )).to.equal(true);
+      const packageArtifact = matrix.mandatoryDtos.find(
+        ({name}) => name === 'InvariantMatrix',
+      );
+      expect(packageArtifact).to.include({
+        arrayCardinality: null,
+        canonicalBytes: null,
+        depth: null,
+        generatedStrings: null,
+        nodes: null,
+        objectKeys: null,
+        safeIntegers: null,
+        scope: 'package-artifact',
+      });
+      expect(packageArtifact?.acceptanceToRecovery).to.include({
+        collection: null,
+        guarantee: 'not-a-recovery-record',
+      });
+      expect(
+        matrix.mandatoryDtos
+          .filter(({scope}) => scope === 'wire')
+          .every((row) => [
+            row.arrayCardinality,
+            row.canonicalBytes,
+            row.depth,
+            row.generatedStrings,
+            row.nodes,
+            row.objectKeys,
+            row.safeIntegers,
+          ].every((dimension) => typeof dimension?.governingLimit === 'string')),
+      ).to.equal(true);
+      expect(PROTOCOL_STRUCTURAL_PROFILE.maxArrayItems).to.equal(Math.max(
+        manifest.requiredFeatures.length,
+        manifest.files.length,
+        matrix.mandatoryDtos.length,
+      ));
+      expect(matrix.derivations).to.deep.equal({
+        arrayCardinality:
+          'max(requiredFeatures.length, manifest.files.length, mandatoryDtos.length)',
+        createSessionDescriptorDepth:
+          'tool input schema depth 5 plus CreateSessionRequest embedding depth 4',
+        objectKeys:
+          'max(effective Protocol 1.0 limit-profile keys, mandatory snapshot-page keys)',
+        recoveryDepth: 'max recovery item depth 3 plus page wrapper depth 2',
+      });
+      expect(
+        matrix.mandatoryDtos.find(({name}) => name === 'SnapshotCursorToken')?.flow,
+      ).to.equal('snapshot-consistent-recovery');
     });
 
   });

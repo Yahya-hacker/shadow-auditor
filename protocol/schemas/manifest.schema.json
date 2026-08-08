@@ -33,6 +33,10 @@
         "generatedStrings": {
           "additionalProperties": false,
           "properties": {
+            "fixedMaxStringBytes": {
+              "const": 8192,
+              "type": "integer"
+            },
             "limits": {
               "additionalProperties": false,
               "properties": {
@@ -121,10 +125,6 @@
               ],
               "type": "object"
             },
-            "minimumNegotiatedMaxStringBytes": {
-              "const": 8192,
-              "type": "integer"
-            },
             "snapshotCursor": {
               "additionalProperties": false,
               "properties": {
@@ -160,7 +160,7 @@
           },
           "required": [
             "limits",
-            "minimumNegotiatedMaxStringBytes",
+            "fixedMaxStringBytes",
             "snapshotCursor",
             "unitSemantics"
           ],
@@ -169,162 +169,198 @@
         "limitInvariants": {
           "additionalProperties": false,
           "properties": {
-            "minimumArrayItems": {
-              "const": 7,
-              "type": "integer"
+            "cardinalities": {
+              "additionalProperties": false,
+              "properties": {
+                "invariantMatrix": {
+                  "const": "protocol/invariant-matrix.json",
+                  "type": "string"
+                },
+                "largestMandatoryArray": {
+                  "const": "protocol/invariant-matrix.json#/mandatoryDtos",
+                  "type": "string"
+                },
+                "largestMandatoryClosedObject": {
+                  "const": "protocol/schemas/common.schema.json#/$defs/EffectiveProtocolLimits",
+                  "type": "string"
+                },
+                "mandatoryDtoCount": {
+                  "const": 37,
+                  "type": "integer"
+                },
+                "manifestFileCount": {
+                  "const": 23,
+                  "type": "integer"
+                },
+                "minimumArrayItems": {
+                  "const": 37,
+                  "type": "integer"
+                },
+                "minimumObjectKeys": {
+                  "const": 16,
+                  "type": "integer"
+                },
+                "requiredFeatureCount": {
+                  "const": 11,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "invariantMatrix",
+                "largestMandatoryArray",
+                "largestMandatoryClosedObject",
+                "mandatoryDtoCount",
+                "manifestFileCount",
+                "minimumArrayItems",
+                "minimumObjectKeys",
+                "requiredFeatureCount"
+              ],
+              "type": "object"
             },
-            "minimumObjectKeys": {
-              "const": 32,
-              "type": "integer"
+            "compositions": {
+              "additionalProperties": false,
+              "properties": {
+                "createSessionDescriptorDepthOverhead": {
+                  "const": 4,
+                  "type": "integer"
+                },
+                "maximumToolInputSchemaDepth": {
+                  "const": 5,
+                  "type": "integer"
+                },
+                "minimumCanonicalDepth": {
+                  "const": 9,
+                  "type": "integer"
+                },
+                "relationship": {
+                  "const": "maxCanonicalDepth >= maximumToolInputSchemaDepth + createSessionDescriptorDepthOverhead",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "createSessionDescriptorDepthOverhead",
+                "maximumToolInputSchemaDepth",
+                "minimumCanonicalDepth",
+                "relationship"
+              ],
+              "type": "object"
             },
-            "minimumRecoveryPageOverheadBytes": {
-              "const": 16384,
-              "type": "integer"
+            "recovery": {
+              "additionalProperties": false,
+              "properties": {
+                "minimumCanonicalDepth": {
+                  "const": 9,
+                  "type": "integer"
+                },
+                "minimumRecoveryItemDepth": {
+                  "const": 3,
+                  "type": "integer"
+                },
+                "minimumRecoveryPageOverheadBytes": {
+                  "const": 16384,
+                  "type": "integer"
+                },
+                "minimumRecoveryPageOverheadNodes": {
+                  "const": 256,
+                  "type": "integer"
+                },
+                "recoveryPageDepthOverhead": {
+                  "const": 2,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "minimumCanonicalDepth",
+                "minimumRecoveryItemDepth",
+                "minimumRecoveryPageOverheadBytes",
+                "minimumRecoveryPageOverheadNodes",
+                "recoveryPageDepthOverhead"
+              ],
+              "type": "object"
             },
-            "minimumRecoveryPageOverheadNodes": {
-              "const": 256,
-              "type": "integer"
+            "semantics": {
+              "additionalProperties": false,
+              "properties": {
+                "minimumStringBytes": {
+                  "const": 8192,
+                  "type": "integer"
+                },
+                "profileDigestSemantics": {
+                  "const": "SHA-256 over strict canonical JSON of the complete effective limits object.",
+                  "type": "string"
+                },
+                "semanticValidator": {
+                  "const": "negotiateProtocolLimits",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "minimumStringBytes",
+                "profileDigestSemantics",
+                "semanticValidator"
+              ],
+              "type": "object"
             },
-            "minimumStringBytes": {
-              "const": 8192,
-              "type": "integer"
-            },
-            "profileDigestSemantics": {
-              "const": "SHA-256 over strict canonical JSON of the complete effective limits object.",
-              "type": "string"
-            },
-            "recoveryPageDepthOverhead": {
-              "const": 2,
-              "type": "integer"
-            },
-            "semanticValidator": {
-              "const": "negotiateProtocolLimits",
-              "type": "string"
-            },
-            "toolProposalEventOverheadBytes": {
-              "const": 16384,
-              "type": "integer"
-            },
-            "toolProposalEventOverheadNodes": {
-              "const": 256,
-              "type": "integer"
-            },
-            "toolProposalItemOverheadBytes": {
-              "const": 4096,
-              "type": "integer"
-            },
-            "toolProposalItemOverheadNodes": {
-              "const": 64,
-              "type": "integer"
+            "toolProposal": {
+              "additionalProperties": false,
+              "properties": {
+                "eventOverheadBytes": {
+                  "const": 16384,
+                  "type": "integer"
+                },
+                "eventOverheadNodes": {
+                  "const": 256,
+                  "type": "integer"
+                },
+                "itemOverheadBytes": {
+                  "const": 4096,
+                  "type": "integer"
+                },
+                "itemOverheadNodes": {
+                  "const": 64,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "eventOverheadBytes",
+                "eventOverheadNodes",
+                "itemOverheadBytes",
+                "itemOverheadNodes"
+              ],
+              "type": "object"
             }
           },
           "required": [
-            "minimumArrayItems",
-            "minimumObjectKeys",
-            "minimumRecoveryPageOverheadBytes",
-            "minimumRecoveryPageOverheadNodes",
-            "minimumStringBytes",
-            "profileDigestSemantics",
-            "recoveryPageDepthOverhead",
-            "semanticValidator",
-            "toolProposalEventOverheadBytes",
-            "toolProposalEventOverheadNodes",
-            "toolProposalItemOverheadBytes",
-            "toolProposalItemOverheadNodes"
+            "cardinalities",
+            "compositions",
+            "recovery",
+            "semantics",
+            "toolProposal"
           ],
           "type": "object"
         },
-        "limits": {
+        "operationalQuotas": {
           "additionalProperties": false,
           "properties": {
-            "maxArrayItems": {
-              "const": 1024,
-              "type": "integer"
+            "minimumCompatible": {
+              "$ref": "common.schema.json#/$defs/OperationalLimits"
             },
-            "maxBodyBytes": {
-              "const": 1048576,
-              "type": "integer"
-            },
-            "maxCanonicalDepth": {
-              "const": 32,
-              "type": "integer"
-            },
-            "maxCanonicalNodes": {
-              "const": 10000,
-              "type": "integer"
-            },
-            "maxEventBytes": {
-              "const": 262144,
-              "type": "integer"
-            },
-            "maxObjectKeys": {
-              "const": 256,
-              "type": "integer"
-            },
-            "maxRecoveryItemBytes": {
-              "const": 786432,
-              "type": "integer"
-            },
-            "maxRecoveryItemDepth": {
-              "const": 30,
-              "type": "integer"
-            },
-            "maxRecoveryItemNodes": {
-              "const": 9744,
-              "type": "integer"
-            },
-            "maxRecoveryPageItems": {
-              "const": 128,
-              "type": "integer"
-            },
-            "maxRecoveryPageOverheadBytes": {
-              "const": 262144,
-              "type": "integer"
-            },
-            "maxRecoveryPageOverheadNodes": {
-              "const": 256,
-              "type": "integer"
-            },
-            "maxStringBytes": {
-              "const": 65536,
-              "type": "integer"
-            },
-            "maxToolArgumentsBytes": {
-              "const": 245760,
-              "type": "integer"
-            },
-            "maxToolDescriptors": {
-              "const": 128,
-              "type": "integer"
-            },
-            "maxToolResultValueBytes": {
-              "const": 524288,
-              "type": "integer"
+            "serverHardMaximum": {
+              "$ref": "common.schema.json#/$defs/OperationalLimits"
             }
           },
           "required": [
-            "maxArrayItems",
-            "maxBodyBytes",
-            "maxCanonicalDepth",
-            "maxCanonicalNodes",
-            "maxEventBytes",
-            "maxRecoveryItemBytes",
-            "maxRecoveryItemDepth",
-            "maxRecoveryItemNodes",
-            "maxRecoveryPageItems",
-            "maxRecoveryPageOverheadBytes",
-            "maxRecoveryPageOverheadNodes",
-            "maxObjectKeys",
-            "maxStringBytes",
-            "maxToolArgumentsBytes",
-            "maxToolDescriptors",
-            "maxToolResultValueBytes"
+            "minimumCompatible",
+            "serverHardMaximum"
           ],
           "type": "object"
         },
         "profile": {
           "const": "RFC 8785 JCS over strict I-JSON",
           "type": "string"
+        },
+        "structuralProfile": {
+          "$ref": "common.schema.json#/$defs/ProtocolStructuralProfile"
         },
         "unitSemantics": {
           "const": "maxStringBytes and maxBodyBytes count UTF-8 bytes; maxCanonicalDepth and maxCanonicalNodes are aggregate runtime limits not expressible by JSON Schema.",
@@ -351,8 +387,9 @@
       "required": [
         "generatedStrings",
         "limitInvariants",
-        "limits",
+        "operationalQuotas",
         "profile",
+        "structuralProfile",
         "unitSemantics",
         "validationSteps"
       ],
@@ -368,9 +405,18 @@
     },
     "files": {
       "items": false,
-      "maxItems": 20,
-      "minItems": 20,
+      "maxItems": 23,
+      "minItems": 23,
       "prefixItems": [
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/invariant-matrix.json"
+            }
+          },
+          "type": "object"
+        },
         {
           "$ref": "#/$defs/ManifestFile",
           "properties": {
@@ -412,6 +458,15 @@
           "properties": {
             "path": {
               "const": "protocol/schemas/events.schema.json"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "protocol/schemas/invariant-matrix.schema.json"
             }
           },
           "type": "object"
@@ -520,6 +575,15 @@
           "properties": {
             "path": {
               "const": "src/protocol/generated/dtos.ts"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ManifestFile",
+          "properties": {
+            "path": {
+              "const": "src/protocol/generated/profile.ts"
             }
           },
           "type": "object"
