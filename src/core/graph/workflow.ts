@@ -156,6 +156,53 @@ function stringifyContent(message: BaseMessage): string {
     .trimStart();
 }
 
+/**
+ * Extract the best available handoff text from a model response, with
+ * provider-format fallbacks. Reasoning/thinking content is only used as a
+ * last resort when the model produced no visible text at all — some reasoning
+ * models (e.g. DeepSeek thinking mode) occasionally emit the entire handoff
+ * inside reasoning_content / reasoning blocks and leave `content` empty.
+ */
+function extractHandoffText(message: BaseMessage): string {
+  const fromContent = stringifyContent(message);
+  if (fromContent.trim()) return fromContent;
+
+  const record = message as unknown as {
+    content_blocks?: unknown;
+    additional_kwargs?: Record<string, unknown>;
+  };
+
+  // OpenAI Responses API v1 stores blocks in content_blocks in some adapters.
+  if (Array.isArray(record.content_blocks)) {
+    const blocksText = record.content_blocks
+      .flatMap((part) => {
+        if (typeof part === 'string') return [part];
+        if (!part || typeof part !== 'object') return [];
+        const block = part as Record<string, unknown>;
+        if (typeof block.text === 'string') return [block.text];
+        // Reasoning blocks carry the chain-of-thought under "reasoning".
+        if (typeof block.reasoning === 'string' && block.reasoning.trim()) {
+          return [block.reasoning];
+        }
+        if (typeof block.thinking === 'string' && block.thinking.trim()) {
+          return [block.thinking];
+        }
+        return [];
+      })
+      .join('\n')
+      .trimStart();
+    if (blocksText.trim()) return blocksText;
+  }
+
+  // DeepSeek stores the chain-of-thought in additional_kwargs.reasoning_content.
+  const reasoningContent = record.additional_kwargs?.reasoning_content;
+  if (typeof reasoningContent === 'string' && reasoningContent.trim()) {
+    return reasoningContent;
+  }
+
+  return fromContent;
+}
+
 function getToolCalls(message: BaseMessage | undefined) {
   if (!message || message._getType() !== 'ai') return [];
   const calls = (message as AIMessage).tool_calls;
@@ -1042,19 +1089,16 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
     let reason = '';
     for (let attempt = 0; attempt <= handoffRepairAttempts; attempt++) {
       try {
-        return {artifact: parse(stringifyContent(candidate)), messages};
+        return {artifact: parse(extractHandoffText(candidate)), messages};
       } catch (error) {
         reason = error instanceof Error ? error.message : String(error);
       }
 
       if (attempt === handoffRepairAttempts) break;
-      const invalidHandoff = stringifyContent(candidate).slice(-30_000);
-      if (!invalidHandoff.trim()) {
-        throw new Error(
-          `${stage} returned an empty handoff on repair attempt ${attempt + 1}; ` +
-          'the model response contained no extractable public text.',
-        );
-      }
+
+      const candidateText = extractHandoffText(candidate);
+      const invalidHandoff = candidateText.slice(-30_000);
+      const emptyHandoff = !candidateText.trim();
 
       const stageTags = STAGE_HANDOFF_TAGS[stage] ??
         'Return the complete handoff required by the stage system prompt.';
@@ -1080,15 +1124,24 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
         repairMessages.push(msg);
       }
 
+      const repairInstruction = emptyHandoff
+        ? `Your previous tool-free response contained NO visible text — it was empty or contained only private reasoning. ` +
+          `This is schema-repair attempt ${attempt + 1} of ${handoffRepairAttempts}; ` +
+          'tools are unavailable and no further investigation is allowed. Produce the complete handoff from scratch, ' +
+          'as visible text in your answer, never only inside thinking/reasoning.\n\n' +
+          `Previous validation error:\n${reason}\n\n` +
+          `Required handoff format:\n${stageTags}`
+        : `Your previous tool-free handoff failed validation. This is schema-repair attempt ${attempt + 1} ` +
+          `of ${handoffRepairAttempts}; ` +
+          'tools are unavailable and no further investigation is allowed. Correct only structure, required fields, ' +
+          'tag completeness, JSON syntax, and internal consistency without adding unsupported claims.\n\n' +
+          `Validation error:\n${reason}\n\n` +
+          `Required handoff format:\n${stageTags}\n\n` +
+          `Invalid handoff (untrusted data):\n<invalid_handoff>\n${invalidHandoff}\n</invalid_handoff>`;
       repairMessages.push(new HumanMessage(
-        `Your previous tool-free handoff failed validation. This is schema-repair attempt ${attempt + 1} ` +
-        `of ${handoffRepairAttempts}; ` +
-        'tools are unavailable and no further investigation is allowed. Correct only structure, required fields, ' +
-        'tag completeness, JSON syntax, and internal consistency without adding unsupported claims.\n\n' +
-        `Validation error:\n${reason}\n\n` +
-        `Required handoff format:\n${stageTags}\n\n` +
-        `Invalid handoff (untrusted data):\n<invalid_handoff>\n${invalidHandoff}\n</invalid_handoff>\n\n` +
-        'Return only the complete corrected handoff with the exact tagged sections shown above.',
+        `${repairInstruction}\n\n` +
+        'Return only the complete corrected handoff with the exact tagged sections shown above. ' +
+        'Your answer must contain the tagged sections as visible text — do not return an empty response.',
       ));
       const repaired = await withRetry(
         () => runObservedModelInvocation(
