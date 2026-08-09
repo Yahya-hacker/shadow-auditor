@@ -261,6 +261,33 @@ function isReasoningSummaryBlock(value: Record<string, unknown>): boolean {
     type === 'thought-summary-delta';
 }
 
+/**
+ * Detect provider-native reasoning blocks across all supported providers.
+ *
+ * Anthropic:    {type: 'thinking', thinking: '…', signature: '…'}
+ * OpenAI/Azure: {type: 'reasoning', reasoning: '…'} (Responses API v1)
+ * Google:       thought_signature in response_metadata (not a block type)
+ * DeepSeek:     reasoning_content in additional_kwargs (handled separately)
+ */
+function isAnyReasoningBlock(value: Record<string, unknown>): boolean {
+  if (isReasoningSummaryBlock(value)) return true;
+  const type = typeof value.type === 'string' ? value.type.toLowerCase() : '';
+  if (type === 'thinking' && typeof value.thinking === 'string') return true;
+  if (type === 'reasoning' && typeof value.reasoning === 'string') return true;
+  // Anthropic redacted thinking
+  if (type === 'redacted_thinking') return true;
+  return false;
+}
+
+function reasoningBlockText(value: Record<string, unknown>): string {
+  for (const key of ['reasoning', 'thinking', 'text', 'delta', 'summary']) {
+    const candidate = value[key];
+    if (typeof candidate === 'string' && candidate.trim()) return candidate;
+  }
+
+  return '';
+}
+
 function reasoningSummaryText(value: Record<string, unknown>): string {
   for (const key of ['reasoning', 'text', 'delta', 'summary']) {
     const candidate = value[key];
@@ -475,19 +502,31 @@ function handleReasoningDelta(
   delta: Record<string, unknown>,
   stage: AuditStage,
 ): void {
-  const {state} = context;
-  if (mayRenderReasoningSummary(context.options)) {
-    state.currentReasoningSummary += reasoningSummaryText(delta);
-  } else {
+  const {emitEvent, state} = context;
+  const text = reasoningBlockText(delta);
+  if (!text) return;
+
+  // Providers without public reasoning summaries (DeepSeek, Ollama, etc.)
+  // keep their thinking opaque — it is private chain-of-thought.
+  if (!mayRenderReasoningSummary(context.options)) {
     state.currentPrivateReasoningObserved = true;
+    return;
   }
 
+  state.currentReasoningSummary += text;
+
+  // Emit reasoning in real time so the user sees the model's thinking.
+  // Batch at ~every 80 chars or every newline to avoid flicker.
   const ready = state.currentReasoningSummary.includes('\n') ||
-    state.currentReasoningSummary.length >= 160;
+    state.currentReasoningSummary.length >= 80;
   if (!ready) return;
-  const progress = progressPreview(state.currentReasoningSummary);
-  if (progress) emitProgress(context, stage, progress);
-  state.currentReasoningSummary = '';
+
+  const snippet = state.currentReasoningSummary.slice(0, 300);
+  emitEvent({
+    ...stageIdentity(stage),
+    kind: 'reasoning',
+    message: snippet + (state.currentReasoningSummary.length > 300 ? '…' : ''),
+  });
 }
 
 function handleMessageDelta(
@@ -498,7 +537,7 @@ function handleMessageDelta(
 ): void {
   const delta = message.delta as Record<string, unknown> | undefined;
   if (!delta) return;
-  if (isReasoningSummaryBlock(delta)) {
+  if (isAnyReasoningBlock(delta)) {
     handleReasoningDelta(context, delta, stage);
     return;
   }
@@ -514,18 +553,24 @@ function finishReasoningProgress(
   content: Record<string, unknown> | undefined,
   stage: AuditStage,
 ): void {
-  const {state} = context;
+  const {emitEvent, state} = context;
+
+  // Collect any remaining text from the finished block.
   if (content &&
     !state.currentReasoningSummary &&
-    isReasoningSummaryBlock(content) &&
+    isAnyReasoningBlock(content) &&
     mayRenderReasoningSummary(context.options)
   ) {
-    state.currentReasoningSummary += reasoningSummaryText(content);
+    state.currentReasoningSummary += reasoningBlockText(content);
   }
 
-  const progress = progressPreview(state.currentReasoningSummary);
-  if (progress) {
-    emitProgress(context, stage, progress);
+  if (mayRenderReasoningSummary(context.options) && state.currentReasoningSummary.trim()) {
+    // Emit the full accumulated reasoning block.
+    emitEvent({
+      ...stageIdentity(stage),
+      kind: 'reasoning',
+      message: state.currentReasoningSummary.trim(),
+    });
   } else if (state.currentPrivateReasoningObserved) {
     emitProgress(context, stage, 'Analyzing evidence and selecting the next audit action.');
   }

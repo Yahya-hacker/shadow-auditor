@@ -222,6 +222,9 @@ MessageLine.displayName = 'MessageLine';
 const ActivityLine: React.FC<{ event: ActivityEvent }> = memo(({ event }) => {
   const color = getActivityColor(event.kind, event.succeeded);
   const isTool = event.kind === 'tool_call' || event.kind === 'tool_result';
+  const isReasoning = event.kind === 'reasoning';
+  const reasoningExpandedIds = useAppStore((s) => s.reasoningExpandedIds);
+  const toggleReasoningExpand = useAppStore((s) => s.toggleReasoningExpand);
 
   if (isTool) {
     return (
@@ -235,6 +238,37 @@ const ActivityLine: React.FC<{ event: ActivityEvent }> = memo(({ event }) => {
         {event.resultPreview && (
           <Text color={colors.muted}>  └ {event.resultPreview}</Text>
         )}
+      </Box>
+    );
+  }
+
+  if (isReasoning) {
+    const expanded = reasoningExpandedIds.has(event.id);
+    const lines = event.text.split('\n');
+    const long = lines.length > 5;
+    const displayText = !expanded && long
+      ? `${lines.slice(0, 5).join('\n')}`
+      : event.text;
+    const hint = !expanded && long
+      ? `… ${lines.length - 5} more lines`
+      : '';
+    return (
+      <Box flexDirection="column" marginTop={1}>
+        <Text>
+          <Text bold color={colors.muted}>◇ </Text>
+          {event.agent ? <Text bold color={colors.muted}>[{event.agent}] </Text> : null}
+          <Text color={colors.muted}>{displayText}</Text>
+        </Text>
+        {hint ? (
+          <Text color={colors.dim}>
+            {'  '}{hint} — <Text bold color={colors.brand}>Ctrl+R</Text> to {expanded ? 'collapse' : 'expand'}
+          </Text>
+        ) : null}
+        {long && expanded ? (
+          <Text color={colors.dim}>
+            {'  '}<Text bold color={colors.brand}>Ctrl+R</Text> to collapse
+          </Text>
+        ) : null}
       </Box>
     );
   }
@@ -300,6 +334,9 @@ function getActivityColor(kind: string, succeeded?: boolean): string {
     case 'agent_progress': { return colors.agent;
     }
 
+    case 'reasoning': { return colors.muted;
+    }
+
     case 'status': { return colors.info;
     }
 
@@ -318,6 +355,9 @@ function getActivityPrefix(kind: string, succeeded?: boolean): string {
   if (kind === 'tool_result' && succeeded === false) return '✖';
   switch (kind) {
     case 'agent_progress': { return '◆';
+    }
+
+    case 'reasoning': { return '◇';
     }
 
     case 'status': { return '●';

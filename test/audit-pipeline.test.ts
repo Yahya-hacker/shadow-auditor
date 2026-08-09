@@ -967,6 +967,157 @@ describe('deterministic audit pipeline', () => {
     expect(state.pipelineReport).to.include('No confirmed findings.');
   });
 
+  it('includes explicit required tags in the schema-repair instruction', async () => {
+    const counts = new Map<string, number>();
+    let sawSastTagHint = false;
+    const model = createModel((messages) => {
+      const stage = stageFromSystem(String(messages[0]?.content ?? ''));
+      const count = (counts.get(stage) ?? 0) + 1;
+      counts.set(stage, count);
+
+      if (stage === 'codebase' && count === 1) {
+        return toolCall('tag-read', 'read_file_content', {filePath: 'src/index.ts'});
+      }
+
+      if (stage === 'codebase') {
+        return new AIMessage(
+          '<repo_map>\n- src/index.ts\n</repo_map>\n' +
+          '<codebase_report>\n# Architecture\nInspected the entry point.\n</codebase_report>',
+        );
+      }
+
+      if (stage === 'sast' && count === 1) {
+        return toolCall('tag-sast-read', 'read_file_content', {filePath: 'src/index.ts'});
+      }
+
+      if (stage === 'sast' && count === 2) {
+        return new AIMessage('No findings in this codebase.');
+      }
+
+      if (stage === 'sast') {
+        // Verify the repair instruction includes the explicit tag listing
+        sawSastTagHint = messages.some((message) => {
+          const text = String(message.content);
+          return text.includes('<sast_candidates_json>') &&
+            text.includes('"findingId"') &&
+            text.includes('schema-repair attempt 1');
+        });
+        return new AIMessage(
+          '<sast_report>\n# SAST\nNo candidates.\n</sast_report>\n' +
+          '<sast_candidates_json>\n[]\n</sast_candidates_json>',
+        );
+      }
+
+      if (stage === 'devil') {
+        return new AIMessage(
+          '<adversarial_report>\n# Validation\nNo candidates.\n</adversarial_report>\n' +
+          '<verdicts_json>\n[]\n</verdicts_json>',
+        );
+      }
+
+      if (stage === 'reporter' && count === 1) {
+        return toolCall('finish-tag', 'finish_task', {summary: 'Audit complete.'});
+      }
+
+      return new AIMessage('# Security Audit Report\n\nNo confirmed findings.');
+    });
+
+    const state = await compileWorkflow({
+      model,
+      systemPrompt: 'You are Shadow.',
+      tools: tools(),
+    }).invoke(
+      {
+        auditRunId: 'audit-run-tag-hint',
+        messages: [new HumanMessage('Audit this repository.')],
+        mission: 'Audit this repository.',
+      },
+      {recursionLimit: WORKFLOW_RECURSION_LIMIT},
+    );
+
+    expect(sawSastTagHint).to.equal(true);
+    expect(state.sastAudit?.candidates).to.deep.equal([]);
+    expect(state.pipelineReport).to.include('No confirmed findings.');
+  });
+
+  it('detects an empty model response during schema repair and fails with a clear error', async () => {
+    const counts = new Map<string, number>();
+    let emptyHandoffDetected = false;
+    const model = createModel((messages) => {
+      const stage = stageFromSystem(String(messages[0]?.content ?? ''));
+      const count = (counts.get(stage) ?? 0) + 1;
+      counts.set(stage, count);
+
+      if (stage === 'codebase' && count === 1) {
+        return toolCall('empty-read', 'read_file_content', {filePath: 'src/index.ts'});
+      }
+
+      if (stage === 'codebase') {
+        return new AIMessage(
+          '<repo_map>\n- src/index.ts\n</repo_map>\n' +
+          '<codebase_report>\n# Architecture\nInspected the entry point.\n</codebase_report>',
+        );
+      }
+
+      if (stage === 'sast' && count === 1) {
+        return toolCall('empty-sast-read', 'read_file_content', {filePath: 'src/index.ts'});
+      }
+
+      if (stage === 'sast' && count === 2) {
+        // First handoff: missing the required tag
+        return new AIMessage('Analysis complete. No vulnerabilities found.');
+      }
+
+      if (stage === 'sast' && count === 3) {
+        // Repair attempt: model returns only private reasoning, no public text
+        return new AIMessage({
+          content: [
+            {summary: [{text: 'private thought', type: 'summary_text'}], type: 'reasoning'},
+          ] as unknown as AIMessage['content'],
+        });
+      }
+
+      if (stage === 'devil') {
+        return new AIMessage(
+          '<adversarial_report>\n# Validation\nNo candidates.\n</adversarial_report>\n' +
+          '<verdicts_json>\n[]\n</verdicts_json>',
+        );
+      }
+
+      if (stage === 'reporter') {
+        return toolCall('finish-empty', 'finish_task', {summary: 'Audit complete.'});
+      }
+
+      return new AIMessage('# Security Audit Report\n');
+    });
+    const workflow = compileWorkflow({
+      model,
+      systemPrompt: 'You are Shadow.',
+      tools: tools(),
+    });
+
+    let error: unknown;
+    try {
+      await workflow.invoke(
+        {
+          auditRunId: 'audit-run-empty-repair',
+          messages: [new HumanMessage('Audit this repository.')],
+          mission: 'Audit this repository.',
+        },
+        {recursionLimit: WORKFLOW_RECURSION_LIMIT},
+      );
+    } catch (error_) {
+      error = error_;
+      emptyHandoffDetected = error instanceof Error &&
+        error.message.includes('returned an empty handoff');
+    }
+
+    expect(emptyHandoffDetected).to.equal(true);
+    expect(error).to.be.instanceOf(Error);
+    expect((error as Error).message).to.include('empty handoff');
+    expect((error as Error).message).to.include('no extractable public text');
+  });
+
   it('forces a tool-free SAST handoff after repeated tool calls', async () => {
     const counts = new Map<string, number>();
     let sawFinalizationInstruction = false;

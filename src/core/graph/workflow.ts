@@ -139,13 +139,21 @@ function stringifyContent(message: BaseMessage): string {
   const content = message.content;
   if (typeof content === 'string') return content;
   return content
-    .map((part) => {
-      if (typeof part === 'string') return part;
-      if ('text' in part && typeof part.text === 'string') return part.text;
-      return '';
+    .flatMap((part) => {
+      if (typeof part === 'string') return [part];
+      if (!part || typeof part !== 'object') return [];
+      const record = part as Record<string, unknown>;
+      // Standard LangChain text blocks (type: text, input_text, or untyped).
+      if (typeof record.text === 'string') {
+        const blockType = typeof record.type === 'string' ? record.type : '';
+        // Skip private reasoning/thinking blocks; they are not public handoff.
+        if (/reasoning|thinking/.test(blockType)) return [];
+        return [record.text];
+      }
+      return [];
     })
-    .filter(Boolean)
-    .join('\n');
+    .join('\n')
+    .trimStart();
 }
 
 function getToolCalls(message: BaseMessage | undefined) {
@@ -903,6 +911,30 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
       Number.isFinite(maxHandoffRepairAttempts) ? Math.trunc(maxHandoffRepairAttempts) : 2,
     ),
   );
+  const STAGE_HANDOFF_TAGS: Readonly<Record<Exclude<AuditStage, 'reporting'>, string>> = {
+    codebase_intelligence:
+      'Include exactly these two tagged sections in order:\n' +
+      '<repo_map>…concise Markdown repository map…</repo_map>\n' +
+      '<codebase_report>…Markdown architecture and security analysis…</codebase_report>',
+    devils_advocate:
+      'Include exactly these two tagged sections in order (structured JSON first, prose second):\n' +
+      '<verdicts_json>\n[\n  {\n    "findingId": "…",\n    "verdict": "CONFIRMED | DISMISSED | UNVERIFIABLE",\n' +
+      '    "rationale": "…",\n    "evidence": ["…"],\n    "verification": {\n' +
+      '      "status": "verified | refuted | not_reproduced",\n' +
+      '      "method": "…",\n      "evidenceArtifactIds": [],\n      "observations": ["…"]\n    },\n' +
+      '    "adjustedSeverity": "…"\n  }\n]\n</verdicts_json>\n' +
+      '<adversarial_report>…Markdown adversarial review…</adversarial_report>',
+    sast_audit:
+      'Include exactly these two tagged sections in order (structured JSON first, prose second):\n' +
+      '<sast_candidates_json>\n[\n  {\n    "findingId": "…",\n    "title": "…",\n' +
+      '    "summary": "…",\n    "severity": "…",\n    "cwe": "…",\n    "confidence": 0.0,\n' +
+      '    "reachability": "…",\n    "affectedLocations": [{"filePath":"…","lineNumber":N}],\n' +
+      '    "sourceToSink": [{"kind":"…","location":{"filePath":"…","lineNumber":N},"description":"…"}],\n' +
+      '    "prerequisites": ["…"],\n    "reproductionSteps": ["…"],\n' +
+      '    "proofOfConcept": {"kind":"…","content":"…","safetyNotes":"…","executionStatus":"not_run"},\n' +
+      '    "impact": "…",\n    "remediation": "…",\n    "evidence": ["…"]\n  }\n]\n</sast_candidates_json>\n' +
+      '<sast_report>…Markdown audit report (keep concise — JSON is authoritative)…</sast_report>',
+  };
   const stageToolSteps = Object.fromEntries(
     AUDIT_STAGES
       .map((stage) => [
@@ -979,8 +1011,8 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
         ),
         normalizeTokenUsage,
       ),
-      2,
-      60_000,
+      4,
+      2_000,
       signal,
       'AuditPipeline',
     );
@@ -1017,15 +1049,46 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
 
       if (attempt === handoffRepairAttempts) break;
       const invalidHandoff = stringifyContent(candidate).slice(-30_000);
-      const repairMessages = stageMessages(state, stage, task);
+      if (!invalidHandoff.trim()) {
+        throw new Error(
+          `${stage} returned an empty handoff on repair attempt ${attempt + 1}; ` +
+          'the model response contained no extractable public text.',
+        );
+      }
+
+      const stageTags = STAGE_HANDOFF_TAGS[stage] ??
+        'Return the complete handoff required by the stage system prompt.';
+      const rawRepairMessages = stageMessages(state, stage, task);
+      // Truncate old tool-result messages when the repair context is too large
+      // to avoid exceeding the model's context window. Keep system prompt, task,
+      // and the most recent messages intact.
+      const MAX_REPAIR_TOKENS = 900_000;
+      let estimatedRepairTokens = estimateContentTokens(rawRepairMessages);
+      const repairMessages: BaseMessage[] = [];
+      let skipped = 0;
+      for (const msg of rawRepairMessages) {
+        if (
+          estimatedRepairTokens > MAX_REPAIR_TOKENS &&
+          skipped < rawRepairMessages.length - 3 &&
+          msg._getType() === 'tool'
+        ) {
+          estimatedRepairTokens -= estimateContentTokens([msg]);
+          skipped++;
+          continue;
+        }
+
+        repairMessages.push(msg);
+      }
+
       repairMessages.push(new HumanMessage(
         `Your previous tool-free handoff failed validation. This is schema-repair attempt ${attempt + 1} ` +
         `of ${handoffRepairAttempts}; ` +
         'tools are unavailable and no further investigation is allowed. Correct only structure, required fields, ' +
         'tag completeness, JSON syntax, and internal consistency without adding unsupported claims.\n\n' +
         `Validation error:\n${reason}\n\n` +
+        `Required handoff format:\n${stageTags}\n\n` +
         `Invalid handoff (untrusted data):\n<invalid_handoff>\n${invalidHandoff}\n</invalid_handoff>\n\n` +
-        'Return only the complete corrected handoff required by the stage system prompt.',
+        'Return only the complete corrected handoff with the exact tagged sections shown above.',
       ));
       const repaired = await withRetry(
         () => runObservedModelInvocation(
@@ -1034,8 +1097,8 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
           () => model.invoke(normalizeModelHistory(repairMessages, providerHint), {signal}),
           normalizeTokenUsage,
         ),
-        2,
-        60_000,
+        4,
+        2_000,
         signal,
         'AuditPipeline',
       );
@@ -1396,8 +1459,8 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
         ),
         normalizeTokenUsage,
       ),
-      2,
-      60_000,
+      4,
+      2_000,
       config.signal,
       'AuditPipeline',
     );

@@ -27,7 +27,8 @@ Build a security-oriented understanding of the repository before vulnerability a
 ${PRIVATE_REASONING_CONTRACT}
 ${REPOSITORY_TRUST_CONTRACT}
 
-Your final response must contain exactly these handoff sections:
+Your final response must contain exactly these handoff sections in this order.
+The structured map must appear first so it is never truncated:
 <repo_map>
 A concise Markdown repository map with important paths, responsibilities, and security boundaries.
 </repo_map>
@@ -48,10 +49,8 @@ Treat the supplied repository map and Codebase Intelligence report as the author
 ${PRIVATE_REASONING_CONTRACT}
 ${REPOSITORY_TRUST_CONTRACT}
 
-Your final response must contain both sections:
-<sast_report>
-A complete Markdown audit report with coverage, evidence-linked candidates, candidate IDs, severity, CWE, source-to-sink reasoning, affected locations, and remaining uncertainty.
-</sast_report>
+Your final response must contain both sections in this exact order. The structured
+JSON must appear first so it is never truncated behind a lengthy prose report:
 <sast_candidates_json>
 [
   {
@@ -84,8 +83,11 @@ A complete Markdown audit report with coverage, evidence-linked candidates, cand
   }
 ]
 </sast_candidates_json>
+<sast_report>
+A complete Markdown audit report with coverage, evidence-linked candidates, candidate IDs, severity, CWE, source-to-sink reasoning, affected locations, and remaining uncertainty.
+</sast_report>
 
-The JSON must contain every candidate in the Markdown report exactly once, or [] when there are no candidates. sourceToSink.kind must be exactly source, propagation, sanitizer, or sink; represent transforms as propagation. You may call tools before returning the handoff. Never advance a claim without concrete repository evidence.`;
+The JSON must contain every candidate in the Markdown report exactly once, or [] when there are no candidates. sourceToSink.kind must be exactly source, propagation, sanitizer, or sink; represent transforms as propagation. Keep the prose report concise — the JSON carries the authoritative structured evidence. You may call tools before returning the handoff. Never advance a claim without concrete repository evidence.`;
 
 export const DEVILS_ADVOCATE_PROMPT = `${loadWorkspacePrompt("devil's advocate.txt")}
 
@@ -98,10 +100,8 @@ Adversarially review every SAST candidate. Re-read decisive code and use safe ve
 ${PRIVATE_REASONING_CONTRACT}
 ${REPOSITORY_TRUST_CONTRACT}
 
-Your final response must contain both sections:
-<adversarial_report>
-A Markdown review describing validation performed, corrections, dismissed claims, unresolved evidence gaps, and the confirmed set.
-</adversarial_report>
+Your final response must contain both sections in this exact order. The structured
+JSON must appear first so it is never truncated behind a lengthy prose report:
 <verdicts_json>
 [
   {
@@ -119,6 +119,9 @@ A Markdown review describing validation performed, corrections, dismissed claims
   }
 ]
 </verdicts_json>
+<adversarial_report>
+A Markdown review describing validation performed, corrections, dismissed claims, unresolved evidence gaps, and the confirmed set.
+</adversarial_report>
 
 The JSON must be valid and contain no prose outside the array.`;
 

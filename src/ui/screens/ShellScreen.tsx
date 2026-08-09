@@ -153,6 +153,12 @@ function dispatchFocusKey(evt: KeyEvent): void {
     }
   }
 
+  // Ctrl+R — expand/collapse the most recent reasoning block from any focus.
+  if (evt.ctrl && evt.key.toLowerCase() === 'r') {
+    state.expandLatestReasoning();
+    return;
+  }
+
   // ── Focus-aware dispatch ──────────────────────────────────────────
   switch (state.focus) {
     case 'filters': { handleFiltersFocus(evt); break;

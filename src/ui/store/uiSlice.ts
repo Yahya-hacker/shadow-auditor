@@ -52,6 +52,7 @@ export interface UiSlice {
   addToast: (toast: Omit<Toast, 'id'> & { id?: string }) => void;
   compactHeader: boolean;
   dismissToast: (id: string) => void;
+  expandLatestReasoning: () => string | undefined;
   focus: FocusTarget;
   focusScope: string;
   helpOpen: boolean;
@@ -59,6 +60,7 @@ export interface UiSlice {
   isCompact: boolean;
   outputScroll: number;
   panelOpen: boolean;
+  reasoningExpandedIds: Set<string>;
   scrollOutput: (deltaLines: number) => void;
   searchActive: boolean;
   searchQuery: string;
@@ -75,6 +77,7 @@ export interface UiSlice {
   toggleCompactHeader: () => void;
   toggleHelp: () => void;
   togglePanel: () => void;
+  toggleReasoningExpand: (id: string) => void;
   tokenUsage: TokenUsage;
   updateTokenUsage: (usage: {
     completion?: number;
@@ -85,7 +88,7 @@ export interface UiSlice {
   }) => void;
 }
 
-export const createUiSlice: StateCreator<AppState, [], [], UiSlice> = (set) => ({
+export const createUiSlice: StateCreator<AppState, [], [], UiSlice> = (set, get) => ({
   addToast: (toast) =>
     set((state) => {
       const id = toast.id ?? `toast-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -95,6 +98,29 @@ export const createUiSlice: StateCreator<AppState, [], [], UiSlice> = (set) => (
   compactHeader: false,
   dismissToast: (id) =>
     set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
+  expandLatestReasoning: () => {
+    const state = get();
+    // Find the most recent reasoning activity that is collapsed.
+    for (let i = state.activity.length - 1; i >= 0; i--) {
+      const event = state.activity[i];
+      if (event?.kind === 'reasoning' && !state.reasoningExpandedIds.has(event.id)) {
+        set((s) => {
+          const next = new Set(s.reasoningExpandedIds);
+          next.add(event!.id);
+          return { reasoningExpandedIds: next };
+        });
+        return event.id;
+      }
+    }
+
+    // All reasoning blocks are already expanded — collapse all.
+    if (state.reasoningExpandedIds.size > 0) {
+      set({ reasoningExpandedIds: new Set() });
+      return undefined;
+    }
+
+    return undefined;
+  },
   focus: 'input',
   focusScope: 'Global',
   helpOpen: false,
@@ -102,6 +128,7 @@ export const createUiSlice: StateCreator<AppState, [], [], UiSlice> = (set) => (
   isCompact: false,
   outputScroll: 0,
   panelOpen: false,
+  reasoningExpandedIds: new Set(),
   scrollOutput: (deltaLines) => set((state) => ({ outputScroll: Math.max(0, state.outputScroll + deltaLines) })),
   searchActive: false,
   searchQuery: '',
@@ -122,6 +149,13 @@ export const createUiSlice: StateCreator<AppState, [], [], UiSlice> = (set) => (
     set((state) => ({ compactHeader: !state.compactHeader })),
   toggleHelp: () => set((state) => ({ helpOpen: !state.helpOpen })),
   togglePanel: () => set((state) => ({ panelOpen: !state.panelOpen })),
+  toggleReasoningExpand: (id) =>
+    set((s) => {
+      const next = new Set(s.reasoningExpandedIds);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return { reasoningExpandedIds: next };
+    }),
   tokenUsage: { completion: 0, prompt: 0, provenance: 'unavailable', total: 0, unclassified: 0 },
   updateTokenUsage: (usage) =>
     set((state) => {

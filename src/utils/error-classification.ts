@@ -94,8 +94,23 @@ export function toUserFacingError(message: string): string {
   }
 
   if (/failed validation|required artifact tags/i.test(message)) {
-    return 'The audit stage returned an invalid evidence handoff after schema repair. ' +
-      'No partial or unvalidated findings were reported.';
+    const stagePattern = /(sast_audit|codebase_intelligence|devils_advocate)\s+handoff\s+failed/i;
+    const stageMatch = stagePattern.exec(message);
+    const stageLabel = stageMatch?.[1]
+      ? ({
+        codebase_intelligence: 'Codebase Intelligence',
+        devils_advocate: "Devil's Advocate",
+        sast_audit: 'SAST Auditor',
+      } as Record<string, string>)[stageMatch[1]] ?? 'audit'
+      : 'audit';
+    const tagPattern = /missing a non-empty <(.*?)>/i;
+    const tagMatch = tagPattern.exec(message);
+    const tagHint = tagMatch?.[1]
+      ? ` The required <${tagMatch[1]}> section was not found in the model output.`
+      : '';
+    return `The ${stageLabel} stage returned an invalid evidence handoff after schema repair.${tagHint} ` +
+      'No partial or unvalidated findings were reported. Try using a different model provider, ' +
+      'reducing the audit scope, or increasing the model output token limit if the handoff is being truncated.';
   }
 
   if (/does not support the external tool contract/i.test(message)) {
