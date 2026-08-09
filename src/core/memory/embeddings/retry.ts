@@ -41,7 +41,7 @@ export async function withRetry<T>(
         ? String(error.code)
         : '';
       const retryable = error instanceof TypeError ||
-        /(?:408|425|429|5\d\d|ECONN|ENET|fetch failed|network|rate.?limit|timeout|timed out|too_many_requests)/i
+        /(?:408|425|429|5\d\d|ECONN|ENET|fetch failed|network|rate.?limit|timeout|timed out|too_many_requests|overloaded|model.?overload|capacity|busy|server_error|internal_server_error|service_unavailable|provider.?error|upstream|backlog)/i
           .test(`${errorCode} ${message}`);
       if (!retryable) throw error;
 

@@ -123,7 +123,7 @@ export interface AgentStreamEvent {
   };
   detail?: string;
   humanInputRequest?: HumanInputRequest;
-  kind: 'agent_progress' | 'audit_telemetry' | 'human_input_required' | 'status' | 'swarm_state' | 'token_usage' | 'tool_call' | 'tool_result';
+  kind: 'agent_progress' | 'audit_telemetry' | 'human_input_required' | 'reasoning' | 'status' | 'swarm_state' | 'token_usage' | 'tool_call' | 'tool_result';
   message: string;
   resultPreview?: string;
   stage?: AuditStage;
@@ -764,12 +764,13 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     this.langchainModel = getLangchainModel(this.resolvedModelConfig());
     const toolsArray = Object.entries(this.tools).map(([name, tool]) => ({ name, tool }));
 
-    // Create a persistent checkpointer for state management and human interrupts
+    // Create a persistent checkpointer for state management and human interrupts.
+    // Do NOT prune here — checkpoints must survive across messages so the
+    // workflow can resume from the last durable state mid-mission.
     const runDirectory = artifacts.getRunDirectory();
     const checkpointer = new PersistentCheckpointSaver({ storagePath: runDirectory });
     this.checkpointer = checkpointer;
     await checkpointer.initialize();
-    await checkpointer.prune('session_main');
 
     this.compiledWorkflow = compileWorkflow({
       checkpointer,
@@ -1248,10 +1249,6 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       throw new Error('Run artifacts are not initialized.');
     }
 
-    this.auditStatus = { completed: false, evidenceActions: 0, inspectedPaths: [] };
-    this.reportBuilder?.reset();
-    this.latestFindings.clear();
-    this.lastRunFindings = [];
     await this.artifacts.markActive();
 
     const emitEvent = (event: Omit<AgentStreamEvent, 'timestamp'>) => {
@@ -1304,30 +1301,61 @@ Use your tools to inspect implementation details, verify assumptions, and produc
         throw new Error('Workflow not compiled. Initialization may have failed.');
       }
 
-      const result = await processAgentStream(onChunk, emitEvent, {
-        inputs: {
-          activeStage: 'codebase_intelligence',
-          auditedFiles: [],
-          auditRunId: randomUUID(),
-          codebaseIntelligence: null,
-          devilsAdvocate: null,
-          discoveredFindings: [],
-          evidenceActions: 0,
-          messages: [new HumanMessage({ content: userMessage })],
-          mission: userMessage,
-          pendingHumanInput: null,
-          pipelineFindings: [],
-          pipelineReport: '',
-          sastAudit: null,
-          stageIterations: {
-            codebase_intelligence: 0,
-            devils_advocate: 0,
-            reporting: 0,
-            sast_audit: 0,
-          },
-          verdicts: [],
-          workingMemory: '',
+      // Detect whether a durable checkpoint already exists for this thread.
+      // When present the workflow resumes from the exact stage and context
+      // it left off at, rather than restarting from Codebase Intelligence.
+      let existingState: Record<string, unknown> | undefined;
+      try {
+        const snapshot = await this.compiledWorkflow.getState(lcConfig);
+        existingState = snapshot.values as Record<string, unknown> | undefined;
+      } catch {
+        // No checkpoint or unreadable — start fresh.
+      }
+
+      const hasCheckpoint = existingState &&
+        typeof existingState.activeStage === 'string' &&
+        existingState.activeStage !== '' &&
+        !existingState.pipelineReport;
+
+      const freshInputs = {
+        activeStage: 'codebase_intelligence' as const,
+        auditedFiles: [] as string[],
+        auditRunId: randomUUID(),
+        codebaseIntelligence: null,
+        devilsAdvocate: null,
+        discoveredFindings: [] as string[],
+        evidenceActions: 0,
+        messages: [new HumanMessage({ content: userMessage })],
+        mission: userMessage,
+        pendingHumanInput: null,
+        pipelineFindings: [] as unknown[],
+        pipelineReport: '',
+        sastAudit: null,
+        stageIterations: {
+          codebase_intelligence: 0,
+          devils_advocate: 0,
+          reporting: 0,
+          sast_audit: 0,
         },
+        verdicts: [] as unknown[],
+        workingMemory: '',
+      };
+
+      if (hasCheckpoint) {
+        emitEvent({
+          kind: 'status',
+          message: `Resuming ${existingState!.activeStage} stage from durable checkpoint…`,
+        });
+      } else {
+        // Fresh start — reset transient in-memory state.
+        this.auditStatus = { completed: false, evidenceActions: 0, inspectedPaths: [] };
+        this.reportBuilder?.reset();
+        this.latestFindings.clear();
+        this.lastRunFindings = [];
+      }
+
+      const result = await processAgentStream(onChunk, emitEvent, {
+        inputs: hasCheckpoint ? null : freshInputs,
         lcConfig,
         logLabel: 'sendSingleAgentMessage',
         providerHint: this.config.provider,
