@@ -295,8 +295,10 @@ Collaborate with the swarm. Inspect the blackboard if necessary, perform your ta
   private extractEvidenceFromTask(task: Task): void {
     const scan = (value: unknown): void => {
       if (typeof value === 'string') {
-        // Match canonical IDs like ent_abc123, claim_..., task_...
-        const matches = value.match(/\b[a-z]+_[a-f0-9]{8,64}\b/g);
+        // Match canonical IDs like ent_abc123, claim_..., task_.... Anchored to
+                // the whole lowercase token (matching canonicalIdSchema) so we don't
+                // capture prose trailing the id inside a task parameter.
+                const matches = value.match(/\b[a-z_]+_[a-f0-9]{8,64}\b/g);
         if (matches) {
           this.evidenceTracker.addEntities(matches);
         }

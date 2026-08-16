@@ -155,6 +155,28 @@ export class MissionEngine implements MissionRuntimeObserver {
           ...result,
         });
       }
+
+      // Release reservations for calls that reached a terminal state so the
+      // in-memory and persisted budget do not accumulate unbounded keys over a
+      // long mission (#5). `beforeToolExecution` re-reserves on replay and the
+      // restorer's `reconcileToolReservations` drops keys with no durable
+      // `tool_call` event, so a successful result is safe to free here.
+      const released = results
+        .map(({callId}) =>
+          `${invocation.agentId ?? invocation.stage}:` +
+          `${invocation.executionId ?? 'unscoped'}:${callId}`)
+        .filter((key) => this.state.budget.reservedToolCallIds.includes(key));
+      if (released.length === 0) return;
+
+      this.state = {
+        ...this.state,
+        budget: {
+          ...this.state.budget,
+          reservedToolCallIds: this.state.budget.reservedToolCallIds
+            .filter((key) => !released.includes(key)),
+        },
+      };
+      await this.saveCheckpoint();
     });
   }
 
@@ -760,6 +782,19 @@ export class MissionEngine implements MissionRuntimeObserver {
 
       delete modelReservations[reservationId];
       tokensUsed += chargedTokens;
+      changed = true;
+    }
+
+    // Release checkpoint-only reservations that never produced a model_usage
+    // event. A crash between the reserve-checkpoint and the charge leaves the
+    // reservation persisted but the invocation never completed, so those tokens
+    // were never consumed. Keeping them reserved permanently leaks budget and
+    // spuriously fails the mission with budget-exhausted on the next run.
+    const orphanedReservationIds = Object.keys(modelReservations);
+    if (orphanedReservationIds.length > 0) {
+      for (const reservationId of orphanedReservationIds) {
+        delete modelReservations[reservationId];
+      }
       changed = true;
     }
 

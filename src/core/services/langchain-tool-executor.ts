@@ -321,6 +321,10 @@ export async function executeLangChainToolLoop(
   ];
   const messagesDelta: BaseMessage[] = [messages.at(-1)!];
   let finalText = '';
+  // Retains the last model response that carried usable prose, so a budget-
+  // exhausted run can still return a substantive answer when the provider's
+  // finalization emits nothing usable (empty or DSML-only).
+  let lastSubstantiveText = '';
   const executedToolCalls: Array<{ args: unknown; name: string; result: unknown }> = [];
   const toolCallCounts: Record<string, number> = {};
   compactWorkerMessages(messages);
@@ -353,6 +357,7 @@ export async function executeLangChainToolLoop(
     messages.push(response);
     messagesDelta.push(response);
     finalText = contentToText(response.content);
+    if (finalText.trim()) lastSubstantiveText = finalText;
     const toolCalls = response.tool_calls ?? [];
     if (toolCalls.length === 0) {
       return { messagesDelta, text: finalText, toolCallCounts, toolCalls: executedToolCalls };
@@ -392,15 +397,26 @@ export async function executeLangChainToolLoop(
         ),
         normalizeTokenUsage,
       );
+      // Budget is exhausted, so we never execute any tool calls returned here -
+      // the calls are conceptually denied. Allow DSML-encoded tool calls to be
+      // parsed (rather than suppressed) so the provider's surrounding prose is
+      // cleanly extracted as the answer instead of being discarded, and so we
+      // do not hard-throw when the model re-emits a DSML envelope instead of
+      // plain prose. The returned tool_calls are intentionally dropped below.
       const finalResponse = normalizeProviderToolCalls(
         rawFinalResponse,
         options.providerHint,
-        {allowTextEncodedToolCalls: false},
+        {allowTextEncodedToolCalls: true},
       );
       messagesDelta.push(finalResponse);
+      // If the model produced no usable prose (empty/whitespace-only answer,
+      // e.g. it re-emitted only a tool envelope), fall back to the last
+      // collected evidence text so the budget-exhausted run never returns a
+      // blank answer to the coordinator.
+      const finalAnswerText = contentToText(finalResponse.content);
       return {
         messagesDelta,
-        text: contentToText(finalResponse.content),
+        text: finalAnswerText.trim() ? finalAnswerText : lastSubstantiveText,
         toolCallCounts,
         toolCalls: executedToolCalls,
       };

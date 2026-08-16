@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { promisify } from 'node:util';
 
 import { evaluateCommandPolicy } from '../src/core/policy/command-policy.js';
-import { createExecuteCommandTool } from '../src/core/tools/execute-command.js';
+import { createExecuteCommandTool, parsePipeline } from '../src/core/tools/execute-command.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -386,4 +386,24 @@ describe('bash tool policy integration', () => {
       }
     });
   });
-});
+
+        describe('pipeline tokenizer', () => {
+          it('preserves Windows backslash paths verbatim on win32', function () {
+            if (process.platform !== 'win32') this.skip();
+            const expected: string[][] = [['rg', 'C:\\Users\\src\\report.txt', '.']];
+            expect(parsePipeline(String.raw`rg C:\Users\src\report.txt .`)).to.deep.equal(expected);
+          });
+
+          it('does not treat double-quoted backslash as an escape on win32', function () {
+            if (process.platform !== 'win32') this.skip();
+            const expected: string[][] = [['rg', 'C:\\repo\\test dir', '.']];
+            expect(parsePipeline(String.raw`rg "C:\repo\test dir" .`)).to.deep.equal(expected);
+          });
+
+          it('still collapses escapes for host-path detection on POSIX', function () {
+            if (process.platform === 'win32') this.skip();
+            const expected: string[][] = [['find', '/etc', '-maxdepth', '0']];
+            expect(parsePipeline(String.raw`find \/etc -maxdepth 0`)).to.deep.equal(expected);
+          });
+        });
+      });

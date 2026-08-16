@@ -74,9 +74,14 @@ export interface ShadowConfig {
   maxToolSteps?: number;
   mcp?: {
     adapters?: Array<'chrome-devtools' | 'kali-linux'>;
+    allowDangerousActions?: boolean;
     chromeDevtoolsEndpoint?: string;
     enabled?: boolean;
     kaliLinuxEndpoint?: string;
+    requireDangerousConfirmation?: boolean;
+    requireSensitiveConfirmation?: boolean;
+    serverTiers?: Record<string, 'safe' | 'sensitive' | 'dangerous' | 'blocked'>;
+    toolTiers?: Record<string, 'safe' | 'sensitive' | 'dangerous' | 'blocked'>;
   };
   model: string;
   provider: string;

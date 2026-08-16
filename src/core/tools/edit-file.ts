@@ -7,6 +7,24 @@ import type { HumanInteractionService } from '../../utils/human-in-loop.js';
 import { recoverAtomicWrite, writeFileAtomic } from '../../utils/fs-atomic.js';
 import { type PathGuard, PathGuardError } from '../policy/path-guard.js';
 
+/**
+ * Replace every exact occurrence of {@link target} with {@link replacement} in
+ * {@link content}, returning the resulting content and how many matches were
+ * replaced. Using a single global replace (and reporting the real count) avoids
+ * silently patching only the first of several identical snippets — the same
+ * cause as the edit_file "Lines changed" under-reporting below.
+ */
+export function replaceAllExact(
+  content: string,
+  target: string,
+  replacement: string,
+): { content: string; occurrences: number } {
+  if (!target) return { content, occurrences: 0 };
+  const pieces = content.split(target);
+  if (pieces.length === 1) return { content, occurrences: 0 };
+  return { content: pieces.join(replacement), occurrences: pieces.length - 1 };
+}
+
 export function createEditFileTool(pathGuard: PathGuard, humanInteraction: HumanInteractionService) {
   return {
     description:
@@ -68,30 +86,32 @@ export function createEditFileTool(pathGuard: PathGuard, humanInteraction: Human
         }
 
         const freshContent = await fs.readFile(absolutePath, 'utf8');
-        if (freshContent === content) {
-          const nextContent = content.replace(targetCode, replacementCode);
-          await writeFileAtomic(absolutePath, nextContent);
-        } else {
-          // Content changed since our initial read — verify target still exists
-          if (!freshContent.includes(targetCode)) {
-            return [
-              `── edit_file ── FAILED: ${filePath} ──`,
-              `[ERROR] File was modified by another process while awaiting confirmation.`,
-              `The target code no longer exists in the current version of the file.`,
-              `💡 Re-read the file and try again with the updated content.`,
-            ].join('\n');
-          }
+                let result: ReturnType<typeof replaceAllExact>;
+                if (freshContent === content) {
+                  result = replaceAllExact(content, targetCode, replacementCode);
+                  await writeFileAtomic(absolutePath, result.content);
+                } else {
+                  // Content changed since our initial read — verify target still exists
+                  if (!freshContent.includes(targetCode)) {
+                    return [
+                      `── edit_file ── FAILED: ${filePath} ──`,
+                      `[ERROR] File was modified by another process while awaiting confirmation.`,
+                      `The target code no longer exists in the current version of the file.`,
+                      `💡 Re-read the file and try again with the updated content.`,
+                    ].join('\n');
+                  }
 
-          // Target still exists — use the fresh content as the base
-          const nextContent = freshContent.replace(targetCode, replacementCode);
-          await writeFileAtomic(absolutePath, nextContent);
-        }
+                  // Target still exists — use the fresh content as the base
+                  result = replaceAllExact(freshContent, targetCode, replacementCode);
+                  await writeFileAtomic(absolutePath, result.content);
+                }
 
-        return [
-          `── edit_file ── SUCCESS: ${filePath} ──`,
-          `[SUCCESS] Patch applied to "${filePath}".`,
-          `Lines changed: ${targetCode.split('\n').length} removed, ${replacementCode.split('\n').length} added.`,
-        ].join('\n');
+                return [
+                  `── edit_file ── SUCCESS: ${filePath} ──`,
+                  `[SUCCESS] Patch applied to "${filePath}".`,
+                  `Lines changed: ${result.occurrences} occurrence(s) replaced ` +
+                    `(${targetCode.split('\n').length} removed, ${replacementCode.split('\n').length} added per occurrence).`,
+                ].join('\n');
       } catch (error) {
         if (error instanceof Command) {
           throw error;

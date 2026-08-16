@@ -139,7 +139,7 @@ export class PersistentCheckpointSaver extends BaseCheckpointSaver {
 
     const tuples: CheckpointTuple[] = [];
     for (const entry of entries) {
-      if (!entry.endsWith('.json') || entry === 'latest.json') continue;
+      if (!entry.endsWith('.json') || entry.endsWith('.pending.json') || entry === 'latest.json') continue;
 
       const filePath = path.join(threadDir, entry);
       try {
@@ -158,6 +158,9 @@ export class PersistentCheckpointSaver extends BaseCheckpointSaver {
           pendingWrites: stored.pendingWrites,
         });
       } catch (error) {
+        // A concurrent put()/prune() may have renamed or removed the file
+        // between readdir and read. Skip it rather than failing the whole list.
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
         throw new Error(`Failed to read checkpoint "${filePath}".`, {cause: error});
       }
     }

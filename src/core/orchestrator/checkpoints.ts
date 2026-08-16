@@ -147,10 +147,15 @@ export class CheckpointManager {
       return ok(null);
     }
 
-    // Sort by creation time descending
-    const sorted = checkpoints.value.sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    );
+    // Sort by creation time descending. Fall back to the checkpoint ID (which
+        // embeds a base-36 timestamp) when a createdAt string fails to parse, so a
+        // single malformed metadata record cannot push resume to a wrong snapshot.
+        const sorted = checkpoints.value.sort((a, b) => {
+          const aTime = new Date(a.createdAt).getTime();
+          const bTime = new Date(b.createdAt).getTime();
+          if (!Number.isNaN(aTime) && !Number.isNaN(bTime)) return bTime - aTime;
+          return b.checkpointId.localeCompare(a.checkpointId);
+        });
 
     return this.loadCheckpoint(sorted[0].checkpointId);
   }

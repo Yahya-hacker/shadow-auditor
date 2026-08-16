@@ -548,6 +548,86 @@ describe('deterministic audit pipeline', () => {
     );
   });
 
+  it('salvages a confirmed finding via the host path when the reporter returns prose without finishing', async () => {
+    const stageCounts = new Map<string, number>();
+    const model = createModel((messages) => {
+      const stage = stageFromSystem(String(messages[0]?.content ?? ''));
+      const count = (stageCounts.get(stage) ?? 0) + 1;
+      stageCounts.set(stage, count);
+
+      if (stage === 'codebase' && count === 1) {
+        return toolCall('read-salvage-map', 'read_file_content', {filePath: 'src/index.ts'});
+      }
+
+      if (stage === 'codebase') {
+        return new AIMessage(
+          '<repo_map>\n- src/index.ts: request handler\n</repo_map>\n' +
+            '<codebase_report>\n# Architecture\nInspected the request handler.\n</codebase_report>',
+        );
+      }
+
+      if (stage === 'sast' && count === 1) {
+        return toolCall('read-salvage-sast', 'read_file_content', {filePath: 'src/index.ts'});
+      }
+
+      if (stage === 'sast') {
+        return new AIMessage(
+          '<sast_report>\n# SAST\nCAND-001 is a verified candidate.\n</sast_report>\n' +
+            '<sast_candidates_json>\n' +
+            '[{"findingId":"CAND-001","title":"Path traversal","summary":"Input reaches a file sink",' +
+            '"severity":"high","cwe":"CWE-22","confidence":0.95,"reachability":"verified",' +
+            '"affectedLocations":[{"filePath":"src/index.ts","lineNumber":1}],' +
+            '"sourceToSink":[{"kind":"source","location":{"filePath":"src/index.ts","lineNumber":1},' +
+            '"description":"request path"},{"kind":"sink","location":{"filePath":"src/index.ts","lineNumber":2},' +
+            '"description":"file read"}],"prerequisites":["Remote request access"],' +
+            '"reproductionSteps":["Send a traversal path"],"proofOfConcept":{"kind":"payload",' +
+            '"content":"../safe-fixture","safetyNotes":"Uses a local fixture only","executionStatus":"not_run"},' +
+            '"impact":"Unauthorized file read",' +
+            '"remediation":"Resolve and constrain paths to the trusted root","evidence":["src/index.ts:1"]}]\n' +
+            '</sast_candidates_json>',
+        );
+      }
+
+      if (stage === 'devil') {
+        return new AIMessage(
+          '<adversarial_report>\n# Validation\nCandidate confirmed by static trace.\n</adversarial_report>\n' +
+            '<verdicts_json>\n' +
+            '[{"findingId":"CAND-001","verdict":"CONFIRMED","rationale":"Reachable sink",' +
+            '"evidence":["src/index.ts:1"],"verification":{"status":"verified","method":"static trace",' +
+            '"observations":["Attacker input reaches the file read"]},"adjustedSeverity":"high"}]\n' +
+            '</verdicts_json>',
+        );
+      }
+
+      // The reporter never calls report_finding or finish_task; it only emits
+      // prose. Previously this crashed the whole long-running audit. Now the
+      // host must salvage the confirmed finding instead.
+      return new AIMessage('I have finished examining the code.');
+    });
+    const state = await compileWorkflow({
+      model,
+      repoMap: '- src/index.ts',
+      systemPrompt: 'You are Shadow.',
+      tools: tools(),
+    }).invoke(
+      {
+        auditRunId: 'audit-run-salvage',
+        messages: [new HumanMessage('Audit this repository.')],
+        mission: 'Audit this repository.',
+      },
+      {recursionLimit: WORKFLOW_RECURSION_LIMIT},
+    );
+
+    expect(state.pipelineFindings).to.have.length(1);
+    expect(state.pipelineFindings[0]?.vulnId).to.equal('CAND-001');
+    expect(state.pipelineFindings[0]?.severityLabel).to.equal('High');
+    expect(state.pipelineFindings[0]?.cvssV31Vector).to.match(/^CVSS:3\.1\//);
+    expect(state.pipelineFindings[0]?.locations[0]?.filePath).to.equal('src/index.ts');
+    expect(state.pipelineReport).to.include('# Security Audit Report');
+    expect(state.pipelineReport).to.include('host salvage path');
+    expect(state.pipelineReport).to.include('Path traversal');
+  });
+
   it('rejects an unknown report claim without mutating the external report sink', async () => {
     let sourceReportToolExecutions = 0;
     const stageCounts = new Map<string, number>();
@@ -616,8 +696,9 @@ describe('deterministic audit pipeline', () => {
     });
 
     let error: unknown;
+    let state: Awaited<ReturnType<typeof workflow.invoke>> | undefined;
     try {
-      await workflow.invoke(
+      state = await workflow.invoke(
         {
           auditRunId: 'audit-run-invalid-report',
           messages: [new HumanMessage('Audit this repository.')],
@@ -629,10 +710,205 @@ describe('deterministic audit pipeline', () => {
       error = error_;
     }
 
-    expect(error).to.be.instanceOf(Error);
-    expect((error as Error).message).to.include('CONFIRMED sourceClaimId');
+    // The unknown claim is rejected and never reaches the external report sink,
+    // and the audit completes gracefully via the host salvage path instead of
+    // crashing over one bad report_finding call.
+    expect(error).to.be.undefined;
     expect(sourceReportToolExecutions).to.equal(0);
+    expect(state?.pipelineFindings).to.have.length(1);
+    expect(state?.pipelineFindings[0]?.vulnId).to.equal('CAND-001');
+    expect(state?.pipelineReport).to.include('host salvage path');
   });
+
+  it('recovers when the reporter invents a location and data-flow step instead of crashing the audit', async () => {
+    const stageCounts = new Map<string, number>()
+    const model = createModel((messages) => {
+      const stage = stageFromSystem(String(messages[0]?.content ?? ''))
+      const count = (stageCounts.get(stage) ?? 0) + 1
+      stageCounts.set(stage, count)
+
+      if (stage === 'codebase' && count === 1) {
+        return toolCall('read-map-h', 'read_file_content', {filePath: 'src/index.ts'})
+      }
+
+      if (stage === 'codebase') {
+        return new AIMessage(
+          '<repo_map>\n- src/index.ts: request handler\n</repo_map>\n' +
+            '<codebase_report>\n# Architecture\nInspected the request handler.\n</codebase_report>',
+        )
+      }
+
+      if (stage === 'sast' && count === 1) {
+        return toolCall('read-h', 'read_file_content', {filePath: 'src/index.ts'})
+      }
+
+      if (stage === 'sast') {
+        return new AIMessage(
+          '<sast_report>\n# SAST\nCAND-001 is a verified path traversal candidate.\n</sast_report>\n' +
+            '<sast_candidates_json>\n' +
+            '[{"findingId":"CAND-001","title":"Path traversal","summary":"Input reaches a file sink",' +
+            '"severity":"high","cwe":"CWE-22","confidence":0.95,"reachability":"verified",' +
+            '"affectedLocations":[{"filePath":"src/index.ts","lineNumber":1},' +
+            '{"filePath":"src/index.ts","lineNumber":2}],' +
+            '"sourceToSink":[{"kind":"source","location":{"filePath":"src/index.ts","lineNumber":1},' +
+            '"description":"request path"},{"kind":"sink","location":{"filePath":"src/index.ts","lineNumber":2},' +
+            '"description":"file read"}],"prerequisites":["Remote request access"],' +
+            '"reproductionSteps":["Send a traversal path"],"proofOfConcept":{"kind":"payload",' +
+            '"content":"../safe-fixture","safetyNotes":"Uses a local fixture only","executionStatus":"not_run"},' +
+            '"impact":"Unauthorized file read",' +
+            '"remediation":"Resolve and constrain paths to the trusted root","evidence":["src/index.ts:1"]}]\n' +
+            '</sast_candidates_json>',
+        )
+      }
+
+      if (stage === 'devil') {
+        return new AIMessage(
+          '<adversarial_report>\n# Validation\nCAND-001 remained reproducible.\n</adversarial_report>\n' +
+            '<verdicts_json>\n' +
+            '[{"findingId":"CAND-001","verdict":"CONFIRMED","rationale":"Reachable sink",' +
+            '"evidence":["src/index.ts:1"],"verification":{"status":"verified","method":"static trace",' +
+            '"observations":["Attacker input reaches the file read"]},"adjustedSeverity":"high"}]\n' +
+            '</verdicts_json>',
+        )
+      }
+
+      if (stage === 'reporter' && count === 1) {
+        // The reporter hallucinates an extra location and an extra data-flow step
+        // that do not exist in the verified candidate. The audit must not crash;
+        // the invented evidence is dropped and the finding is rebuilt from the
+        // verified candidate.
+        return toolCall('report-h', 'report_finding', {
+          ...confirmedFindingArgs('CAND-001'),
+          dataFlowPath: [
+            {description: 'request path', isSource: true, location: {filePath: 'src/index.ts', startLine: 1}},
+            {description: 'file read', isSink: true, location: {filePath: 'src/index.ts', startLine: 2}},
+            {description: 'invented hop', isSource: true, location: {filePath: 'src/other.ts', startLine: 50}},
+          ],
+          locations: [
+            {filePath: 'src/index.ts', startLine: 1},
+            {filePath: 'src/hallucinated.ts', startLine: 999},
+          ],
+        })
+      }
+
+      if (stage === 'reporter' && count === 2) {
+        return toolCall('finish-h', 'finish_task', {summary: 'One confirmed finding reported.'})
+      }
+
+      return new AIMessage('# Security Audit Report\n\n## Path traversal\nConfirmed.')
+    })
+    const state = await compileWorkflow({
+      model,
+      repoMap: '- src/index.ts',
+      systemPrompt: 'You are Shadow.',
+      tools: tools(),
+    }).invoke(
+      {
+        auditRunId: 'audit-run-hallucinated-location',
+        messages: [new HumanMessage('Audit this repository.')],
+        mission: 'Audit this repository.',
+      },
+      {recursionLimit: WORKFLOW_RECURSION_LIMIT},
+    )
+
+    expect(state.pipelineFindings).to.have.length(1)
+    const reported = state.pipelineFindings[0]!
+    // The published finding is rebuilt from the verified candidate only.
+    expect(reported.locations).to.deep.include({filePath: 'src/index.ts', startLine: 1})
+    expect(reported.locations).to.deep.include({filePath: 'src/index.ts', startLine: 2})
+    expect(reported.locations.some((location) => location.filePath === 'src/hallucinated.ts')).to.equal(false)
+    expect(reported.dataFlowPath?.some((step) => step.location?.filePath === 'src/other.ts')).to.equal(false)
+    expect(state.pipelineReport).to.include('## Path traversal')
+  })
+
+  it('records an informational-severity confirmed finding without a severity mismatch crash', async () => {
+    const stageCounts = new Map<string, number>()
+    const model = createModel((messages) => {
+      const stage = stageFromSystem(String(messages[0]?.content ?? ''))
+      const count = (stageCounts.get(stage) ?? 0) + 1
+      stageCounts.set(stage, count)
+
+      if (stage === 'codebase' && count === 1) {
+        return toolCall('read-map-info', 'read_file_content', {filePath: 'src/index.ts'})
+      }
+
+      if (stage === 'codebase') {
+        return new AIMessage(
+          '<repo_map>\n- src/index.ts: request handler\n</repo_map>\n' +
+            '<codebase_report>\n# Architecture\nInspected the request handler.\n</codebase_report>',
+        )
+      }
+
+      if (stage === 'sast' && count === 1) {
+        return toolCall('read-info', 'read_file_content', {filePath: 'src/index.ts'})
+      }
+
+      if (stage === 'sast') {
+        return new AIMessage(
+          '<sast_report>\n# SAST\nCAND-001 is an informational candidate.\n</sast_report>\n' +
+            '<sast_candidates_json>\n' +
+            '[{"findingId":"CAND-001","title":"Verbose logging","summary":"Sensitive data may be logged",' +
+            '"severity":"informational","cwe":"CWE-532","confidence":0.9,"reachability":"verified",' +
+            '"affectedLocations":[{"filePath":"src/index.ts","lineNumber":1}],' +
+            '"sourceToSink":[{"kind":"source","location":{"filePath":"src/index.ts","lineNumber":1},' +
+            '"description":"log call"},{"kind":"sink","location":{"filePath":"src/index.ts","lineNumber":2},' +
+            '"description":"log sink"}],"prerequisites":["Verbose logging enabled"],' +
+            '"reproductionSteps":["Trigger a request"],"proofOfConcept":{"kind":"payload",' +
+            '"content":"GET /","safetyNotes":"Static proof only","executionStatus":"not_run"},' +
+            '"impact":"Information disclosure","remediation":"Reduce log verbosity",' +
+            '"evidence":["src/index.ts:1"]}]\n' +
+            '</sast_candidates_json>',
+        )
+      }
+
+      if (stage === 'devil') {
+        return new AIMessage(
+          '<adversarial_report>\n# Validation\nCandidate confirmed.\n</adversarial_report>\n' +
+            '<verdicts_json>\n' +
+            '[{"findingId":"CAND-001","verdict":"CONFIRMED","rationale":"Reachable log sink",' +
+            '"evidence":["src/index.ts:1"],"verification":{"status":"verified","method":"static trace",' +
+            '"observations":["Sensitive data reaches the log sink"]},"adjustedSeverity":"informational"}]\n' +
+            '</verdicts_json>',
+        )
+      }
+
+      if (stage === 'reporter' && count === 1) {
+        // The reporter emits the canonical 'Info' label for an informational
+        // finding. The severity guard must normalize both sides instead of
+        // comparing 'info' against 'informational' and crashing the audit.
+        return toolCall('report-info', 'report_finding', {
+          ...confirmedFindingArgs('CAND-001'),
+          cwe: 'CWE-532',
+          severityLabel: 'Info',
+          title: 'Verbose logging',
+          vulnId: 'vuln-verbose-logging',
+        })
+      }
+
+      if (stage === 'reporter' && count === 2) {
+        return toolCall('finish-info', 'finish_task', {summary: 'One informational finding reported.'})
+      }
+
+      return new AIMessage('# Security Audit Report\n\n## Verbose logging\nConfirmed.')
+    })
+    const state = await compileWorkflow({
+      model,
+      repoMap: '- src/index.ts',
+      systemPrompt: 'You are Shadow.',
+      tools: tools(),
+    }).invoke(
+      {
+        auditRunId: 'audit-run-informational',
+        messages: [new HumanMessage('Audit this repository.')],
+        mission: 'Audit this repository.',
+      },
+      {recursionLimit: WORKFLOW_RECURSION_LIMIT},
+    )
+
+    expect(state.pipelineFindings).to.have.length(1)
+    expect(state.pipelineFindings[0]?.severityLabel).to.equal('Info')
+    expect(state.pipelineReport).to.include('## Verbose logging')
+  })
 
   it('resumes an interrupted stage by re-running its pending tool call', async () => {
     const stageCounts = new Map<string, number>();

@@ -3,12 +3,13 @@ import { tool, type ToolSet } from 'ai';
 import type { HumanInteractionService } from '../../utils/human-in-loop.js';
 import type { MCPAdapter, MCPExecutionContext, MCPToolDefinition } from './types.js';
 
-import { evaluateMcpPolicy } from '../policy/mcp-policy.js';
+import { evaluateMcpPolicy, type MCPActionPolicy } from '../policy/mcp-policy.js';
 
 export interface MCPManagerOptions {
   expertUnsafe: boolean;
   humanInteraction: HumanInteractionService;
   targetPath: string;
+  policy?: Partial<MCPActionPolicy>;
 }
 
 export interface MCPDiscoveredCapability {
@@ -94,6 +95,7 @@ export class MCPManager {
     context: MCPExecutionContext,
   ): ToolSet[string] {
     const humanInteraction = this.options.humanInteraction;
+    const policy = this.options.policy;
 
     return tool({
       description: `[MCP:${adapterId}] ${definition.description}`,
@@ -102,7 +104,10 @@ export class MCPManager {
           ...context,
           signal: executionOptions.abortSignal,
         };
-        const policyDecision = evaluateMcpPolicy(adapterId, definition, context.expertUnsafe);
+        const policyDecision = evaluateMcpPolicy(adapterId, definition, {
+          ...(policy ?? {}),
+          expertUnsafe: context.expertUnsafe,
+        });
         if (!policyDecision.allowed) {
           return policyDecision.reason;
         }

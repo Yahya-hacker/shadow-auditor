@@ -129,7 +129,8 @@ FLAGS
   --ci                    CI mode: deterministic output, exit code on severity
   --fail-on=<severity>    Minimum severity for non-zero CI exit (critical|high|medium|low|none)
   --resume-run=<id>       Resume a persisted LangGraph run
-  --prompt=<text>         CI mission, or explicit answer for a paused resumed run
+    --resume[=<id>]         Alias for --resume-run; bare --resume resumes the most recent run
+    --prompt=<text>         CI mission, or explicit answer for a paused resumed run
   --target=<path>         Repository to audit (default: current directory)
   --expert-unsafe         Permit broader command and MCP tool execution surface
   --swarm                 Enable multi-agent swarm mode for parallel analysis
@@ -151,6 +152,13 @@ shadow-auditor --ci --diff --since main --fail-on high
 
 # Resume a paused headless run with its required confirmation
 shadow-auditor --ci --resume-run <run-id> --prompt yes
+
+# Resume the most recent run (interactive)
+shadow-auditor --resume
+
+# Resume a specific run after Ctrl+C / an interruption; the tool prints this
+# command on shutdown so no session is ever lost
+shadow-auditor --resume <run-id>
 
 # Multi-agent swarm mode
 shadow-auditor --swarm

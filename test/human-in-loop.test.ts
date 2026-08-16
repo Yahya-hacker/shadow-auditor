@@ -16,7 +16,7 @@ import { z } from 'zod';
 
 import { wrapTool } from '../src/core/graph/tools/langchain-wrapper.js';
 import { createPathGuard } from '../src/core/policy/path-guard.js';
-import { createEditFileTool } from '../src/core/tools/edit-file.js';
+import { createEditFileTool, replaceAllExact } from '../src/core/tools/edit-file.js';
 import { createExecuteCommandTool } from '../src/core/tools/execute-command.js';
 import { useAppStore } from '../src/ui/store/appStore.js';
 import { HumanInteractionService } from '../src/utils/human-in-loop.js';
@@ -212,6 +212,24 @@ describe('human interaction isolation', () => {
 
     expect(interrupted).to.equal(true);
   });
+
+    it('replaceAllExact replaces every occurrence and reports the real count', () => {
+      const content = 'x = 1;\nif (x && x) { use(x); }\n// x remains\nx += 1;';
+      const result = replaceAllExact(content, 'x', 'value');
+
+      // The literal 'x' appears in "use(x)" and "x;"/"x &&" etc — verify it is
+      // not present anywhere in the output (a single-pass global replace).
+      expect(result.content.includes('x')).to.equal(false);
+      // {{occurrences}} equals the number of split pieces minus one.
+      expect(result.occurrences).to.equal(content.split('x').length - 1);
+    });
+
+    it('replaceAllExact returns the original when the target is absent', () => {
+      const content = 'hello world';
+      const result = replaceAllExact(content, 'zzz', 'q');
+      expect(result.content).to.equal(content);
+      expect(result.occurrences).to.equal(0);
+    });
 
   it('requires a new confirmation for an identical side-effecting operation', async () => {
     const service = new HumanInteractionService();

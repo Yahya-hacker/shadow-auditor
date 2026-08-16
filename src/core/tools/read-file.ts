@@ -26,8 +26,18 @@ export function createReadFileTool(pathGuard: PathGuard) {
     }) {
       try {
         const absolutePath = await pathGuard.resolveExistingPath(filePath);
-        const content = await fs.readFile(absolutePath, 'utf8');
         const relativePath = pathGuard.toRelative(absolutePath);
+        // Bound the memory footprint before reading. A 10 MB cap keeps source
+        // files readable while preventing an untrusted bundle from OOM'ing the
+        // process via a one-shot `readFile` + line split.
+        const MAX_READ_BYTES = 10 * 1024 * 1024;
+        const {size} = await fs.stat(absolutePath);
+        if (size > MAX_READ_BYTES) {
+          return `[ERROR] File "${relativePath}" is ${(size / 1024 / 1024).toFixed(1)} MB; ` +
+            `refusing to read more than ${MAX_READ_BYTES / 1024 / 1024} MB at once. ` +
+            `Run read_file_content with an explicit startLine/endLine on a smaller file.`;
+        }
+        const content = await fs.readFile(absolutePath, 'utf8');
         const lines = content.split(/\r?\n/);
         const totalLines = lines.length;
 

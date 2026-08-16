@@ -388,11 +388,23 @@ export async function initializeSemanticIndex(
     options.onWarning(warning);
     try {
       options.signal?.throwIfAborted();
-      const index = await createAndInitializeIndex(
-        options,
-        new NullEmbeddingProvider(),
-        false,
-      );
+      // Isolate the lexical fallback index in its OWN storage directory so a
+      // transient embedding failure never overwrites the persisted semantic
+      // vectors from a previous healthy run. Reusing the semantic storagePath
+      // with a NullEmbeddingProvider index would discard that state and force
+      // a full re-embed on the next healthy run for no benefit.
+      const index = new SemanticIndex({
+        maxChunkChars: options.config.indexing?.maxChunkChars ?? 4000,
+        provider: new NullEmbeddingProvider(),
+        rootPath: options.targetPath,
+        semanticSearchEnabled: false,
+        storagePath: path.join(
+          options.targetPath,
+          '.shadow-auditor',
+          'semantic-index-lexical-fallback',
+        ),
+      });
+      await index.initialize();
       const stats = await index.indexRepository(undefined, options.signal);
       reportIndexingResult(options, index, stats);
       return {index, tools: await createRetrievalTools(options, index)};

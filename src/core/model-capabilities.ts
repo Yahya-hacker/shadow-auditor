@@ -186,7 +186,7 @@ const CAPABILITY_RULES: CapabilityRule[] = [
       supportsLongOutput: true,
       supportsReasoningMode: true,
     },
-    modelPattern: /gpt-5\.(2|1)(-codex)?/i,
+    modelPattern: /gpt-5\.(?:1|2)(?:-codex)?(?!-mini)/i,
     provider: 'openai',
   },
   {

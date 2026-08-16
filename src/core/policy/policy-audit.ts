@@ -85,6 +85,18 @@ export const policyAuditStatsSchema = z.object({
 
 export type PolicyAuditStats = z.infer<typeof policyAuditStatsSchema>;
 
+/**
+ * Extract the numeric sequence suffix from a policy audit entry id like
+ * `<runId>-policy-0042`. Unknown/foreign shapes yield 0.
+ */
+function entrySequence(id: string, runId: string): number {
+  const prefix = `${runId}-policy-`;
+  if (!id.startsWith(prefix)) return 0;
+  const suffix = id.slice(prefix.length);
+  const parsed = Number.parseInt(suffix, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 // =============================================================================
 // Audit Manager
 // =============================================================================
@@ -280,25 +292,33 @@ export class PolicyAuditManager extends EventEmitter {
       const content = await fs.readFile(auditPath, 'utf-8');
       const lines = content.trim().split('\n').filter(Boolean);
       
-      for (const line of lines) {
-        try {
-          const parsed = JSON.parse(line);
-          const entry = policyAuditEntrySchema.parse(parsed);
-          this.entries.set(entry.id, entry);
-        } catch (error) {
-          logToStderr(
-            `[PolicyAuditManager] Skipping invalid audit entry: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
+        let maxSequence = 0;
+        for (const line of lines) {
+          try {
+            const parsed = JSON.parse(line);
+            const entry = policyAuditEntrySchema.parse(parsed);
+            this.entries.set(entry.id, entry);
+            const sequence = entrySequence(entry.id, this.runId);
+            if (sequence > maxSequence) maxSequence = sequence;
+          } catch (error) {
+            logToStderr(
+              `[PolicyAuditManager] Skipping invalid audit entry: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+        }
+
+        // Seed the counter from the loaded log so newly created entries never
+        // reuse an id that is still present in the map (which would silently
+        // overwrite the earlier decision).
+        this.entryCount = maxSequence;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw error;
         }
       }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw error;
-      }
     }
-  }
   
   /**
    * Record a command policy decision.

@@ -297,7 +297,7 @@ export function parseMarkdown(raw: string, streaming: boolean): Block[] {
 
 // ── Inline parser ────────────────────────────────────────────────────────────
 
-function parseInline(raw: string, streaming: boolean): InlineSegment[] {
+export function parseInline(raw: string, streaming: boolean): InlineSegment[] {
   const segments: InlineSegment[] = [];
   let i = 0;
   let textBuf = '';
@@ -324,6 +324,25 @@ function parseInline(raw: string, streaming: boolean): InlineSegment[] {
       textBuf += raw[i];
       i++;
       continue;
+    }
+
+    // ── Bold-italic *** or ___ (triple) ───────────────────────────────────
+    // Must be checked BEFORE bold ** and italic *: for `***x***` the bold
+    // branch would otherwise match the first two stars as an opener and the
+    // first two stars of the closer, leaving a dangling trailing star and
+    // mis-rendering `*x*` as the bold body.
+    if ((raw[i] === '*' && raw[i + 1] === '*' && raw[i + 2] === '*') ||
+        (raw[i] === '_' && raw[i + 1] === '_' && raw[i + 2] === '_')) {
+      const marker = raw.slice(i, i + 3);
+      const closeIdx = raw.indexOf(marker, i + 3);
+      if (closeIdx !== -1) {
+        flushText();
+        segments.push({ text: raw.slice(i + 3, closeIdx), type: 'bold' });
+        i = closeIdx + 3;
+        continue;
+      }
+      // Unclosed triple marker: fall through and let the single/bold branches
+      // handle it as literal text.
     }
 
     // ── Bold ** or __ ──────────────────────────────────────────────────────
@@ -376,7 +395,19 @@ function parseInline(raw: string, streaming: boolean): InlineSegment[] {
     if (raw[i] === '[') {
       const closeBracket = raw.indexOf(']', i + 1);
       if (closeBracket !== -1 && raw[closeBracket + 1] === '(') {
-        const closeParen = raw.indexOf(')', closeBracket + 2);
+        // Scan for the matching close paren. depth starts at 1 to account for
+        // the link's own opening paren, so a balanced paren *inside* the URL
+        // (e.g. `http://host/a(b)`) still lands us back at depth 1 instead of
+        // being mistaken for the link's closing paren.
+        let depth = 1;
+        let closeParen = -1;
+        for (let j = closeBracket + 2; j < raw.length; j++) {
+          if (raw[j] === '(') depth++;
+          else if (raw[j] === ')') {
+            depth--;
+            if (depth === 0) { closeParen = j; break; }
+          }
+        }
         if (closeParen !== -1) {
           flushText();
           const linkText = raw.slice(i + 1, closeBracket);

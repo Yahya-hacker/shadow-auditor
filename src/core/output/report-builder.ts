@@ -77,6 +77,33 @@ export class ReportBuilder {
   }> = [];
   private startTime: number = Date.now();
   
+  /**
+   * Deterministic dedup fingerprint derived from the finding's *content*,
+   * not the LLM-supplied `/vulnId/`. The LLM often emits short, collision-prone
+   * IDs (e.g. `SHADOW-CWE-079-x`) that coincidentally collide across genuinely
+   * distinct findings, which would otherwise be silently dropped. Two findings
+   * only collapse here when they share CWE, title, file and line, i.e. they are
+   * the same finding re-submitted, not merely similar-looking.
+   */
+  private dedupKey(f: EnhancedFinding): string {
+    const primary = f.locations[0];
+    const file = primary?.filePath ?? '';
+    const line = primary?.startLine ?? 0;
+    const sinkFile = f.dataFlowPath?.find((s) => s.isSink)?.location.filePath ?? file;
+    return crypto
+      .createHash('sha256')
+      .update(
+        [
+          f.cwe,
+          f.title,
+          file,
+          String(line),
+          sinkFile,
+        ].join('\u0000'),
+      )
+      .digest('hex');
+  }
+  
   constructor(options: ReportBuilderOptions) {
     this.options = {
       branch: undefined,
@@ -138,13 +165,15 @@ export class ReportBuilder {
       validFinding.confidence = verification.confidence;
     }
     
-    // Check for duplicates
-    if (this.findingIds.has(validFinding.vulnId)) {
-      this.rejectedFindings.push({ finding, reason: 'Duplicate vulnId' });
+    // Check for duplicates via deterministic content fingerprint. Distinct
+    // findings that merely share an LLM-generated `/vulnId/` must NOT collapse.
+    const key = this.dedupKey(validFinding);
+    if (this.findingIds.has(key)) {
+      this.rejectedFindings.push({ finding, reason: 'Duplicate finding content' });
       return { added: false, reason: 'Duplicate finding' };
     }
 
-    this.findingIds.add(validFinding.vulnId);
+    this.findingIds.add(key);
     
     this.findings.push(validFinding);
     return { added: true };

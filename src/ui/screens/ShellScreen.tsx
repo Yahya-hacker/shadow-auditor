@@ -123,7 +123,10 @@ function dispatchFocusKey(evt: KeyEvent): void {
 
   // Search mode only intercepts Escape
   if (state.searchActive) {
-    if (evt.key === 'Escape') state.setSearchActive(false);
+    if (evt.key === 'Escape') {
+      state.setSearchActive(false);
+      state.setSearchQuery('');
+    }
     return;
   }
 

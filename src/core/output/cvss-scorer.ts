@@ -26,7 +26,7 @@ const METRIC_VALUES: Record<MetricKey, Record<string, number>> = {
   AV: { A: 0.62, L: 0.55, N: 0.85, P: 0.2 },
   C:  { H: 0.56, L: 0.22, N: 0 },
   I:  { H: 0.56, L: 0.22, N: 0 },
-  PR: { H: 0.27, L: 0.68, N: 0.85 },
+  PR: { H: 0.27, L: 0.62, N: 0.85 },
   S:  { C: 1, U: 0 },   // Scope: Changed=1, Unchanged=0 (used as flag)
   UI: { N: 0.85, R: 0.62 },
 };

@@ -78,9 +78,18 @@ function routedEventUpdate(state: AppState, event: AgentStreamEvent): AppStateUp
   return undefined;
 }
 
+// Monotonic disambiguator for identity-less events (status/reasoning etc.).
+// Timestamps are millisecond-grained, so a busy agent can legitimately emit
+// two distinct events within the same millisecond that share kind/stage/
+// toolName/message; without this counter they would collide on the same id
+// and silently drop the second event from the transcript. Tool events are
+// exempt because they are uniquely keyed by toolCallId below.
+let activityEventCounter = 0;
+
 function activityEventId(event: AgentStreamEvent): string {
   if (event.toolCallId) return `tool-${event.stage ?? 'unscoped'}-${event.toolCallId}`;
-  return `${event.kind}-${event.timestamp}-${event.stage ?? ''}-${event.toolName ?? ''}-${event.message}`;
+  const counter = activityEventCounter++;
+  return `${event.kind}-${event.timestamp}-${event.stage ?? ''}-${event.toolName ?? ''}-${event.message}-${counter}`;
 }
 
 function existingActivityUpdate(
@@ -144,7 +153,8 @@ export interface ChatSlice {
   hitCount: number;
   input: string;
   messages: ChatMessageData[];
-  setHitCount: (count: number) => void;
+    restoreMessages: (messages: ChatMessageData[]) => void;
+    setHitCount: (count: number) => void;
   setInput: (input: string) => void;
   startStreaming: () => void;
   streamGeneration: number;
@@ -232,7 +242,15 @@ export const createChatSlice: StateCreator<AppState, [], [], ChatSlice> = (set, 
   hitCount: 0,
   input: '',
   messages: [],
-  setHitCount: (hitCount) => set({ hitCount }),
+    restoreMessages: (messages) =>
+      set((state) => {
+        const sequence = state.timelineSequence + messages.length;
+        return {
+          messages: messages.slice(-MAX_MESSAGES),
+          timelineSequence: sequence,
+        };
+      }),
+    setHitCount: (hitCount) => set({ hitCount }),
   setInput: (input) => set({ input }),
   startStreaming: () => set((s) => ({ outputScroll: 0, streamGeneration: s.streamGeneration + 1, streaming: true, streamingText: '' })),
   streamGeneration: 0,

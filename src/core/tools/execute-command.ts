@@ -22,7 +22,7 @@ interface CommandResult {
   stdout: string;
 }
 
-function parsePipeline(command: string): string[][] {
+export function parsePipeline(command: string): string[][] {
   const pipeline: string[][] = [];
   let args: string[] = [];
   let token = '';
@@ -44,17 +44,23 @@ function parsePipeline(command: string): string[][] {
     args = [];
   };
 
-  for (let index = 0; index < command.length; index++) {
-    const character = command[index]!;
-    if (character === '\\' && quote !== "'") {
-      const next = command[index + 1];
-      if (next === undefined) throw new Error('Command contains a dangling escape.');
-      token += next;
-      tokenStarted = true;
-      index++;
+  // On POSIX, backslash is a shell escape and escapes must be re-validated so
+    // they cannot conceal host paths (e.g. `\/etc` collapses back to `/etc`).
+    // On Windows, backslash is a literal path separator (C:\repo\file) and this
+    // tool executes via spawn-array (no shell), so it must not be stripped.
+    const backslashEscapes = process.platform !== 'win32';
 
-      continue;
-    }
+    for (let index = 0; index < command.length; index++) {
+      const character = command[index]!;
+      if (backslashEscapes && character === '\\' && quote !== "'") {
+        const next = command[index + 1];
+        if (next === undefined) throw new Error('Command contains a dangling escape.');
+        token += next;
+        tokenStarted = true;
+        index++;
+
+        continue;
+      }
 
     if (character === "'" || character === '"') {
       if (quote === character) quote = null;

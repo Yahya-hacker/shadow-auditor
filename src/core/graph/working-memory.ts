@@ -64,7 +64,8 @@ export function updateWorkingMemory(
     : JSON.stringify(newMessage.content);
   const hitMatches = content.match(/\[Hit\][^\n]*/g) ?? [];
   const alertMatches = content.match(/\[Alert\][^\n]*/g) ?? [];
-  const cweMatches = content.match(/CWE-\d{1,4}[^\n]*/g) ?? [];
+  // Capture only the CWE token (e.g. CWE-79), not trailing prose on the line.
+    const cweMatches = content.match(/CWE-[0-9]{1,4}/g) ?? [];
   const entries: string[] = [];
   const findings = [...hitMatches, ...alertMatches].map((entry) => entry.trim());
   const auditedFiles = extractFileReferences(content);

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 /**
  * SetupScreen — provider/model/API key configuration.
  *
@@ -98,6 +98,11 @@ const azureVerbosityOptions = [
 export const SetupScreen: React.FC = () => {
   const _setScreen = useAppStore((state) => state.setScreen);
   const [step, setStep] = useState<Step>('provider');
+  // Holds the one-shot "advance to target selection" timer so it can be
+  // cancelled if the component unmounts before it fires — prevents a stale
+  // timer from forcing a screen change during shutdown/unmount.
+  const navigateTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => { if (navigateTimer.current) clearTimeout(navigateTimer.current); }, []);
   const [provider, setProvider] = useState('');
   const [customBaseUrl, setCustomBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -419,7 +424,7 @@ export const SetupScreen: React.FC = () => {
       const s = useAppStore.getState();
       s.setConfig(freshCfg);
       setStep('done');
-      setTimeout(() => s.setScreen('target'), 1500);
+            navigateTimer.current = setTimeout(() => s.setScreen('target'), 1500);
     } catch (error_) {
       setError(error_ instanceof Error ? error_.message : String(error_));
     }

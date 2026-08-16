@@ -88,6 +88,14 @@ export function useHandleSubmit(): (command: string) => void {
       return;
     }
 
+    // The agent session may briefly be null during startup. Guard so a submit
+    // before readiness surfaces a visible error instead of a silent no-op.
+    const session = agentSessionRef.current;
+    if (!session) {
+      displayError(new Error('The agent session is not ready yet. Wait for the shell to initialize and try again.'));
+      return;
+    }
+
     const store = useAppStore.getState();
     store.setSessionPhase('ready');
     const currentRequest = store.humanInputRequest;
@@ -107,7 +115,7 @@ export function useHandleSubmit(): (command: string) => void {
           answer = trimmed;
         }
 
-        const finalAnswer = await agentSessionRef.current?.resumeWithHumanInput(answer, stream.onChunk, stream.onEvent);
+        const finalAnswer = await session.resumeWithHumanInput(answer, stream.onChunk, stream.onEvent);
         stream.finish();
         useAppStore.getState().setHumanInputRequest(null);
         useAppStore.getState().finishStreaming(finalAnswer);
@@ -128,7 +136,7 @@ export function useHandleSubmit(): (command: string) => void {
 
     const stream = createThrottledStream();
     try {
-      const finalAnswer = await agentSessionRef.current?.sendMessage(trimmed, stream.onChunk, stream.onEvent);
+      const finalAnswer = await session.sendMessage(trimmed, stream.onChunk, stream.onEvent);
       stream.finish();
       useAppStore.getState().finishStreaming(finalAnswer);
     } catch (error) {

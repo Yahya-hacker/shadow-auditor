@@ -19,6 +19,29 @@ import { type EnhancedFinding } from '../output/finding-schema.js';
 /** Sliding window: maximum messages to keep in context. */
 export const MAX_CONTEXT_MESSAGES = 40;
 
+/**
+ * A confirmed claim the reporter already recorded, keyed by its `sourceClaimId`.
+ *
+ * The reporting stage must record each confirmed claim exactly once: recording a
+ * claim twice, or finishing with one outstanding, both fail the audit closed.
+ * Deriving that record from `messages` alone is unsafe because the sliding
+ * window above evicts older reporting exchanges on audits with many findings, so
+ * the record is kept in durable state instead. `callId` distinguishes replaying
+ * an already-counted exchange from a genuine duplicate report.
+ *
+ * IMPORTANT: `sourceClaimId`s (e.g. `VULN-001`) are assigned per audit run, so a
+ * fresh run reusing this thread (`session_main`) is expected to collide with IDs
+ * from a prior, already-completed run. The reducer for this channel therefore
+ * REPLACES rather than merges — every writer (`reporterEvidence`) always passes
+ * the complete accumulated record for the current run, and a fresh run explicitly
+ * resets it to `{}`. A merge reducer would let stale entries from a finished run
+ * leak into the next one and falsely trip the "recorded more than once" guard.
+ */
+export interface RecordedClaim {
+  callId: string;
+  finding: EnhancedFinding;
+}
+
 type KnowledgeGraphState = Record<string, unknown>;
 type MemoryEntry = Record<string, unknown>;
 type StoreValue = Record<string, unknown>;
@@ -263,6 +286,12 @@ export const AgentState = Annotation.Root({
   }),
   pipelineReport: Annotation<string>({
     default: () => '',
+    reducer: (_state, update) => update,
+  }),
+  // Replace, not merge — see the RecordedClaim doc comment above for why a
+  // merge reducer would let a finished run's claims leak into the next one.
+  recordedClaims: Annotation<Record<string, RecordedClaim>>({
+    default: () => ({}),
     reducer: (_state, update) => update,
   }),
   reflectorRetryCount: Annotation<number>({

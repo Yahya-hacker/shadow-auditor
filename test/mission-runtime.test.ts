@@ -154,6 +154,16 @@ describe('MissionEngine runtime accounting', () => {
     expect(resumed.getState().budget.toolCallsUsed).to.equal(2);
   });
 
+  it('releases a checkpoint-only model reservation that never reached usage', async () => {
+    const engine = await createEngine();
+    await engine.beforeModelInvocation({stage: 'sast_audit'});
+    expect(Object.keys(engine.getState().budget.modelReservations)).to.have.length(1);
+
+    const resumed = await createEngine();
+    expect(resumed.getState().budget.modelReservations).to.deep.equal({});
+    expect(resumed.getState().budget.tokensUsed).to.equal(0);
+    expect(resumed.getRemainingBudget().tokens).to.equal(100);
+  });
   it('reconciles durable usage when a crash precedes the updated checkpoint', async () => {
     const engine = await createEngine();
     const reservationId = await engine.beforeModelInvocation({stage: 'sast_audit'});
@@ -499,7 +509,26 @@ describe('MissionEngine runtime accounting', () => {
     expect((restoreError as Error).message).to.include('Failed to restore mission checkpoint');
   });
 
-  it('does not publish tool-call events when the pre-execution checkpoint fails', async () => {
+  it('#5 releases a completed tool reservation after successful execution', async () => {
+    const engine = await createEngine();
+    const invocation = {
+      executionId: 'response-7',
+      stage: 'sast_audit',
+    };
+    const calls = [{callId: 'call-9', name: 'read_file'}];
+
+    await engine.beforeToolExecution(invocation, calls);
+    expect(engine.getState().budget.reservedToolCallIds).to.have.length(1);
+    expect(engine.getState().budget.toolCallsUsed).to.equal(1);
+
+    await engine.afterToolExecution(
+      invocation,
+      [{callId: 'call-9', name: 'read_file', succeeded: true}],
+    );
+
+    expect(engine.getState().budget.reservedToolCallIds).to.deep.equal([]);
+    expect(engine.getState().budget.toolCallsUsed).to.equal(1);
+  });  it('does not publish tool-call events when the pre-execution checkpoint fails', async () => {
     const engine = await createEngine();
     engine.saveCheckpoint = async () => {
       throw new Error('checkpoint unavailable');

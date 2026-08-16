@@ -31,7 +31,13 @@ export class ConsensusManager {
   constructor(options: ConsensusManagerOptions = {}) {
     this.defaultQuorum = options.defaultQuorum ?? 2;
     this.defaultTimeout = options.defaultTimeout ?? 60_000; // 1 minute
-    this.trustThreshold = options.trustThreshold ?? 0.7;
+    // Default threshold aligned with the lowest *participating* model tier
+    // (`local` agents have trustScore 0.5). Using 0.7 here made every local
+    // verifier ineligible (0.5 < 0.7), so consensus could never be reached in
+    // the common self-hosted/Ollama default configuration - a silent dead end.
+    // 0.5 keeps ultra-low-trust votes (e.g. 0.2) gated out while letting local
+    // agents participate.
+    this.trustThreshold = options.trustThreshold ?? 0.5;
   }
 
   /**

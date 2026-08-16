@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { createRemediationTools } from '../src/core/remediation/remediation-tools.js';
 import { RemediationLoop } from '../src/core/remediation/remediation-loop.js';
 import { type TestFingerprint, TestRunner } from '../src/core/remediation/test-runner.js';
 
@@ -772,7 +773,60 @@ describe('remediation', () => {
   });
 });
 
-const targetPatch = `diff --git a/target.txt b/target.txt
+  describe('createRemediationTools', () => {
+    it('reports applied_unrecorded when the audit write fails after a successful apply', async () => {
+      const validation = {
+        findingId: 'finding-1',
+        patchHash: 'hash-1',
+        sourceFingerprint: 'fp-1',
+        testResult: {
+          command: 'npm test',
+          degraded: false,
+          durationMs: 1,
+          exitCode: 0,
+          framework: 'npm',
+          newFailures: [],
+          passed: true,
+          resolvedFailures: [],
+          stderr: '',
+          stdout: 'ok',
+        },
+        token: 'token-1',
+      };
+      const applyCalls: string[] = [];
+      const recordDecision = async () => {
+        throw new Error('disk full');
+      };
+      const fakeLoop = {
+        applyValidatedPatch: async (token: string) => {
+          applyCalls.push(token);
+        },
+        discardValidation: () => undefined,
+        recordDecision,
+        validatePatch: async () => validation,
+      };
+
+      const tools = createRemediationTools({
+        confirmPatch: async () => ({ action: 'apply' as const }),
+        projectRoot: '/tmp/fake',
+        remediationLoop: fakeLoop as unknown as RemediationLoop,
+        testRunner: {} as TestRunner,
+      });
+      const tool = tools.apply_and_test_patch as {
+        execute: (input: { diff: string; findingId: string }, options: unknown) => Promise<unknown>;
+      };
+
+      const raw = await tool.execute({ diff: targetPatch, findingId: 'finding-1' }, {});
+      const result = JSON.parse(String(raw)) as Record<string, unknown>;
+
+      expect(applyCalls).to.deep.equal(['token-1']);
+      expect(result.status).to.equal('applied_unrecorded');
+      expect(result.recordError).to.equal('disk full');
+      expect(result.testPassed).to.equal(true);
+    });
+  });
+
+  const targetPatch = `diff --git a/target.txt b/target.txt
 index 90be1f3..3b18e51 100644
 --- a/target.txt
 +++ b/target.txt

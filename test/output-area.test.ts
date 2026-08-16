@@ -112,7 +112,24 @@ describe('OutputArea activity filtering', () => {
     expect(useAppStore.getState().activity).to.have.length(1);
   });
 
-  it('uses structured finding IDs instead of presentation labels', () => {
+  it('#19 keeps two identity-less events that share kind/timestamp/message distinct', () => {
+    const store = useAppStore.getState();
+    store.clearActivity();
+    const base = {
+          kind: 'agent_progress',
+      message: 'Reasoning about taint propagation',
+      stage: 'sast_audit',
+      timestamp: '12:00:00',
+        } as const;
+    store.addActivityEvent({...base});
+    store.addActivityEvent({...base});
+
+    const activity = useAppStore.getState().activity;
+    expect(activity).to.have.length(2);
+    const ids = new Set(activity.map((item) => item.id));
+    expect(ids.size).to.equal(2);
+    expect(activity.every((item) => item.text === 'Reasoning about taint propagation')).to.equal(true);
+  });  it('uses structured finding IDs instead of presentation labels', () => {
     const finding = {
       agent: 'SAST Auditor',
       id: 'finding',

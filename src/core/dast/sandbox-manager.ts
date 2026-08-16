@@ -148,6 +148,25 @@ export class SandboxManager {
       });
       signal?.throwIfAborted();
 
+      // Pre-populate the workspace with the host's dependency directories
+      // (node_modules, .venv, venv, vendor/bundle) by copying them in, rather
+      // than bind-mounting them read-only. Read-only host bind mounts (a) let
+      // the target see but never modify its deps (breaks installs/writes) and
+      // (b) leak a host filesystem reference that outlives the disposable
+      // workspace. Copying into the workspace keeps the container fully
+      // self-contained and writable, while preserving the symlink-escape
+      // protection in discoverDependencyMounts (realpath + relative checks).
+      for (const dependencyMount of await discoverDependencyMounts(absTargetPath)) {
+        const workspaceRelative = dependencyMount.containerPath.replace(/^\/app\/?/, '');
+        if (workspaceRelative) {
+          await fs.cp(dependencyMount.hostPath, path.join(workspacePath, workspaceRelative), {
+            dereference: true,
+            recursive: true,
+          });
+        }
+      }
+      signal?.throwIfAborted();
+
       // 1. Create the internal Docker network
       const networkResult = await this.dockerExec(
         ['network', 'create', '--internal', this.networkName],
@@ -178,8 +197,13 @@ export class SandboxManager {
         '--cpus', this.options.cpuLimit,
         '-v', `${workspacePath}:/app:rw`,
       ];
-      for (const dependencyMount of await discoverDependencyMounts(absTargetPath)) {
-        createArgs.push('-v', `${dependencyMount.hostPath}:${dependencyMount.containerPath}:ro`);
+      // Point the target's DNS at Mirage so OAST payloads to *.shadow.local
+      // resolve on the --internal network (Docker's embedded DNS only resolves
+      // container names; unqualified names are forwarded to this server).
+      // If IP discovery failed, fall back to Docker defaults.
+      const mirageIP = this.mirage.getContainerIP();
+      if (mirageIP) {
+        createArgs.push('--dns', mirageIP);
       }
 
       createArgs.push(
@@ -314,9 +338,20 @@ export class SandboxManager {
       timestamp: new Date().toISOString(),
     };
 
-    this.executionLog.push(execResult);
+    this.pushExecutionLog(execResult);
     return execResult;
   }
+
+      // Ring-buffer cap: a long-lived DAST session can run many commands; keeping
+      // every result in memory is unnecessary since the report only needs the tail.
+      // The oldest entries are dropped once the cap is reached.
+      private pushExecutionLog(entry: SandboxExecResult): void {
+        const MAX_LOG_ENTRIES = 500;
+        if (this.executionLog.length >= MAX_LOG_ENTRIES) {
+          this.executionLog.shift();
+        }
+        this.executionLog.push(entry);
+      }
 
   /**
    * Get the full execution log (used by the report generator for verbatim PoC).

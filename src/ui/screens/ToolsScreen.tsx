@@ -53,18 +53,49 @@ export const ToolsScreen: React.FC = () => {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const session = agentSessionRef.current;
-    if (!session) {
-      setLoadError('Tool configuration is unavailable because the agent session is not initialized.');
-      return;
-    }
+      // Retry until the agent session becomes available. The ref identity is
+      // stable across renders, so a mount-before-init session would otherwise
+      // leave a permanent "unavailable" error with no retry.
+      let disposed = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
 
-    session.getToolPolicySnapshot()
-      .then(setSnapshot)
-      .catch((error: unknown) => {
-        setLoadError((error as Error).message);
-      });
-  }, [agentSessionRef]);
+      const load = () => {
+        const session = agentSessionRef.current;
+        if (!session) {
+          return false;
+        }
+        session.getToolPolicySnapshot()
+          .then((s) => {
+            if (!disposed) {
+              setSnapshot(s);
+              setLoadError(undefined);
+            }
+          })
+          .catch((error: unknown) => {
+            if (disposed) return;
+            // A snapshot that fails after the session exists is a real error —
+            // surface it, but only once; don't retry a failing session forever.
+            setLoadError((error as Error).message);
+          });
+        return true;
+      };
+
+      if (!load()) {
+        // No session yet: poll until it initializes.
+        const poll = () => {
+          if (disposed) return;
+          if (load()) {
+            if (timer) clearInterval(timer);
+          }
+        };
+        timer = setInterval(poll, 1500);
+      }
+
+      return () => {
+        disposed = true;
+        if (timer) clearInterval(timer);
+      };
+    }, [agentSessionRef]);
 
   const agent = snapshot?.agents[agentIndex];
   const selectedTool = agent?.tools[toolIndex];

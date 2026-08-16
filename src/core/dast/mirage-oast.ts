@@ -17,6 +17,7 @@ import { execFile } from 'node:child_process';
 import * as crypto from 'node:crypto';
 
 import { type OastCallback } from './dast-schema.js';
+import { buildDnsAResponse } from './dns-response.js';
 
 // =============================================================================
 // Validation
@@ -53,17 +54,26 @@ export interface MirageOASTOptions {
  */
 export class MirageOAST {
   private readonly callbackLog: OastCallback[] = [];
+  private callbackOverflow = false;
   private containerName: string;
+  private readonly managementToken: string;
   private readonly dockerExecutor: typeof execFile;
   private readonly networkName: string;
   private readonly runId: string;
   private running = false;
+  private containerIP: string | null = null;
 
   constructor(options: MirageOASTOptions) {
     this.runId = validateSafeIdentifier(options.runId, 'runId');
     this.networkName = validateSafeIdentifier(options.networkName, 'networkName');
     this.containerName = `mirage-oast-${this.runId}`;
     this.dockerExecutor = options.dockerExecutor ?? execFile;
+    // Unguessable secret that gates the in-container management endpoint. The
+    // sandbox target is untrusted code on the same Docker network; without this
+    // it could read the callback log (steal OAST tokens / fabricate proof) or
+    // wipe evidence. The token is embedded in the container's node -e script,
+    // which the target container cannot inspect.
+    this.managementToken = crypto.randomBytes(16).toString('hex');
   }
 
   /**
@@ -71,6 +81,7 @@ export class MirageOAST {
    */
   clearLog(): void {
     this.callbackLog.length = 0;
+    this.callbackOverflow = false;
   }
 
   /**
@@ -101,6 +112,14 @@ export class MirageOAST {
     return [...this.callbackLog];
   }
 
+    /**
+       * Whether any callback was evicted from the ring buffer (a signal that the
+       * session is producing more OAST traffic than the in-memory cap retains).
+       */
+      hasCallbackOverflow(): boolean {
+        return this.callbackOverflow;
+      }
+
   /**
    * Get callbacks for a specific domain.
    */
@@ -121,6 +140,14 @@ export class MirageOAST {
   getContainerName(): string {
     return this.containerName;
   }
+  /**
+   * Get the container's IP address (discovered at start time). Used so the
+   * sandbox can pass it as `--dns` to the target container, letting the
+   * target resolve *.shadow.local back to Mirage for OAST callbacks.
+   */
+  getContainerIP(): string | null {
+    return this.containerIP;
+  }
 
   /**
    * Check if a specific OAST token was called back.
@@ -138,10 +165,17 @@ export class MirageOAST {
 
   /**
    * Record an OAST callback (called by the sandbox when polling Mirage logs).
-   */
-  recordCallback(callback: OastCallback): void {
-    this.callbackLog.push(callback);
-  }
+     * Capped as a ring buffer (oldest evicted) so an aggressively polling or
+     * long-lived session cannot grow this in memory without bound.
+     */
+    recordCallback(callback: OastCallback): void {
+      const MAX_CALLBACK_ENTRIES = 5000;
+      if (this.callbackLog.length >= MAX_CALLBACK_ENTRIES) {
+        this.callbackLog.shift();
+        this.callbackOverflow = true;
+      }
+      this.callbackLog.push(callback);
+    }
 
   /**
    * Start the Mirage OAST sidecar container.
@@ -154,12 +188,20 @@ export class MirageOAST {
   async start(signal?: AbortSignal): Promise<void> {
     if (this.running) return;
 
-    // Mirage server script — passed directly as a single argument to node -e.
-    // No shell quoting needed since execFile does NOT invoke a shell.
+    const dnsResponseFn = `\n` + buildDnsAResponse.toString() + `\n`;
+
+    // Mirage server script. Passed directly as a single argument to node -e;
+    // no shell quoting needed since execFile does NOT invoke a shell.
     const mirageScript = `
 const http = require('http');
+const dgram = require('dgram');
+const os = require('os');
 const log = [];
 
+const TOKEN = '${this.managementToken}';
+
+// buildDnsAResponse source is inlined here at runtime via ${dnsResponseFn}.
+${dnsResponseFn}
 const server = http.createServer((req, res) => {
   const entry = {
     headers: req.headers,
@@ -168,18 +210,17 @@ const server = http.createServer((req, res) => {
     url: req.url,
   };
 
-  // Management endpoint: return the log
+  // Management endpoint: return the log. Requires the unguessable token so
+  // untrusted sandbox code cannot read OAST callbacks (steal tokens or
+  // fabricate proof). The log is append-only: there is no clear endpoint.
   if (req.url === '/__mirage/log') {
+    if (req.headers['x-mirage-token'] !== TOKEN) {
+      res.writeHead(403);
+      res.end('forbidden');
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(log));
-    return;
-  }
-
-  // Management endpoint: clear the log
-  if (req.url === '/__mirage/clear') {
-    log.length = 0;
-    res.writeHead(200);
-    res.end('cleared');
     return;
   }
 
@@ -190,6 +231,28 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(8080, () => console.log('Mirage OAST listening on :8080'));
+
+// --- DNS server ---
+function getContainerIP() {
+  const ifs = os.networkInterfaces();
+  for (const name of Object.keys(ifs)) {
+    for (const iface of ifs[name] || []) {
+      if (iface.family === 'IPv4' && !iface.internal) return iface.address;
+    }
+  }
+  return '127.0.0.1';
+}
+
+const dns = dgram.createSocket('udp4');
+dns.on('message', (msg, rinfo) => {
+  try {
+    const resp = buildDnsAResponse(msg, getContainerIP());
+    if (resp) dns.send(resp, rinfo.port, rinfo.address);
+  } catch (e) {
+    // Malformed query — drop it.
+  }
+});
+dns.bind(53, '0.0.0.0', () => console.log('Mirage DNS listening on :53'));
 `.trim();
 
     const result = await this.dockerExec([
@@ -207,6 +270,23 @@ server.listen(8080, () => console.log('Mirage OAST listening on :8080'));
     }
 
     this.running = true;
+
+    // Discover the container's IP on the internal network so the sandbox can
+    // point the target's DNS at Mirage (--dns), enabling *.shadow.local OAST
+    // callbacks. Failure is non-fatal: without a discoverable IP, DNS-based
+    // payloads won't resolve, but HTTP-only OAST interactions still work.
+    try {
+      const ipResult = await this.dockerExec([
+        'inspect', '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',
+        this.containerName,
+      ], signal);
+      if (ipResult.exitCode === 0) {
+        const ip = ipResult.stdout.trim();
+        if (ip && /^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) this.containerIP = ip;
+      }
+    } catch {
+      // ignore; containerIP stays null
+    }
   }
 
   /**
@@ -218,6 +298,7 @@ server.listen(8080, () => console.log('Mirage OAST listening on :8080'));
 
     const result = await this.dockerExec([
       'exec', this.containerName, 'wget', '-qO-',
+      '--header', `x-mirage-token: ${this.managementToken}`,
       'http://localhost:8080/__mirage/log',
     ], signal);
 
@@ -244,7 +325,7 @@ server.listen(8080, () => console.log('Mirage OAST listening on :8080'));
       for (const cb of newCallbacks) {
         const key = `${cb.timestamp}:${cb.url}`;
         if (!existingKeys.has(key)) {
-          this.callbackLog.push(cb);
+                this.recordCallback(cb);
           existingKeys.add(key);
         }
       }

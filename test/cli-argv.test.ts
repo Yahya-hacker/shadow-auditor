@@ -51,4 +51,14 @@ describe('CLI argument routing', () => {
     ]);
     expect(Shell.flags.prompt).to.exist;
   });
+
+  it('routes --resume <id> to --resume-run <id>', () => {
+    expect(routeDefaultCommand(['node', 'bin/run.js', '--resume', 'run-123']))
+      .to.deep.equal(['node', 'bin/run.js', 'shell', '--resume-run', 'run-123']);
+  });
+
+  it('throws a helpful error for bare --resume when no runs exist', () => {
+    expect(() => routeDefaultCommand(['node', 'bin/run.js', '--resume']))
+      .to.throw('No previous session found to resume');
+  });
 });

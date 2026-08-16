@@ -50,18 +50,42 @@ function normalizeExtensionFilter(extension?: string): string | undefined {
 
 /**
  * Detect potentially dangerous regex patterns that could cause ReDoS
- * (Regular expression Denial of Service). Checks for nested quantifiers
- * like (a+)+, (a*)*, (a+)*, (a*)+ which exhibit exponential backtracking.
+ * (Regular expression Denial of Service).
+ *
+ * Static detection of every catastrophic pattern is undecidable in general,
+ * so this intentionally errs toward rejecting ambiguous structural shapes
+ * that are known to exhibit exponential or high-degree polynomial
+ * backtracking:
+ *
+ *   - nested quantifiers: `(a+)+`, `(a*)*`, `(a+)*`, `(a*)+`, or `a+*`/`a*+`
+ *   - a quantified group containing an alternation: `(a|b)+`, `(a|aa)*` —
+ *     when two branches can consume the same characters the engine must try
+ *     every split, which is the classic ReDoS shape
+ *
+ * These rejections are cheap, deterministic, and cover the constructs that
+ * actually hung scans (>30s on `(a|aa)+$`). A truly safe fallback for exotic
+ * patterns is unavailable here because a synchronous `RegExp.test` cannot be
+ * aborted; operators are expected to use anchored literal searches instead.
  */
-const REDOS_PATTERN =
+const REDOS_NESTED_QUANTIFIER =
   /\([^)]*?(?:\+|\*)\s*\)\s*(?:\+|\*)/;
+
+const REDOS_QUANTIFIED_ALTERNATION =
+  /\([^()]*\|[^()]*\)\s*(?:\+\??|\*\??|\{\d+,\})/;
+
+// Strip escaped characters and character classes so alternation detection does
+// not trip on legitimate uses inside classes (e.g. [a|b]).
+function stripCluster(pattern: string): string {
+  return pattern.replace(/\\[\s\S]/g, 'x').replace(/\[[^\]]*\]/g, 'x');
+}
 
 function isReDosRisk(pattern: string): boolean {
   if (pattern.length > 200) {
     return true;
   }
 
-  return REDOS_PATTERN.test(pattern);
+  const body = stripCluster(pattern);
+  return REDOS_NESTED_QUANTIFIER.test(body) || REDOS_QUANTIFIED_ALTERNATION.test(body);
 }
 
 interface FileMatch {
@@ -104,7 +128,7 @@ export function createSearchCodebaseTool(pathGuard: PathGuard) {
         const entries = await fs.readdir(directoryPath, { withFileTypes: true });
 
         for (const entry of entries) {
-          if (entry.name.startsWith('.') && entry.name !== '.env') {
+          if (entry.name.startsWith('.') && !entry.name.startsWith('.env')) {
             continue;
           }
 
@@ -132,7 +156,10 @@ export function createSearchCodebaseTool(pathGuard: PathGuard) {
             continue;
           }
 
-          if (!TEXT_EXTENSIONS.has(ext)) {
+          // `.env` and its variants have an empty extension but are explicitly
+          // exempted from the dotfile skip above; treat them as text files.
+          const isEnvFile = entry.name.startsWith('.env');
+          if (!isEnvFile && !TEXT_EXTENSIONS.has(ext)) {
             continue;
           }
 

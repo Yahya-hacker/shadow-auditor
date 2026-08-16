@@ -105,21 +105,43 @@ export function createRemediationTools(options: RemediationToolsOptions): ToolSe
             diff,
             executionOptions.abortSignal,
           );
-          await remediationLoop.recordDecision({
-            action: 'apply',
-            findingId,
-            patchHash: validation.patchHash,
-            testResult: summarizeTestResult(validation.testResult),
-            timestamp: new Date().toISOString(),
-          });
 
-          return JSON.stringify({
-            findingId,
-            status: 'applied',
-            testExitCode: validation.testResult.exitCode,
-            testNewFailures: validation.testResult.newFailures,
-            testPassed: validation.testResult.passed,
-          }, null, 2);
+                    // The patch is now in the user's tree. A record-write failure after a
+                    // successful apply must NOT be surfaced as a failed remediation — the
+                    // agent would otherwise retry the same patch onto already-modified
+                    // lines. Report a distinct status so the caller can distinguish
+                    // "patch applied, audit write failed" from "remdiation failed".
+                    let recordError: Error | undefined;
+                    try {
+                      await remediationLoop.recordDecision({
+                        action: 'apply',
+                        findingId,
+                        patchHash: validation.patchHash,
+                        testResult: summarizeTestResult(validation.testResult),
+                        timestamp: new Date().toISOString(),
+                      });
+                    } catch (error) {
+                      recordError = error instanceof Error ? error : new Error(String(error));
+                    }
+
+                    if (recordError) {
+                      return JSON.stringify({
+                        findingId,
+                        status: 'applied_unrecorded',
+                        recordError: recordError.message,
+                        testExitCode: validation.testResult.exitCode,
+                        testNewFailures: validation.testResult.newFailures,
+                        testPassed: validation.testResult.passed,
+                      }, null, 2);
+                    }
+
+                    return JSON.stringify({
+                      findingId,
+                      status: 'applied',
+                      testExitCode: validation.testResult.exitCode,
+                      testNewFailures: validation.testResult.newFailures,
+                      testPassed: validation.testResult.passed,
+                    }, null, 2);
         } catch (error) {
           executionOptions.abortSignal?.throwIfAborted();
           return `[ERROR] Remediation failed: ${error instanceof Error ? error.message : String(error)}`;

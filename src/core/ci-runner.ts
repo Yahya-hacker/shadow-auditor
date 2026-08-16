@@ -148,6 +148,14 @@ export async function runCiAudit(
       },
     };
   } finally {
-    await session.dispose();
+      // Dispose must never mask the original result/error: a dispose failure is
+      // logged and swallowed, and the primary outcome (return value or thrown
+      // error from the try body) is preserved for the CI caller.
+      try {
+        await session.dispose();
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Warning: failed to dispose audit session:', error);
+      }
+    }
   }
-}

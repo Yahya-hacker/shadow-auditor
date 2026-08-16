@@ -414,7 +414,7 @@ export class SemanticIndex {
     // Search vector store
     const vectorResults = this.vectorStore.search(queryEmbedding, {
       filter: Object.keys(filter).length > 0 ? filter : undefined,
-      minScore: options.minScore ?? -1,
+      minScore: options.minScore ?? 0,
       predicate: options.fileFilter
         ? (metadata) => typeof metadata.filePath === 'string' &&
           metadata.filePath.includes(options.fileFilter!)

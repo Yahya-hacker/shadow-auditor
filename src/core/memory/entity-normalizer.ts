@@ -75,7 +75,7 @@ export function vulnerabilityCanonicalId(
     cwe,
     sinkCanonicalId: sinkId ?? 'none',
     sourceCanonicalId: sourceId ?? 'none',
-    titleHash: crypto.createHash('sha256').update(title).digest('hex').slice(0, 8),
+    titleHash: crypto.createHash('sha256').update(title).digest('hex').slice(0, 16),
   });
 }
 
@@ -111,7 +111,27 @@ export function normalizePath(filePath: string): string {
   // Normalize multiple slashes
   normalized = normalized.replaceAll(/\/+/g, '/');
 
-  return normalized;
+  // Collapse . and .. segments so 'src/../core/x.ts' and 'core/x.ts' hash to
+  // the same file entity. Absent this, pathologically-built paths produce
+  // distinct canonical IDs for one physical file, fragmenting the graph.
+  const segments = normalized.split('/');
+  const resolved: string[] = [];
+  for (const segment of segments) {
+    if (segment === '.' || segment === '') continue;
+    if (segment === '..') {
+      if (resolved.length > 0 && resolved[resolved.length - 1] !== '..') {
+        resolved.pop();
+      } else if (resolved.length === 0) {
+        // Leading .. escapes the root; keep it as-is so a path that resolves
+        // outside the tree stays distinguishable from one inside it.
+        resolved.push(segment);
+      }
+      continue;
+    }
+    resolved.push(segment);
+  }
+
+  return resolved.join('/');
 }
 
 /**

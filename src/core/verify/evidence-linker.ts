@@ -210,10 +210,15 @@ export class EvidenceLinker {
       coverage += 0.25; // No intermediates required
     }
 
-    // Check edges exist
+    // Check edges exist. A data-flow finding is only evidence-linked when an
+    // actual graph path connects source to sink; entity existence alone must not
+    // satisfy the gate, otherwise a finding with zero connecting path is treated
+    // as a confirmed injection.
+    let pathFound = false;
     if (source && sink) {
       const paths = this.graph.findPaths(sourceId, sinkId, 10);
       if (paths.length > 0) {
+        pathFound = true;
         coverage += 0.25;
       } else {
         gaps.push('No path found between source and sink in knowledge graph');
@@ -223,7 +228,7 @@ export class EvidenceLinker {
     return {
       coverage,
       gaps,
-      hasPath: coverage >= 0.75,
+      hasPath: pathFound && coverage >= 0.75,
     };
   }
 

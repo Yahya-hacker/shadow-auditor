@@ -34,6 +34,15 @@ function cancellableDockerExecutor(
   return {};
 }
 
+function ipForInspect(args: readonly string[]): string | null {
+  // The IP-inspect uses `--format '{{range .NetworkSettings...}}'`; the
+  // running-state inspect uses `--format '{{.State.Running}}'`.
+  if (args[0] === 'inspect' && args[1] === '--format' && String(args[2]).includes('{{range')) {
+    return '172.18.0.2\n';
+  }
+  return null;
+}
+
 function createRecordingDockerExecutor(calls: string[][]): typeof execFile {
   const executor = (
     _file: string,
@@ -42,7 +51,8 @@ function createRecordingDockerExecutor(calls: string[][]): typeof execFile {
     callback: (error: Error | null, stdout: string, stderr: string) => void,
   ) => {
     calls.push([...args]);
-    callback(null, args[0] === 'inspect' ? 'true\n' : '', '');
+    const ip = ipForInspect(args);
+    callback(null, ip ?? (args[0] === 'inspect' ? 'true\n' : ''), '');
     return {};
   };
 
@@ -55,7 +65,8 @@ function immediatelyExitedDockerExecutor(
   _options: object,
   callback: (error: Error | null, stdout: string, stderr: string) => void,
 ): object {
-  callback(null, args[0] === 'inspect' ? 'false\n' : '', '');
+  const ip = ipForInspect(args);
+  callback(null, ip ?? (args[0] === 'inspect' ? 'false\n' : ''), '');
   return {};
 }
 
@@ -67,8 +78,8 @@ function failedDeployDockerExecutor(
 ): object {
   const failedDeploy = args[0] === 'exec' && args.at(-1) === 'npm start';
   const error = failedDeploy ? Object.assign(new Error('deploy failed'), { code: 7 }) : null;
-
-  callback(error, args[0] === 'inspect' ? 'true\n' : '', failedDeploy ? 'deploy failed' : '');
+  const ip = ipForInspect(args);
+  callback(error, ip ?? (args[0] === 'inspect' ? 'true\n' : ''), failedDeploy ? 'deploy failed' : '');
   return {};
 }
 
@@ -194,6 +205,27 @@ describe('DAST subsystem', () => {
       expect(mirage.getCallbackLog()).to.have.length(0);
     });
 
+        it('caps the callback log as a ring buffer and flags overflow', () => {
+          const mirage = new MirageOAST({ networkName: 'shadow-net-test', runId: 'test-run' });
+
+          // Push well past the 5000-entry cap.
+          const total = 5200;
+          for (let i = 0; i < total; i++) {
+            mirage.recordCallback({
+              headers: {},
+              method: 'GET',
+              timestamp: new Date().toISOString(),
+              url: `http://oast-${String(i).padStart(4, '0')}.shadow.local/x`,
+            });
+          }
+
+          // Ring buffer retained only the newest entries.
+          expect(mirage.getCallbackLog()).to.have.length(5000);
+          expect(mirage.hasCallback('oast-0000')).to.equal(false);
+          expect(mirage.hasCallback('oast-5199')).to.equal(true);
+          expect(mirage.hasCallbackOverflow()).to.equal(true);
+        });
+
     it('should generate unique tokens', () => {
       const mirage = new MirageOAST({ networkName: 'shadow-net-test', runId: 'test-run' });
 
@@ -221,6 +253,24 @@ describe('DAST subsystem', () => {
       await mirage.destroy();
 
       expect(calls).to.deep.equal([['rm', '-f', 'mirage-oast-cancelled-start']]);
+    });
+
+    it('gates the OAST log endpoint behind an unguessable token', async () => {
+      const calls: string[][] = [];
+      const mirage = new MirageOAST({
+        dockerExecutor: createRecordingDockerExecutor(calls),
+        networkName: 'shadow-net-test',
+        runId: 'token-gated',
+      });
+
+      await mirage.start();
+      await mirage.syncLog();
+
+      const execCall = calls.find((args) => args[0] === 'exec');
+      expect(execCall).to.be.an('array');
+      const headerIdx = execCall!.indexOf('--header');
+      expect(headerIdx).to.be.greaterThan(-1);
+      expect(execCall![headerIdx + 1]).to.match(/^x-mirage-token: [a-f0-9]{32}$/);
     });
   });
 
@@ -318,27 +368,37 @@ describe('DAST subsystem', () => {
       }
     });
 
-    it('mounts existing dependency directories read-only into the sandbox', async () => {
+    it('pre-populates dependency directories into the workspace and adds Mirage DNS', async () => {
       const calls: string[][] = [];
       const targetPath = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-dast-deps-'));
       await fs.mkdir(path.join(targetPath, 'node_modules'));
-      const manager = new SandboxManager({
-        dockerExecutor: createRecordingDockerExecutor(calls),
-        runId: 'test-dependencies',
-        targetPath,
-      });
+          await fs.writeFile(path.join(targetPath, 'node_modules', 'dep.txt'), 'x');
+          const manager = new SandboxManager({
+            dockerExecutor: createRecordingDockerExecutor(calls),
+            runId: 'test-dependencies',
+            targetPath,
+          });
 
-      try {
-        await manager.create();
-        const createCall = calls.find((args) => args[0] === 'create') ?? [];
-        expect(createCall).to.include(
-          `${path.join(targetPath, 'node_modules')}:/app/node_modules:ro`,
-        );
-      } finally {
-        await manager.destroy();
-        await fs.rm(targetPath, { force: true, recursive: true });
-      }
-    });
+          try {
+            await manager.create();
+            const createCall = calls.find((args) => args[0] === 'create') ?? [];
+            // Host dependencies are copied into the disposable workspace instead of
+            // being bind-mounted read-only, so the container sees a writable copy
+            // and no host reference outlives the sandbox.
+            expect(createCall.some((arg) => typeof arg === 'string' && arg.endsWith(':ro'))).to.equal(false);
+            const mount = createCall[createCall.indexOf('-v') + 1];
+            const workspacePath = mount.slice(0, mount.indexOf(':/app:rw'));
+            await fs.access(path.join(workspacePath, 'node_modules', 'dep.txt'));
+            // The `--dns` flag points the target at Mirage so DNS-based OAST
+            // callbacks resolve on the --internal network (IP from the mocked
+            // `inspect --format {{range .NetworkSettings...}}` response).
+            expect(createCall).to.include('--dns');
+            expect(createCall[createCall.indexOf('--dns') + 1]).to.equal('172.18.0.2');
+          } finally {
+            await manager.destroy();
+            await fs.rm(targetPath, { force: true, recursive: true });
+          }
+        });
 
     it('uses the deployment command supplied by the tool invocation', async () => {
       const calls: string[][] = [];

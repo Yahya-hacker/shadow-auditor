@@ -27,13 +27,30 @@ interface RunEntry {
   value: string;
 }
 
-/** Parse a session-meta.json file. Returns null on failure. */
+/** Best-effort runtime shape check for a parsed session-meta.json. */
+export function isSessionMetadata(value: unknown): value is SessionMetadata {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const meta = value as Record<string, unknown>;
+  return (
+    typeof meta.runId === 'string' &&
+    typeof meta.startedAt === 'string' &&
+    typeof meta.targetPath === 'string' &&
+    typeof meta.provider === 'string' &&
+    typeof meta.model === 'string' &&
+    (meta.completedAt === undefined || typeof meta.completedAt === 'string') &&
+    Array.isArray(meta.warnings)
+  );
+}
+
+/** Parse a session-meta.json file. Returns null on failure or invalid shape. */
 async function readMeta(dirPath: string): Promise<null | SessionMetadata> {
   try {
     const metaPath = path.join(dirPath, 'session-meta.json');
     await recoverAtomicWrite(metaPath);
     const content = await fs.readFile(metaPath, 'utf8');
-    return JSON.parse(content) as SessionMetadata;
+    const parsed: unknown = JSON.parse(content);
+    if (!isSessionMetadata(parsed)) return null;
+    return parsed;
   } catch {
     return null;
   }

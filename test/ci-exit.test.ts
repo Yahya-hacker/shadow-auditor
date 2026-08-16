@@ -98,7 +98,26 @@ describe('ci-exit', () => {
       expect(result.code).to.equal(0);
     });
 
-    it('defaults to fail-on high when not specified', () => {
+          it('exits 1 on an Info finding when fail-on is info (supported by config/CI but was missing from CLI)', () => {
+            const result = computeCiExitCode({
+              ...verifiedAudit,
+              failOn: 'info',
+              findings: [makeFinding('Info')],
+            });
+            expect(result.code).to.equal(1);
+            expect(result.triggeringFindings.map((f) => f.vuln_id)).to.deep.equal(['SHADOW-001']);
+          });
+
+          it('exits 0 when fail-on is info and no Info-or-higher findings exist', () => {
+            const result = computeCiExitCode({
+              ...verifiedAudit,
+              failOn: 'info',
+              findings: [],
+            });
+            expect(result.code).to.equal(0);
+          });
+
+          it('defaults to fail-on high when not specified', () => {
       const result = computeCiExitCode({ ...verifiedAudit, findings: [makeFinding('High')] });
       expect(result.code).to.equal(1);
     });

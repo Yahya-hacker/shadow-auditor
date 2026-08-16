@@ -140,7 +140,15 @@ export function computeTrustScore(tier: ModelTier): number {
 // Model Resolution
 // =============================================================================
 
-/** Cache to avoid re-creating provider clients for the same model. */
+/**
+ * Cache to avoid re-creating provider clients for the same model.
+ *
+ * Bounded so long-lived swarm missions (which may resolve models per role
+ * override with varied credentials) cannot grow this module-level Map without
+ * end. On exceeding the cap the oldest entry (least-recently used) is evicted,
+ * mirroring the backend max_entries and keeping steady-state memory flat.
+ */
+const MAX_MODEL_CACHE_ENTRIES = 32;
 const modelCache = new Map<string, BaseChatModel>();
 
 function cacheKey(options: {
@@ -186,20 +194,30 @@ export function resolveWorkerModel(
   });
   const cached = modelCache.get(key);
   if (cached) {
-    return cached;
-  }
+      // Touch to keep MRU ordering for eviction.
+      modelCache.delete(key);
+      modelCache.set(key, cached);
+      return cached;
+    }
 
-  const config: ShadowConfig = {
-    apiKey: override.apiKey ?? '',
-    azure: override.azure,
-    customBaseUrl: override.customBaseUrl,
-    model: override.model,
-    provider: override.provider,
-  };
+    const config: ShadowConfig = {
+      apiKey: override.apiKey ?? '',
+      azure: override.azure,
+      customBaseUrl: override.customBaseUrl,
+      model: override.model,
+      provider: override.provider,
+    };
 
-  const model = getLangchainModel(config);
-  modelCache.set(key, model);
-  return model;
+    const model = getLangchainModel(config);
+    modelCache.set(key, model);
+    if (modelCache.size > MAX_MODEL_CACHE_ENTRIES) {
+      // Evict the least-recently-used entry (first inserted key).
+      const oldestKey = modelCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        modelCache.delete(oldestKey);
+      }
+    }
+    return model;
 }
 
 /**

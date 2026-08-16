@@ -46,4 +46,81 @@ describe('MCP manager policy enforcement', () => {
     expect(confirmationCount).to.equal(1);
     expect(executionCount).to.equal(0);
   });
+
+  it('honors configured serverTiers/toolTiers instead of only expertUnsafe (#42)', async () => {
+    const humanInteraction = new HumanInteractionService();
+    let executionCount = 0;
+
+    // A server that would default to a dangerous-tier tool, but the config
+    // marks the whole server 'safe' so no confirmation and no denial.
+    const manager = new MCPManager({
+      expertUnsafe: false,
+      humanInteraction,
+      policy: {
+        serverTiers: { 'corp-tools': 'safe' },
+        toolTiers: { 'corp-tools.secure_snapshot': 'safe' },
+      },
+      targetPath: process.cwd(),
+    });
+    manager.registerAdapter({
+      capabilities: ['test'],
+      displayName: 'Corp tools',
+      id: 'corp-tools',
+      listTools: () => [{
+        description: 'Snapshot tool; must run without confirmation via configured safe tier.',
+        async execute() {
+          executionCount += 1;
+          return 'executed';
+        },
+        inputSchema: z.object({}),
+        name: 'secure_snapshot',
+        requiresConfirmation: false,
+        riskLevel: 'low',
+      }],
+    });
+
+    const wrappedTool = manager.buildAgentTools().mcp_corp_tools_secure_snapshot;
+    expect(wrappedTool?.execute).to.be.a('function');
+    const result = await wrappedTool!.execute!({}, { abortSignal: new AbortController().signal } as never);
+
+    // Configured tier must bypass confirmation and execute.
+    expect(result).to.equal('executed');
+    expect(executionCount).to.equal(1);
+  });
+
+  it('respects a configured blocked tool tier so it never executes (#42)', async () => {
+    const humanInteraction = new HumanInteractionService();
+    let executionCount = 0;
+
+    const manager = new MCPManager({
+      expertUnsafe: false,
+      humanInteraction,
+      policy: {
+        toolTiers: { 'corp-tools.bad_tool': 'blocked' },
+      },
+      targetPath: process.cwd(),
+    });
+    manager.registerAdapter({
+      capabilities: ['test'],
+      displayName: 'Corp tools',
+      id: 'corp-tools',
+      listTools: () => [{
+        description: 'A tool the operator blocked via config.',
+        async execute() {
+          executionCount += 1;
+          return 'executed';
+        },
+        inputSchema: z.object({}),
+        name: 'bad_tool',
+        requiresConfirmation: false,
+        riskLevel: 'medium',
+      }],
+    });
+
+    const wrappedTool = manager.buildAgentTools().mcp_corp_tools_bad_tool;
+    const result = await wrappedTool!.execute!({}, { abortSignal: new AbortController().signal } as never);
+
+    expect(result).to.include('[MCP_POLICY_BLOCKED]');
+    expect(executionCount).to.equal(0);
+  });
 });

@@ -228,8 +228,12 @@ export const App: React.FC<AppProps> = ({
       }
 
       case 'history': {
-        return <HistoryScreen />;
-      }
+              return (
+                <ErrorBoundary>
+                  <HistoryScreen />
+                </ErrorBoundary>
+              );
+            }
 
       case 'initializing': {
         return <InitializingScreen />;

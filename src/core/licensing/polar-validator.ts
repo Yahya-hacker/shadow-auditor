@@ -134,10 +134,12 @@ interface PolarValidateResponse {
  * Returns the parsed response or null on network failure.
  */
 async function callPolarApi(key: string): Promise<null | PolarValidateResponse> {
+  const controller = new AbortController();
+  // Timeout is cleared unconditionally in `finally` so a network/DNS failure
+  // cannot leak a pending timer that would otherwise keep the event loop alive
+  // and fire abort() against an already-settled request.
+  const timeoutId = setTimeout(() => { controller.abort(); }, REQUEST_TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => { controller.abort(); }, REQUEST_TIMEOUT_MS);
-
     const response = await fetch(POLAR_VALIDATE_URL, {
       body: JSON.stringify({
         key,
@@ -148,14 +150,14 @@ async function callPolarApi(key: string): Promise<null | PolarValidateResponse> 
       signal: controller.signal,
     });
 
-    clearTimeout(timeoutId);
-
     if (!response.ok) return null;
 
     return (await response.json()) as PolarValidateResponse;
   } catch {
     // Network error, timeout, DNS failure, etc.
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

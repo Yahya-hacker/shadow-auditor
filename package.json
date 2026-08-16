@@ -104,6 +104,7 @@
   "files": [
     "./bin",
     "./dist",
+    "./scripts",
     "./codebase-intelligence.txt",
     "./devil's advocate.txt",
     "./oclif.manifest.json",
@@ -134,6 +135,7 @@
     "url": "git+https://github.com/Yahya-hacker/shadow-auditor.git"
   },
   "scripts": {
+    "postinstall": "node ./scripts/fix-bin-eol.mjs",
     "start": "node ./bin/run.js shell --reconfigure",
     "build": "shx rm -rf dist && tsc -b --force",
     "lint": "eslint",

@@ -84,6 +84,74 @@ describe('incremental watch', () => {
       .to.deep.equal(['first', 'second']);
   });
 
+  it('routes a post-ready watcher error to onError instead of crashing', async function () {
+    this.timeout(6000);
+    const root = await mkdtemp(path.join(tmpdir(), 'shadow-watch-err-'));
+    const errors: Error[] = [];
+    const watcher = new IncrementalWatchService({
+      debounceMs: 25,
+      async onBatch() {},
+      onError(error) {
+        errors.push(error);
+      },
+      root,
+    });
+
+    try {
+      await watcher.start();
+      // Simulate a chokidar error emitted after the watcher is ready. Without
+      // a persistent listener Node throws on 'error' events with no handler.
+      (watcher as unknown as { watcher: { emit: (event: string, err: Error) => void } })
+        .watcher.emit('error', new Error('watch root permission revoked'));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 50);
+      });
+      expect(errors).to.have.length(1);
+      expect(errors[0]?.message).to.equal('watch root permission revoked');
+    } finally {
+      await watcher.close();
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it('retains changed paths for a retry when the batch audit fails', async function () {
+    this.timeout(6000);
+    const root = await mkdtemp(path.join(tmpdir(), 'shadow-watch-retry-'));
+    const batches: string[][] = [];
+    let ready = false;
+    let failFirst = true;
+    const watcher = new IncrementalWatchService({
+      canProcess() {
+        return ready;
+      },
+      debounceMs: 25,
+      async onBatch(batch) {
+        if (failFirst) {
+          failFirst = false;
+          throw new Error('audit failed');
+        }
+        batches.push(batch);
+      },
+      root,
+    });
+
+    try {
+      await mkdir(path.join(root, 'src'));
+      await watcher.start();
+      // Make the watcher ready to process then trigger a change.
+      ready = true;
+      await writeFile(path.join(root, 'src', 'a.ts'), 'first');
+      // The first onBatch for a.ts throws. Even though there is no new watch
+      // event, the retained path must be retried and eventually processed
+      // instead of being silently dropped.
+      await waitFor(() => batches.flat().includes('src/a.ts'));
+      expect(batches.flat().filter((p) => p === 'src/a.ts').length).to.equal(1);
+    } finally {
+      await watcher.close();
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   it('coalesces changes, ignores generated roots, and defers while busy', async function () {
     this.timeout(6000);
     const root = await mkdtemp(path.join(tmpdir(), 'shadow-watch-'));

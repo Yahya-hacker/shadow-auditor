@@ -39,7 +39,7 @@ import { MissionEngine } from './orchestrator/mission-engine.js';
 import { runObservedModelInvocation } from './orchestrator/mission-runtime.js';
 import { ReportBuilder } from './output/report-builder.js';
 import { createPathGuard } from './policy/path-guard.js';
-import { RunArtifacts, type ToolArtifactEvent } from './run-artifacts.js';
+import { RunArtifacts, type MessageArtifactEvent, type ToolArtifactEvent } from './run-artifacts.js';
 import { maybeCreateHttpInvoker } from './services/mcp-http-invoker.js';
 import { persistMessages } from './services/message-persistence.js';
 import { assembleRuntimeTools, type RuntimeToolAssembly } from './services/runtime-tool-assembler.js';
@@ -444,7 +444,22 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     };
   }
 
-  getLatestFindings(): EnhancedFinding[] {
+    getRunId(): string | null {
+        return this.artifacts ? path.basename(this.artifacts.getRunDirectory()) : null;
+      }
+
+          /**
+           * Read the persisted conversation transcript for this run, oldest
+           * first. Returns an empty array when no artifacts are attached.
+           */
+          async getMessageHistory(): Promise<MessageArtifactEvent[]> {
+            if (!this.artifacts) {
+              return [];
+            }
+            return this.artifacts.readMessages();
+          }
+
+      getLatestFindings(): EnhancedFinding[] {
     return structuredClone(this.lastRunFindings);
   }
 
@@ -815,6 +830,15 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       expertUnsafe: this.expertUnsafe,
       humanInteraction: this.humanInteraction,
       targetPath,
+      policy: this.config.mcp
+        ? {
+            allowDangerousActions: this.config.mcp.allowDangerousActions,
+            requireDangerousConfirmation: this.config.mcp.requireDangerousConfirmation,
+            requireSensitiveConfirmation: this.config.mcp.requireSensitiveConfirmation,
+            serverTiers: this.config.mcp.serverTiers,
+            toolTiers: this.config.mcp.toolTiers,
+          }
+        : undefined,
     });
 
     const chromeInvoker = maybeCreateHttpInvoker(
@@ -1330,6 +1354,12 @@ Use your tools to inspect implementation details, verify assumptions, and produc
         pendingHumanInput: null,
         pipelineFindings: [] as unknown[],
         pipelineReport: '',
+        // Reset explicitly: this channel's reducer replaces rather than merges,
+        // but only when the update is actually present on the input object. A
+        // fresh run reuses the same thread (`session_main`), so without this the
+        // previous run's recorded claim IDs (e.g. VULN-001) would still be seen
+        // as "already recorded" and falsely trip the reporter's duplicate guard.
+        recordedClaims: {},
         sastAudit: null,
         stageIterations: {
           codebase_intelligence: 0,

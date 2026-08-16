@@ -59,17 +59,22 @@ export const OptionList: React.FC<OptionListProps> = ({
       switch (evt.key) {
         case 'ArrowDown':
         case 'j': {
+          if (opts.length === 0) return;
           setInternalHighlighted((p) => Math.min(p + 1, opts.length - 1));
           break;
         }
 
         case 'ArrowUp':
         case 'k': {
+          if (opts.length === 0) return;
           setInternalHighlighted((p) => Math.max(p - 1, 0));
           break;
         }
 
         case 'Enter': {
+          // Guard against an empty option list: opts[highlighted] would be
+          // undefined and `.value` would throw.
+          if (opts.length === 0) return;
           onSelectRef.current(opts[highlighted]!.value);
           break;
         }

@@ -21,6 +21,13 @@ export interface PathResult {
 }
 
 /**
+ * Minimum raw label-similarity score for an entity to be returned by
+ * searchByLabel. Filters out unrelated labels whose bigram-Jaccard similarity
+ * is non-zero but meaningless (typically 0.05-0.15).
+ */
+const MIN_LABEL_RELEVANCE = 0.3;
+
+/**
  * Retrieval service for knowledge graph queries.
  */
 export class Retrieval {
@@ -185,13 +192,27 @@ export class Retrieval {
       }
     }
 
-    // Trace exploit path if source and sink are present
+    // Trace the shortest exploit path across every source/sink combination.
+    // Pairing sources[0] with sinks[0] arbitrarily produced a path that had no
+    // relation to the actual first hop from the source to a sink, so the
+    // reported "exploit path" could point at unrelated code. Exhaustively
+    // searching all pairs and keeping the shortest (highest-confidence) path
+    // avoids inventing a misleading chain when a genuine one exists.
     const exploitPath: BaseEntity[] = [];
     if (sources.length > 0 && sinks.length > 0) {
-      const paths = this.findDataFlowPaths(sources[0].canonicalId, sinks[0].canonicalId);
-      if (paths.length > 0) {
-        exploitPath.push(...paths[0].entities);
+      let best: BaseEntity[] = [];
+      for (const source of sources) {
+        for (const sink of sinks) {
+          const paths = this.findDataFlowPaths(source.canonicalId, sink.canonicalId);
+          for (const pathResult of paths) {
+            if (pathResult.entities.length === 0) continue;
+            if (best.length === 0 || pathResult.entities.length < best.length) {
+              best = pathResult.entities;
+            }
+          }
+        }
       }
+      exploitPath.push(...best);
     }
 
     return { affectedFiles, exploitPath, relatedFunctions, sinks, sources };
@@ -228,7 +249,8 @@ export class Retrieval {
     const queryLower = query.toLowerCase();
     const candidates = this.graph.query({ entityType: options.entityType });
 
-    const scored: SearchResult[] = candidates.map((entity) => {
+    const scored: SearchResult[] = [];
+    for (const entity of candidates) {
       const labelLower = entity.label.toLowerCase();
       let score = 0;
 
@@ -243,12 +265,17 @@ export class Retrieval {
         score = this.simpleSimilarity(queryLower, labelLower);
       }
 
-      return {
+      // Relevance floor: unrelated labels (tiny bigram-Jaccard scores) must not
+      // pollute results. Without this, any query returns the top-N entities even
+      // when nothing is genuinely related.
+      if (score < MIN_LABEL_RELEVANCE) continue;
+
+      scored.push({
         entity,
         matchType: score === 1 ? 'exact' : 'fuzzy',
         score: score * entity.confidence,
-      };
-    });
+      });
+    }
 
     // Sort by score descending
     scored.sort((a, b) => b.score - a.score);

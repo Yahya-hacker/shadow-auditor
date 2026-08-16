@@ -104,6 +104,72 @@ describe('RunArtifacts recovery', () => {
     expect(record.content).to.deep.equal(content);
   });
 
+  it('reads back the full transcript oldest first, skipping malformed lines', async () => {
+    const artifacts = await RunArtifacts.create(targetPath, {
+      maxOutputTokens: 100,
+      maxToolSteps: 10,
+      mcpEnabled: false,
+      model: 'test-model',
+      provider: 'test-provider',
+      targetPath,
+      warnings: [],
+    });
+    await persistMessages(artifacts, [
+      {content: 'first user turn', role: 'user'},
+      {content: [{text: 'first answer', type: 'text'}], role: 'assistant'},
+    ]);
+    // A crash left a truncated trailing line; readMessages must skip it.
+    await fs.appendFile(
+      path.join(artifacts.getRunDirectory(), 'messages.jsonl'),
+      '{"role":"user","content":"partial',
+      'utf8',
+    );
+
+    const history = await artifacts.readMessages();
+    expect(history.map((event) => event.role)).to.deep.equal(['user', 'assistant']);
+    expect(history[0]!.content).to.equal('first user turn');
+    expect(history[1]!.content).to.deep.equal([{text: 'first answer', type: 'text'}]);
+  });
+
+  it('returns an empty transcript when no messages were recorded', async () => {
+    const artifacts = await RunArtifacts.create(targetPath, {
+      maxOutputTokens: 100,
+      maxToolSteps: 10,
+      mcpEnabled: false,
+      model: 'test-model',
+      provider: 'test-provider',
+      targetPath,
+      warnings: [],
+    });
+    expect(await artifacts.readMessages()).to.deep.equal([]);
+  });
+
+    it('heals a truncated trailing JSONL line before appending the next record', async () => {
+      const artifacts = await RunArtifacts.create(targetPath, {
+        maxOutputTokens: 100,
+        maxToolSteps: 10,
+        mcpEnabled: false,
+        model: 'test-model',
+        provider: 'test-provider',
+        targetPath,
+        warnings: [],
+      });
+      const messagesPath = path.join(artifacts.getRunDirectory(), 'messages.jsonl');
+      // A crash left the final append half-written with no terminator.
+      await fs.appendFile(messagesPath, '{"role":"user","content":"partial', 'utf8');
+
+      await persistMessages(artifacts, [{
+        content: [{text: 'after', type: 'text'}],
+        role: 'assistant',
+      }]);
+
+      const lines = (await fs.readFile(messagesPath, 'utf8')).trim().split('\n')
+        .filter((line) => line.length > 0);
+      expect(lines).to.have.length(1);
+      const record = JSON.parse(lines[0]!) as {content: unknown};
+      expect(record.content).to.deep.equal([{text: 'after', type: 'text'}]);
+    });
+
   it('rejects incompatible resume settings and tracks active/completed transitions', async () => {
     const artifacts = await RunArtifacts.create(targetPath, {
       maxOutputTokens: 100,
@@ -125,5 +191,87 @@ describe('RunArtifacts recovery', () => {
       await fs.readFile(path.join(artifacts.getRunDirectory(), 'session-meta.json'), 'utf8'),
     ) as {completedAt?: string};
     expect(metadata).not.to.have.property('completedAt');
+  });
+
+  it('lists runs most recent first and skips malformed metadata', async () => {
+    const first = await RunArtifacts.create(targetPath, {
+      maxOutputTokens: 100,
+      maxToolSteps: 10,
+      mcpEnabled: false,
+      model: 'test-model',
+      provider: 'test-provider',
+      targetPath,
+      warnings: [],
+    });
+    const firstRunId = path.basename(first.getRunDirectory());
+
+    const second = await RunArtifacts.create(targetPath, {
+      maxOutputTokens: 100,
+      maxToolSteps: 10,
+      mcpEnabled: false,
+      model: 'test-model',
+      provider: 'test-provider',
+      targetPath,
+      warnings: [],
+    });
+    const secondRunId = path.basename(second.getRunDirectory());
+    const secondMetaPath = path.join(second.getRunDirectory(), 'session-meta.json');
+    const secondMeta = JSON.parse(await fs.readFile(secondMetaPath, 'utf8')) as {startedAt: string};
+    secondMeta.startedAt = '2099-01-01T00:00:00.000Z';
+    await fs.writeFile(secondMetaPath, JSON.stringify(secondMeta) + '\n');
+
+    await fs.mkdir(path.join(targetPath, '.shadow-auditor', 'runs', 'broken-run'));
+
+    const runs = await RunArtifacts.listRuns(targetPath);
+    expect(runs.map((run) => run.runId)).to.deep.equal([secondRunId, firstRunId]);
+  });
+
+  it('returns an empty list when no runs exist', async () => {
+    const empty = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-empty-'));
+    try {
+      expect(await RunArtifacts.listRuns(empty)).to.deep.equal([]);
+    } finally {
+      await fs.rm(empty, { force: true, recursive: true });
+    }
+  });
+
+  it('finds the most recent run ID synchronously', async () => {
+    const first = await RunArtifacts.create(targetPath, {
+      maxOutputTokens: 100,
+      maxToolSteps: 10,
+      mcpEnabled: false,
+      model: 'test-model',
+      provider: 'test-provider',
+      targetPath,
+      warnings: [],
+    });
+    const firstRunId = path.basename(first.getRunDirectory());
+
+    const second = await RunArtifacts.create(targetPath, {
+      maxOutputTokens: 100,
+      maxToolSteps: 10,
+      mcpEnabled: false,
+      model: 'test-model',
+      provider: 'test-provider',
+      targetPath,
+      warnings: [],
+    });
+    const secondRunId = path.basename(second.getRunDirectory());
+    const secondMetaPath = path.join(second.getRunDirectory(), 'session-meta.json');
+    const secondMeta = JSON.parse(await fs.readFile(secondMetaPath, 'utf8')) as {startedAt: string};
+    secondMeta.startedAt = '2099-01-01T00:00:00.000Z';
+    await fs.writeFile(secondMetaPath, JSON.stringify(secondMeta) + '\n');
+
+    expect(RunArtifacts.findMostRecentRunIdSync(targetPath)).to.equal(secondRunId);
+    expect(RunArtifacts.findMostRecentRunIdSync(targetPath)).not.to.equal(firstRunId);
+  });
+
+  it('returns null synchronously when no runs exist', async () => {
+    const empty = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-empty-'));
+    try {
+      expect(RunArtifacts.findMostRecentRunIdSync(empty)).to.equal(null);
+    } finally {
+      await fs.rm(empty, { force: true, recursive: true });
+    }
   });
 });

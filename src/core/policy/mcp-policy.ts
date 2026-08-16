@@ -297,12 +297,23 @@ export interface MCPPolicyDecision {
  *
  * Replaces the simple allowlist from `src/core/mcp/policy.ts`.
  */
+/**
+ * Accept a boolean (legacy expert-unsafe flag) or a partial policy object.
+ * The object form carries configured tiers so user-provided server/tool tiers
+ * actually reach evaluation (#42).
+ */
+type McpPolicyInput = boolean | Partial<MCPActionPolicy>;
+
 export function evaluateMcpPolicy(
   adapterId: string,
   toolDefinition: { name: string; requiresConfirmation?: boolean; riskLevel?: string; },
-  expertUnsafe: boolean,
+  policyInput: McpPolicyInput = false,
 ): MCPPolicyDecision {
+  const expertUnsafe = typeof policyInput === 'boolean'
+    ? policyInput
+    : (policyInput.expertUnsafe ?? false);
   const decision = evaluateMCPPolicy(adapterId, toolDefinition.name, {
+    ...(typeof policyInput === 'object' ? policyInput : {}),
     expertUnsafe,
   });
 

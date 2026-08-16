@@ -47,7 +47,9 @@ export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = fal
   const provider = config?.provider ?? '—';
   const model = config?.model ?? '—';
   const auditMode = config?.auditMode ?? '—';
-  const targetLabel = targetPath ? targetPath.split('/').at(-1) || targetPath : focusScope;
+  const targetLabel = targetPath
+    ? targetPath.split(/[\\/]/).filter(Boolean).at(-1) || targetPath
+    : focusScope;
 
   const hasTokens = tokenUsage.total > 0;
   const tokenLabel = hasTokens

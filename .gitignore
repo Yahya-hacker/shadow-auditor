@@ -6,3 +6,4 @@ build/
 shadow-prompt.md
 .aider*
 .serena/
+.idea/

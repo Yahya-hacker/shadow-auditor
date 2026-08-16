@@ -117,6 +117,42 @@ describe('CI runner', () => {
     expect(disposed).to.equal(true);
   });
 
+  it('preserves the original error when session.dispose() also fails', async () => {
+    // #23 regression: dispose() running in `finally` must not mask the primary
+    // error. Before the fix, a throwing dispose replaced the real failure.
+    const deps = dependencies();
+    const createSession = deps.createSession;
+    deps.createSession = (...args) => ({
+      ...createSession(...args),
+      async sendMessage() { throw new Error('provider unavailable'); },
+      async dispose() { throw new Error('dispose exploded'); },
+    });
+
+    let error: unknown;
+    try {
+      await runCiAudit({ config, failOn: 'high', targetPath: '.' }, deps);
+      expect.fail('Expected CI audit to reject.');
+    } catch (error_) {
+      error = error_;
+    }
+
+    // The original error wins; the dispose failure must not override it.
+    expect(error).to.be.instanceOf(Error);
+    expect((error as Error).message).to.equal('provider unavailable');
+  });
+
+  it('still returns the run result even when session.dispose() fails on success', async () => {
+    const deps = dependencies();
+    const createSession = deps.createSession;
+    deps.createSession = (...args) => ({
+      ...createSession(...args),
+      async dispose() { throw new Error('dispose exploded'); },
+    });
+
+    const result = await runCiAudit({ config, failOn: 'high', targetPath: '.' }, deps);
+    expect(result.exit.code).to.equal(0);
+  });
+
   it('rejects an incomplete audit that produces no structured report', async () => {
     const deps = dependencies();
     const createSession = deps.createSession;

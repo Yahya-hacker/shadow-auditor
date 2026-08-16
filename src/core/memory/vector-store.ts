@@ -217,7 +217,12 @@ export class VectorStore {
     filter: Record<string, unknown>,
   ): boolean {
     for (const [key, value] of Object.entries(filter)) {
-      if (metadata[key] !== value) {
+      const actual = metadata[key];
+      // Coerce both sides to strings so a numeric filter value (e.g. 1)
+      // matches a string metadata value ('1') and vice versa. The strict !==
+      // check silently dropped every candidate when the store held one type
+      // and the filter used another, making filters match nothing.
+      if (String(actual) !== String(value)) {
         return false;
       }
     }

@@ -29,10 +29,22 @@ function groupingKey(cwe: string, title: string): string {
 interface FindingGroup {
   /** All file paths accumulated across occurrences */
   filePaths: Set<string>;
-  /** The representative (first-seen) finding */
+  /** The representative finding */
   primary: SecurityFinding;
   /** Root-cause fingerprint (used as group key) */
   rootCauseKey: string;
+  /**
+   * Stable vuln_id frozen from the FIRST-SEEN primary's own file paths.
+   *
+   * The ID is captured once when the group is created, not recomputed at output
+   * time. Recomputing from `group.primary.file_paths` was the bug: when a
+   * higher-CVSS occurrence from a *different* file later replaces `primary`,
+   * the recomputed ID would silently change, so the same logical vulnerability
+   * got a different ID depending on which files/results were present — breaking
+   * the "stable across reruns" promise. Freezing at first-seen keeps the ID
+   * stable both under file-path growth and under primary swaps.
+   */
+  vulnId: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -64,9 +76,8 @@ export function deduplicateFindings(findings: SecurityFinding[]): SecurityFindin
         existing.filePaths.add(fp);
       }
 
-      // Keep the higher CVSS score as representative.
-      // Preserve the original file_paths on the primary so vulnId remains
-      // stable — file_paths is reset after vulnId computation below.
+      // Keep the higher CVSS score as the representative. The vuln_id stays
+            // stable regardless because it was frozen on group creation (first-seen).
       if ((finding.cvss_v31_score ?? 0) > (existing.primary.cvss_v31_score ?? 0)) {
         existing.primary = { ...finding };
       }
@@ -75,6 +86,15 @@ export function deduplicateFindings(findings: SecurityFinding[]): SecurityFindin
         filePaths: new Set(finding.file_paths),
         primary: finding,
         rootCauseKey: key,
+        // Freeze the ID computed from the occurrence that seeds the group.
+        // Computed fresh (ignoring any caller-supplied vuln_id) so the ID is
+        // deterministic, and frozen so a later higher-CVSS primary from a
+        // different file can't change it.
+        vulnId: computeVulnId({
+          cwe: finding.cwe,
+          filePaths: finding.file_paths,
+          title: finding.title,
+        }),
       });
     }
   }
@@ -85,19 +105,12 @@ export function deduplicateFindings(findings: SecurityFinding[]): SecurityFindin
     // Deterministic file path ordering
     const sortedPaths = [...group.filePaths].sort();
 
-    // Recompute stable vuln_id for the merged finding using the primary
-    // finding's file paths only (not the merged set) so the ID does not
-    // change when new occurrences are discovered in different files.
-    const stableVulnId = computeVulnId({
-      cwe: group.primary.cwe,
-      filePaths: group.primary.file_paths,
-      title: group.primary.title,
-    });
-
+    // Use the frozen first-seen vuln_id so the merged finding's ID is stable
+    // regardless of which occurrence became the representative.
     deduped.push({
       ...group.primary,
       file_paths: sortedPaths,
-      vuln_id: stableVulnId,
+      vuln_id: group.vulnId,
     });
   }
 

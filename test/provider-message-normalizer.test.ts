@@ -108,7 +108,7 @@ describe('provider message normalizer', () => {
     expect((messages[3] as ToolMessage).tool_call_id).to.equal('call_qwen');
   });
 
-  it('fails locally when Qwen emits non-mapping tool arguments', () => {
+  it('drops an unusable Qwen tool call instead of aborting the replay', () => {
     const message = new AIMessage({
       content: '',
       tool_calls: [{
@@ -119,9 +119,42 @@ describe('provider message normalizer', () => {
       }],
     });
 
-    expect(() => normalizeAssistantHistoryMessage(message, 'qwen'))
-      .to.throw('arguments must be a JSON object');
-  });
+      const normalized = normalizeAssistantHistoryMessage(message, 'qwen');
+      if (!AIMessage.isInstance(normalized)) throw new Error('Expected an AI message.');
+      expect(normalized.tool_calls).to.have.length(0);
+    });
+
+    it('recovers Qwen double-encoded tool arguments', () => {
+      const message = new AIMessage({
+        content: '',
+        tool_calls: [{
+          args: '{"filePath": "src/index.ts"}' as unknown as Record<string, unknown>,
+          id: 'call_qwen',
+          name: 'read_file_content',
+          type: 'tool_call',
+        }],
+      });
+
+      const normalized = normalizeAssistantHistoryMessage(message, 'qwen');
+      if (!AIMessage.isInstance(normalized)) throw new Error('Expected an AI message.');
+      expect(normalized.tool_calls?.[0]?.args).to.deep.equal({filePath: 'src/index.ts'});
+    });
+
+    it('recovers Qwen arguments wrapped in an envelope', () => {
+      const message = new AIMessage({
+        content: '',
+        tool_calls: [{
+          args: '{"arguments": "{\\"name\\": \\"get\\"}"}' as unknown as Record<string, unknown>,
+          id: 'call_qwen_env',
+          name: 'search',
+          type: 'tool_call',
+        }],
+      });
+
+      const normalized = normalizeAssistantHistoryMessage(message, 'qwen');
+      if (!AIMessage.isInstance(normalized)) throw new Error('Expected an AI message.');
+      expect(normalized.tool_calls?.[0]?.args).to.deep.equal({name: 'get'});
+    });
 
   it('does not alter non-assistant history', () => {
     const message = new HumanMessage('mission');

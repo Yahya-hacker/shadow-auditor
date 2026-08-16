@@ -13,6 +13,70 @@ import * as path from 'node:path';
 const SENSITIVE_FILE_MODE = 0o600;
 const pathLocks = new Map<string, Promise<void>>();
 
+// Cross-process lockfile parameters. The in-process `pathLocks` map only
+// serializes writers within a single process; multiple CLI processes sharing
+// a workspace (the documented operating model) can otherwise overwrite each
+// other's snapshot writes. A lockfile acquired with the exclusive 'wx' flag
+// extends that serialization across processes.
+const CROSS_PROCESS_LOCK_STALE_MS = 30_000;
+const CROSS_PROCESS_LOCK_RETRY_MS = 25;
+const CROSS_PROCESS_LOCK_TIMEOUT_MS = 10_000;
+
+function lockFilePath(filePath: string): string {
+  return `${filePath}.shadow-atomic-lock`;
+}
+
+/**
+ * Acquire an exclusive cross-process lockfile for `filePath`. Uses `open(..., 'wx')`
+ * so only one process can hold the lock at a time. A lockfile left behind by a
+ * crashed process is detected via its mtime and stolen after it goes stale.
+ * Returns a release function. Throws if the lock cannot be acquired within the
+ * timeout (e.g. a live holder that never releases).
+ */
+async function acquireCrossProcessLock(filePath: string): Promise<() => Promise<void>> {
+  const lockPath = lockFilePath(filePath);
+  const deadline = Date.now() + CROSS_PROCESS_LOCK_TIMEOUT_MS;
+  let handle: fs.FileHandle | undefined;
+
+  while (Date.now() < deadline) {
+    try {
+      handle = await fs.open(lockPath, 'wx', SENSITIVE_FILE_MODE);
+      await handle.writeFile(`${process.pid}\n${Date.now()}\n`, 'utf8');
+      let released = false;
+      return async () => {
+        if (released) return;
+        released = true;
+        try {
+          await handle?.close();
+        } catch {
+          // Best-effort close.
+        }
+        await fs.rm(lockPath, { force: true });
+      };
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST') throw error;
+      // Lock held by someone else. Steal it if it is stale.
+      try {
+        const stats = await fs.lstat(lockPath);
+        if (Date.now() - stats.mtimeMs > CROSS_PROCESS_LOCK_STALE_MS) {
+          await fs.rm(lockPath, { force: true });
+          continue;
+        }
+      } catch (statError) {
+        // Lockfile vanished between open and stat — retry immediately.
+        if ((statError as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw statError;
+      }
+      await new Promise((resolve) => setTimeout(resolve, CROSS_PROCESS_LOCK_RETRY_MS));
+    }
+  }
+
+  throw new Error(
+    `Timed out acquiring cross-process lock for ${filePath} (held by another process)`,
+  );
+}
+
 function recoveryPaths(filePath: string): { backupPath: string; journalPath: string } {
   return {
     backupPath: `${filePath}.shadow-atomic-backup`,
@@ -27,6 +91,28 @@ function recoveryPaths(filePath: string): { backupPath: string; journalPath: str
  */
 async function recoverAtomicWriteUnlocked(filePath: string): Promise<void> {
   const { backupPath, journalPath } = recoveryPaths(filePath);
+
+  // The journal is the authoritative marker of a pending interrupted
+  // replacement — it is written before the destination is moved aside and
+  // removed only after the replacement either succeeds or is rolled back.
+  // A backup file left behind WITHOUT a journal is not recovery state: it may
+  // be a concurrent (non-atomic) writer's file that happens to share the
+  // backup name. Acting on existence alone previously destroyed that file.
+  let journalExists = false;
+  try {
+    const journalStats = await fs.lstat(journalPath);
+    if (journalStats.isSymbolicLink() || !journalStats.isFile()) {
+      throw new Error(`Refusing atomic recovery from non-regular journal: ${journalPath}`);
+    }
+    journalExists = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+
+  // No journal → nothing pending to recover. Never touch a stray backup file
+  // that shares the deterministic backup name but is not recovery state.
+  if (!journalExists) return;
+
   try {
     const backupStats = await fs.lstat(backupPath);
     if (backupStats.isSymbolicLink() || !backupStats.isFile()) {
@@ -34,17 +120,10 @@ async function recoverAtomicWriteUnlocked(filePath: string): Promise<void> {
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    // Journal exists but the backup vanished (never moved aside) — nothing to
+    // recover. Drop the orphaned journal so it cannot mislead later calls.
     await fs.rm(journalPath, { force: true });
     return;
-  }
-
-  try {
-    const journalStats = await fs.lstat(journalPath);
-    if (journalStats.isSymbolicLink() || !journalStats.isFile()) {
-      throw new Error(`Refusing atomic recovery from non-regular journal: ${journalPath}`);
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
 
   try {
@@ -147,7 +226,15 @@ export async function withPathLock<T>(filePath: string, operation: () => Promise
   pathLocks.set(lockKey, tail);
   await previous;
   try {
-    return await operation();
+    // Serialize against writers in *other* processes too. Acquired after the
+    // in-process turn so queued calls within this process stay ordered and
+    // only one process holds the lockfile while operating.
+    const releaseCrossProcess = await acquireCrossProcessLock(filePath);
+    try {
+      return await operation();
+    } finally {
+      await releaseCrossProcess();
+    }
   } finally {
     release?.();
     if (pathLocks.get(lockKey) === tail) pathLocks.delete(lockKey);

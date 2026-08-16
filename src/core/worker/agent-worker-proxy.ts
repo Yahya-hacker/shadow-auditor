@@ -121,9 +121,29 @@ export class AgentSessionWorker {
       requestId,
       type: 'shutdown',
     });
-    await acknowledged;
-    await this.worker.terminate();
-  }
+      // Bound the wait: the worker normally acks and exits promptly, but if it
+      // is blocked inside an in-flight LLM call it may never ack. A timeout
+      // falls through so shutdown can't hang the whole process.
+      try {
+        const timed = new Promise<string>((resolve) => {
+          const timer = setTimeout(() => {
+            this.pending.delete(requestId);
+            resolve('timeout');
+          }, 5000);
+          acknowledged.then(
+            (value) => {
+              clearTimeout(timer);
+              resolve(value);
+            },
+            () => clearTimeout(timer),
+          );
+        });
+        await timed;
+      } finally {
+        // Always terminate the worker, even if the ack timed out.
+        await this.worker.terminate();
+      }
+    }
 
   private dispatch(message: WorkerOutMessage): void {
     if (message.protocolVersion !== PROTOCOL_VERSION) {

@@ -146,7 +146,7 @@ export function synthesizePatches(
 
   const resolvedConflicts: PatchConflict[] = [];
   const unresolvedConflicts: PatchConflict[] = [];
-  const acceptedSet = new Set<string>();
+  const contributedSet = new Set<string>();
   const mergedSet = new Set<string>();
   const rejectedSet = new Set<string>();
 
@@ -162,11 +162,17 @@ export function synthesizePatches(
     const hunkB = hunks.find((hunk) => hunk.proposalId === conflict.proposalBId);
     if (conflict.resolutionStrategy === 'combine_alternating' ||
         conflict.resolutionStrategy === 'merge_both') {
-      if (hunkA) synthesizedHunks.push(hunkA.hunk);
-      if (hunkB) synthesizedHunks.push(hunkB.hunk);
+      if (hunkA) {
+        synthesizedHunks.push(hunkA.hunk);
+        contributedSet.add(hunkA.proposalId);
+        mergedSet.add(hunkA.proposalId);
+      }
+      if (hunkB) {
+        synthesizedHunks.push(hunkB.hunk);
+        contributedSet.add(hunkB.proposalId);
+        mergedSet.add(hunkB.proposalId);
+      }
       resolvedConflicts.push(conflict);
-      mergedSet.add(conflict.proposalAId);
-      mergedSet.add(conflict.proposalBId);
       return;
     }
 
@@ -182,7 +188,7 @@ export function synthesizePatches(
       );
       if (preferredHunk) {
         synthesizedHunks.push(preferredHunk.hunk);
-        acceptedSet.add(preferredHunk.proposalId);
+        contributedSet.add(preferredHunk.proposalId);
       }
 
       rejectedSet.add(
@@ -241,7 +247,7 @@ export function synthesizePatches(
       });
 
       for (const h of hunks) {
-        acceptedSet.add(h.proposalId);
+        contributedSet.add(h.proposalId);
       }
 
       continue;
@@ -259,7 +265,7 @@ export function synthesizePatches(
     for (const h of hunks) {
       if (!conflictProposalIds.has(h.proposalId)) {
         synthesizedHunks.push(h.hunk);
-        acceptedSet.add(h.proposalId);
+        contributedSet.add(h.proposalId);
       }
     }
 
@@ -283,9 +289,15 @@ export function synthesizePatches(
 
   // Build summary
   const filesModified = synthesizedFiles.map((f) => f.filePath);
-  const acceptedProposals = [...acceptedSet];
-  const mergedProposals = [...mergedSet].filter((id) => !acceptedSet.has(id));
-  const rejectedProposals = [...rejectedSet];
+  const contributedProposals = [...contributedSet];
+  // Buckets are derived from actual synthesized-hunk provenance so a proposal
+  // is classified once, accurately. A proposal that contributed content only
+  // via conflict merging is "merged"; otherwise, if it contributed at all it is
+  // "accepted". A proposal is "rejected" only when it lost a conflict and
+  // contributed no hunks anywhere.
+  const mergedProposals = [...mergedSet];
+  const acceptedProposals = contributedProposals.filter((id) => !mergedSet.has(id));
+  const rejectedProposals = [...rejectedSet].filter((id) => !contributedSet.has(id));
 
   const summary = buildSynthesisSummary({
     accepted: acceptedProposals.length,

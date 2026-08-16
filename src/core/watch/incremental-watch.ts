@@ -71,10 +71,19 @@ export class IncrementalWatchService {
     this.watcher.on('add', (candidate) => this.enqueue(candidate));
     this.watcher.on('change', (candidate) => this.enqueue(candidate));
     this.watcher.on('unlink', (candidate) => this.enqueue(candidate));
+    // Post-ready watcher errors (e.g. permission revoked on a watched dir) must
+    // at least have a listener. Node throws on 'error' events with no handler,
+    // which would crash the whole process mid-run; route them to the caller's
+    // onError callback instead.
+    this.watcher.on('error', (error) => this.handleWatchError(error));
     await new Promise<void>((resolve, reject) => {
       this.watcher?.once('ready', resolve);
       this.watcher?.once('error', reject);
     });
+  }
+
+  private handleWatchError(error: unknown): void {
+    this.onError(error instanceof Error ? error : new Error(String(error)));
   }
 
   private enqueue(candidate: string): void {
@@ -100,15 +109,28 @@ export class IncrementalWatchService {
     }
 
     const batch = [...this.changedPaths].sort().slice(0, this.maxBatchSize);
-    for (const changedPath of batch) this.changedPaths.delete(changedPath);
     this.running = true;
+    let succeeded = false;
     try {
       await this.onBatch(batch);
+      // Only republish the batch as processed AFTER the audit succeeded. On
+      // failure the paths stay pending so a later flush retries them instead of
+      // silently dropping changed files and leaving a stale baseline.
+      succeeded = true;
+      for (const changedPath of batch) this.changedPaths.delete(changedPath);
     } finally {
       this.running = false;
       if (!this.stopped && this.changedPaths.size > 0) {
         if (this.canProcess()) {
-          await this.flush();
+          if (succeeded) {
+            // The batch was cleared successfully; drain whatever remains.
+            await this.flush();
+          } else {
+            // The last attempt failed and paths are retained. Re-schedule a
+            // debounced retry instead of recursing immediately so a persistent
+            // failure does not become a tight retry loop.
+            this.scheduleFlush();
+          }
         } else {
           this.scheduleFlush();
         }

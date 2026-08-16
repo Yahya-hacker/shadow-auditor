@@ -69,27 +69,89 @@ function stripProviderMetadata(
 }
 
 function normalizeQwenToolCalls(message: AIMessage): AIMessage['tool_calls'] {
-  return message.tool_calls?.map((call) => {
+  return message.tool_calls?.flatMap((call) => {
     let args: unknown = call.args;
     if (typeof args === 'string') {
-      try {
-        args = JSON.parse(args) as unknown;
-      } catch (error) {
-        throw new TypeError(
-          `Qwen tool "${call.name}" emitted invalid JSON arguments.`,
-          {cause: error},
-        );
-      }
+      // Best-effort recovery: Qwen sometimes encodes arguments as a quoted
+      // JSON string, or wraps them in a {arguments: "..."} envelope. Anything
+      // we cannot turn into an object is dropped rather than aborting the
+      // whole replay, which would lose the mission.
+      const decoded = decodeAnyObject(args);
+      if (typeof decoded === 'string') return [];
+      args = decoded;
     }
+
+    // Unwrap envelope forms that parsed to an object but still carry the inner
+    // payload as a JSON string under {arguments}" / {input}" / {parameters}".
+    args = unwrapEnvelope(args, call.name);
 
     if (!args || typeof args !== 'object' || Array.isArray(args)) {
-      throw new TypeError(
-        `Qwen tool "${call.name}" arguments must be a JSON object.`,
-      );
+      // Array or scalar arguments are not a valid tool payload; skip this call.
+      return [];
     }
 
-    return {...call, args: {...args as Record<string, unknown>}};
+    return [{...call, args: {...args as Record<string, unknown>}}];
   });
+}
+
+/**
+ * Decode a Qwen tool-argument string, tolerating double-encoded JSON. Returns
+ * an object on success, or the raw string when the payload cannot be decoded
+ * (callers decide whether to keep it).
+ */
+function decodeAnyObject(input: string): unknown {
+  const attempt = (value: string): unknown => {
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return value;
+    }
+  };
+
+  // First pass: direct parse. Second pass: if the direct parse yielded a
+  // string, unwrap the inner JSON (double-encoded Qwen tool call).
+  let parsed: unknown = attempt(input);
+  for (let pass = 0; pass < 2 && typeof parsed === 'string'; pass += 1) {
+    const inner = attempt(parsed);
+    if (typeof inner !== 'string') {
+      parsed = inner;
+      break;
+    }
+    if (inner === parsed) break; // no further unwrap possible
+    parsed = inner;
+  }
+
+  if (typeof parsed === 'object' && parsed !== null) return parsed;
+  return input;
+}
+
+/**
+ * If the parsed tool payload is an envelope like {"arguments": "..."} whose
+ * value is itself a JSON string, unwrap it to the inner object. Otherwise
+ * returns the payload unchanged.
+ */
+function unwrapEnvelope(payload: unknown, callName: string): unknown {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    return payload;
+  }
+
+  const record = payload as Record<string, unknown>;
+  for (const key of ['arguments', 'input', 'parameters']) {
+    const value = record[key];
+    if (typeof value !== 'string' || !value.trim()) continue;
+    try {
+      const inner: unknown = JSON.parse(value);
+      if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+        return inner;
+      }
+    } catch {
+      // Ignore and fall through to the next candidate key.
+      continue;
+    }
+  }
+
+  void callName;
+  return payload;
 }
 
 function qwenMetadata(

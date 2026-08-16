@@ -7,8 +7,8 @@ import type { ShadowConfig } from '../utils/config.js';
 import { runCiAudit } from '../core/ci-runner.js';
 import { App } from '../ui/App.js';
 import { buildEffectiveConfig } from '../ui/effective-config.js';
-import { disposeActiveAgentSessions } from '../ui/hooks/useAgentSession.js';
-import { configureShutdown, requestShutdown } from '../ui/shutdown.js';
+import { disposeActiveAgentSessions, getActiveSessionRunId } from '../ui/hooks/useAgentSession.js';
+import { configureShutdown, isShuttingDown, requestShutdown } from '../ui/shutdown.js';
 import { loadConfig, registerSecretStoreAdapter } from '../utils/config.js';
 import { KeychainAdapter } from '../utils/keychain.js';
 
@@ -66,7 +66,7 @@ export default class Shell extends Command {
     }),
     'fail-on': Flags.option({
       description: 'Minimum severity that causes a non-zero exit in CI mode',
-      options: ['critical', 'high', 'medium', 'low', 'none'] as const,
+      options: ['critical', 'high', 'medium', 'low', 'info', 'none'] as const,
     })(),
     mode: Flags.option({
       description: 'Audit mode controlling depth, tool budget, and report style',
@@ -207,10 +207,9 @@ export default class Shell extends Command {
       },
     );
 
-    const gracefulShutdown = async (signal: string) => {
-      process.stderr.write(`\n[ShadowAuditor] Received ${signal}, shutting down...\n`);
-      await requestShutdown(signal === 'SIGTERM' ? 143 : 0);
-    };
+    // SIGINT (Ctrl-C) is conventionally 128+2 = 130; SIGTERM is 128+15 = 143.
+    // Reporting 0 here would mask the abort and make CI think the run succeeded.
+    const signalExitCode = (signal: string) => (signal === 'SIGTERM' ? 143 : 130);
 
     configureShutdown(async (exitCode) => {
       try {
@@ -220,6 +219,28 @@ export default class Shell extends Command {
         process.exitCode = exitCode;
       }
     });
+
+    // First signal starts a graceful shutdown. A *second* signal while the
+    // dispose is still in flight forces an immediate hard exit with the signal
+    // exit code, so the process can never hang after the user aborts twice.
+    let forceExitStarted = false;
+    const gracefulShutdown = (signal: string) => {
+      const code = signalExitCode(signal);
+      if (isShuttingDown()) {
+        if (!forceExitStarted) {
+          forceExitStarted = true;
+          process.stderr.write(`\n[ShadowAuditor] Second ${signal}, forcing exit.\n`);
+          process.exit(code);
+        }
+        return;
+      }
+      const runId = getActiveSessionRunId();
+      process.stderr.write(`\n[ShadowAuditor] Received ${signal}, shutting down...\n`);
+      if (runId) {
+        process.stderr.write(`[ShadowAuditor] To resume this session, run: shadow-auditor --resume ${runId}\n`);
+      }
+      void requestShutdown(code).catch(() => undefined);
+    };
 
     process.on('SIGINT', () => gracefulShutdown('SIGINT'));
     process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

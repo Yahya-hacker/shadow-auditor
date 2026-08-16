@@ -73,8 +73,9 @@ const InputContent = memo<{
 
   if (searchActive) {
     const handleSubmit = () => {
-      // Enter in search mode: exit search and return focus to input.
+      // Enter in search mode: exit search, clear the query and return focus.
       setSearchActive(false);
+      setSearchQuery('');
     };
 
     return (

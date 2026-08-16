@@ -160,10 +160,19 @@ export class SwarmCoordinator implements SwarmCoordinatorRuntime {
         {},
         { configurable: { thread_id: this.currentThreadId }, signal },
       );
-    } finally {
-      await checkpointer.prune(this.currentThreadId);
+    } catch (error) {
+      // Preserve the checkpoint on failure so a later restartMission can
+      // resume from the last persisted blackboard snapshot instead of having
+      // to re-run work already done. Pruning here would destroy the one
+      // artifact that makes interruption-recovery possible. Re-throw so the
+      // caller still observes the failure.
       if (signal?.aborted) this.terminateAllWorkers();
+      throw error;
     }
+    // The graph reached a terminal state successfully - the mission is done, so
+    // clean up its checkpoint to avoid leaking it on disk. (Cleaned only on the
+    // success path; the failure path above intentionally leaves it in place.)
+    await checkpointer.prune(this.currentThreadId);
 
     // 4. Extract the final report from the reporter task result.
     const finalBlackboard = (finalState as { blackboard?: BlackboardState }).blackboard ?? {

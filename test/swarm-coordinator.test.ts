@@ -15,6 +15,7 @@ import { Blackboard } from '../src/core/hivemind/blackboard.js';
 import { SwarmCoordinator } from '../src/core/hivemind/swarm-coordinator.js';
 import {
   collectPatchCompetitionProposals,
+  releaseStaleTasks,
   retryFailedVerifierTasks,
 } from '../src/core/hivemind/swarm-supervisor.js';
 
@@ -336,6 +337,87 @@ describe('SwarmCoordinator', () => {
     expect(rejection?.trustScore).to.equal(0.2);
   });
 
+      it('reaches consensus with local-tier agents (#58)', async () => {
+        const blackboard = await Blackboard.create({
+          runId: 'test-consensus-local',
+          storagePath: storageDir,
+        });
+        const author = blackboard.registerAgent('recon');
+        const verifier = blackboard.registerAgent('verifier');
+        if (!author.ok || !verifier.ok) throw new Error('Registration failed');
+
+        // Both agents at local-tier trust (0.5) — the default for self-hosted
+        // models. These must be able to reach consensus, not be silently gated out.
+        blackboard.setAgentTrustScore(author.value.agentId, 0.5);
+        blackboard.setAgentTrustScore(verifier.value.agentId, 0.5);
+
+        const claim = await blackboard.submitClaim(
+          author.value.agentId,
+          'vulnerability_candidate',
+          { file: 'src/app.ts' },
+        );
+        if (!claim.ok) throw new Error(claim.error);
+
+        // One verification from a different agent flips the proposal to
+        // approve-majority (1 approve, 0 reject) with quorum 2 unmet on its own -
+        // but a second verification from a third agent is required for quorum 2.
+        const third = blackboard.registerAgent('verifier');
+        if (!third.ok) throw new Error('Third registration failed');
+        blackboard.setAgentTrustScore(third.value.agentId, 0.5);
+
+        const verify1 = blackboard.verifyClaim(claim.value.claimId, verifier.value.agentId);
+        expect(verify1.ok).to.equal(true);
+        const verify2 = blackboard.verifyClaim(claim.value.claimId, third.value.agentId);
+        expect(verify2.ok).to.equal(true);
+
+        const record = blackboard
+          .getConsensusRecords()
+          .find((r) => r.topic === claim.value.claimId);
+        expect(record, 'consensus record must exist').to.exist;
+        expect(record!.status, 'local-tier agents must be able to reach consensus').to.equal('reached');
+        expect(record!.decision).to.equal('approved');
+      });
+
+      it('keeps a consensus-approved claim status when proposal reaches approval (#58)', async () => {
+        const blackboard = await Blackboard.create({
+          runId: 'test-consensus-approve-status',
+          storagePath: storageDir,
+        });
+        const author = blackboard.registerAgent('recon');
+                if (!author.ok) throw new Error('Author registration failed');
+                const authorId = author.value.agentId;
+                blackboard.setAgentTrustScore(authorId, 0.5);
+
+                const claim = await blackboard.submitClaim(
+                  authorId,
+                  'vulnerability_candidate',
+                  { file: 'src/app.ts' },
+                );
+                if (!claim.ok) throw new Error(claim.error);
+
+        // Two independent verifiers approve: count heuristic -> 'consensus'
+        // (verifyCount >= 2) and the consensus proposal reaches approve-majority.
+        const v1 = blackboard.registerAgent('verifier');
+        const v2 = blackboard.registerAgent('verifier');
+        if (!v1.ok || !v2.ok) throw new Error('Registration failed');
+        const v1Id = v1.value.agentId;
+        const v2Id = v2.value.agentId;
+        blackboard.setAgentTrustScore(v1Id, 0.5);
+        blackboard.setAgentTrustScore(v2Id, 0.5);
+
+        blackboard.verifyClaim(claim.value.claimId, v1Id);
+        blackboard.verifyClaim(claim.value.claimId, v2Id);
+
+        const updated = blackboard.getAllClaims().find((c) => c.claimId === claim.value.claimId);
+        const record = blackboard.getConsensusRecords().find((r) => r.topic === claim.value.claimId);
+
+        // The consensus decision neither downgrades nor blocks the approved claim.
+        expect(updated?.status).not.to.equal('rejected');
+        if (record?.decision === 'rejected') {
+          expect(updated?.status).to.equal('rejected');
+        }
+      });
+
   it('fails reporter tasks that omit an accepted claim from structured output', async () => {
     const blackboard = await Blackboard.create({
       runId: 'test-reporter-integrity',
@@ -606,5 +688,80 @@ describe('SwarmCoordinator', () => {
     workers.set('agent-1', { terminate() {} });
     coordinator.terminateAllWorkers();
     expect(workers.size).to.equal(0);
+  });
+
+  it('resets claims, consensus, and agents when a new mission starts', async () => {
+    const blackboard = await Blackboard.create({
+      runId: 'test-reset-mission',
+      storagePath: storageDir,
+    });
+    const author = blackboard.registerAgent('recon');
+    const verifier = blackboard.registerAgent('verifier');
+    if (!author.ok || !verifier.ok) throw new Error('Registration failed');
+    const claim = await blackboard.submitClaim(
+      author.value.agentId,
+      'vulnerability_candidate',
+      { title: 'Path traversal' },
+    );
+    if (!claim.ok) throw new Error(claim.error);
+    blackboard.verifyClaim(claim.value.claimId, verifier.value.agentId);
+
+    expect(blackboard.getAllClaims()).to.have.length(1);
+    expect(blackboard.getConsensusRecords().length).to.be.greaterThan(0);
+    expect(blackboard.getRegisteredAgents()).to.have.length(2);
+
+    blackboard.resetForNewMission();
+
+    expect(blackboard.getAllClaims()).to.have.length(0);
+    expect(blackboard.getConsensusRecords()).to.have.length(0);
+    expect(blackboard.getRegisteredAgents()).to.have.length(0);
+  });
+});
+
+describe('releaseStaleTasks', () => {
+  function task(overrides: Partial<{ assignedAgent: string; status: string; updatedAt: string }>) {
+    return {
+      assignedAgent: 'agent-1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      dependencies: [],
+      description: 'task',
+      parameters: {},
+      priority: 'high' as const,
+      requiredRole: 'recon',
+      status: 'in_progress',
+      taskId: 'task-1',
+      taskType: 'recon',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  it('does not release an in-progress task whose worker is still alive and heartbeating', () => {
+    const released: string[] = [];
+    const taskGraph = {
+      getTasksByStatus: () => [task({ updatedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString() })],
+      releaseTask: (taskId: string) => { released.push(taskId); return { ok: true }; },
+    } as any;
+
+    // The agent is present and online even though the task has been running
+    // for 20 minutes — a slow-but-live worker must not be re-dispatched.
+    releaseStaleTasks(taskGraph, [{ agentId: 'agent-1', status: 'active' }] as any);
+
+    expect(released).to.deep.equal([]);
+  });
+
+  it('releases an in-progress task whose agent is gone or offline', () => {
+    const released: string[] = [];
+    const taskGraph = {
+      getTasksByStatus: () => [task({})],
+      releaseTask: (taskId: string) => { released.push(taskId); return { ok: true }; },
+    } as any;
+
+    releaseStaleTasks(taskGraph, [] as any);
+    expect(released).to.deep.equal(['task-1']);
+
+    released.length = 0;
+    releaseStaleTasks(taskGraph, [{ agentId: 'agent-1', status: 'offline' }] as any);
+    expect(released).to.deep.equal(['task-1']);
   });
 });

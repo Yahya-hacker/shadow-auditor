@@ -236,6 +236,44 @@ describe('PersistentCheckpointSaver', () => {
     expect((error as Error).message).to.include('Failed to read checkpoint');
   });
 
+  it('ignores stray staged-write files when listing checkpoints', async () => {
+    const saver = new PersistentCheckpointSaver({ storagePath });
+    await saver.initialize();
+    const config = { configurable: { thread_id: 'stray-pending' } };
+    await saver.put(config, checkpoint('real', '2026-01-01T00:00:00.000Z'), metadata, {});
+
+    // Simulate a crash mid-staging: a `.pending.json` file left behind.
+    const threadKey = Buffer.from('stray-pending').toString('base64url');
+    const threadDir = path.join(storagePath, 'langgraph-checkpoints', threadKey);
+    await fs.writeFile(
+      path.join(threadDir, `${Buffer.from('ghost').toString('base64url')}.pending.json`),
+      'not a checkpoint',
+    );
+
+    const ids: string[] = [];
+    for await (const tuple of saver.list(config)) ids.push(tuple.checkpoint.id);
+
+    expect(ids).to.deep.equal(['real']);
+  });
+
+  it('skips a checkpoint removed concurrently during listing', async () => {
+    const saver = new PersistentCheckpointSaver({ storagePath });
+    await saver.initialize();
+    const config = { configurable: { thread_id: 'race-thread' } };
+    await saver.put(config, checkpoint('a', '2026-01-01T00:00:00.000Z'), metadata, {});
+    await saver.put(config, checkpoint('b', '2026-01-02T00:00:00.000Z'), metadata, {});
+
+    const threadKey = Buffer.from('race-thread').toString('base64url');
+    const threadDir = path.join(storagePath, 'langgraph-checkpoints', threadKey);
+    const aPath = path.join(threadDir, `${Buffer.from('a').toString('base64url')}.json`);
+    await fs.rm(aPath, { force: true });
+
+    const ids: string[] = [];
+    for await (const tuple of saver.list(config)) ids.push(tuple.checkpoint.id);
+
+    expect(ids).to.deep.equal(['b']);
+  });
+
   it('rejects a repository-modified checkpoint with valid JSON', async () => {
     const keyPath = path.join(storagePath, 'external-trust', 'checkpoint.key');
     const saver = new PersistentCheckpointSaver({integrityKeyPath: keyPath, storagePath});

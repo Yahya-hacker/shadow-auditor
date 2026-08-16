@@ -52,7 +52,7 @@ function reasoningOptions(azure: AzureProviderConfig, useResponsesApi: boolean):
 export function createAzureModel(input: AzureModelInput): BaseChatModel {
   validateAzureProviderConfig(input.azure);
   const modelIdentity = input.azure.model ?? input.azure.deployment;
-  const responsesOnly = /(?:codex|^gpt-5\.6-sol$)/i.test(modelIdentity);
+  const responsesOnly = /(?:^codex|(?:^|-)codex$|^gpt-5\.6-sol$)/i.test(modelIdentity);
   if (responsesOnly && input.azure.apiMode === 'chat-completions') {
     throw new Error(
       `Azure model "${modelIdentity}" requires the Responses API; set azure.apiMode to "responses" or "auto".`,

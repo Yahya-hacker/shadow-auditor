@@ -272,8 +272,28 @@ export function normalizeProviderToolCalls(
   }
 
   if (options.allowTextEncodedToolCalls === false) {
+    // After finish_task succeeded, tools are disabled: the reporter should
+    // only emit the final prose report. DeepSeek sometimes re-emits DSML
+    // protocol noise instead. Hard-throwing here sits outside withRetry in
+    // the reporting node and would discard the entire audit after all
+    // evidence was collected. Strip the DSML envelope and fall through to
+    // the same no-tool-calls path as stream-processor, so any real prose
+    // still reaches the report.
+    const stripped = content.replace(DSML_TOOL_BLOCK_PATTERN, '');
+    if (stripped.trim()) {
+      return new AIMessage({
+        additional_kwargs: normalizedMessage.additional_kwargs,
+        content: stripped,
+        id: normalizedMessage.id,
+        invalid_tool_calls: normalizedMessage.invalid_tool_calls,
+        name: normalizedMessage.name,
+        response_metadata: normalizedMessage.response_metadata,
+        tool_calls: normalizedMessage.tool_calls,
+        usage_metadata: normalizedMessage.usage_metadata,
+      });
+    }
     throw new Error(
-      'DeepSeek emitted a DSML tool call after tools were disabled for stage finalization.',
+      'DeepSeek emitted only a DSML tool call with no prose after tools were disabled for stage finalization.',
     );
   }
 

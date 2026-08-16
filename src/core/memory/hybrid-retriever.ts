@@ -210,6 +210,27 @@ function isGlobalQuery(query: string): boolean {
   return globalKeywords.some((keyword) => lower.includes(keyword));
 }
 
+/**
+ * Split text into lowercased alphanumeric tokens for relevance comparison.
+ */
+function tokenize(text: string): Set<string> {
+  return new Set(text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+}
+
+/**
+ * Fraction of query tokens that also appear in the candidate text (0..1).
+ * Used by the community strategy to rank summaries by actual relevance to the
+ * query instead of by their storage order.
+ */
+function tokenOverlap(queryTokens: Set<string>, candidateTokens: Set<string>): number {
+  if (queryTokens.size === 0) return 0;
+  let shared = 0;
+  for (const token of queryTokens) {
+    if (candidateTokens.has(token)) shared += 1;
+  }
+  return shared / queryTokens.size;
+}
+
 // ============================================================================
 // Hybrid Retriever
 // ============================================================================
@@ -313,19 +334,31 @@ export class HybridRetriever {
         return [];
       }
 
-      // For global queries, boost community summaries. For local queries, still
-      // include them but with a lower rank.
+      // Rank by lexical overlap with the query, not insertio order: summaries
+      // are stored sorted by community id, so a plain index-based rank made
+      // retrieval quality depend on array order. Token-overlap relevance keeps
+      // the most on-topic summaries on top for both global and local queries.
+      const queryTokens = tokenize(query);
       const globalBoost = isGlobalQuery(query) ? 1.5 : 1;
-      const scored = summaries.map((summary, index) => ({
-        dedupKey: summary.communityId,
-        filePath: '',
-        matchDescription: `Community summary: ${summary.summary.slice(0, 120)}`,
-        payload: { communityId: summary.communityId },
-        rank: index + 1,
-        score: (1 / (index + 1)) * globalBoost,
-        strategy: 'community' as RetrievalStrategy,
-        text: summary.summary,
-      }));
+      const scored = summaries
+        .map((summary, index) => ({
+          dedupKey: summary.communityId,
+          filePath: '',
+          matchDescription: `Community summary: ${summary.summary.slice(0, 120)}`,
+          payload: { communityId: summary.communityId },
+          rank: index + 1,
+          relevance: tokenOverlap(queryTokens, tokenize(summary.summary)),
+          score: 0,
+          strategy: 'community' as RetrievalStrategy,
+          text: summary.summary,
+        }))
+        .sort((a, b) => b.relevance - a.relevance)
+        .map((entry, index) => ({
+          ...entry,
+          // Keep insertion index stable by assigning rank after the sort.
+          rank: index + 1,
+          score: (entry.relevance + 1) * globalBoost,
+        }));
 
       return scored.slice(0, limit);
     } catch (error) {
@@ -374,7 +407,11 @@ export class HybridRetriever {
       const results = lexicalSearch(query, allChunks, { fileFilter, maxResults: limit });
 
       return results.map((r, index) => ({
-        dedupKey: `${r.chunk.filePath}:${r.chunk.startLine}`,
+        // Use the chunk id, not filePath:startLine. Windowed chunks of a large
+        // function can share a startLine (e.g. a long single line), so the
+        // location key would collide and fuse would drop every window but the
+        // first — making the vulnerable tail of a big function unreachable.
+        dedupKey: r.chunk.id,
         filePath: r.chunk.filePath,
         lineRange: { end: r.chunk.endLine, start: r.chunk.startLine },
         matchDescription: `Lexical match: ${r.chunk.symbol} (${r.chunk.structuralType})`,
@@ -404,7 +441,7 @@ export class HybridRetriever {
       });
 
       return results.map((r, index) => ({
-        dedupKey: `${r.chunk.filePath}:${r.chunk.startLine}`,
+        dedupKey: r.chunk.id,
         filePath: r.chunk.filePath,
         lineRange: { end: r.chunk.endLine, start: r.chunk.startLine },
         matchDescription: `Semantic match: ${r.chunk.symbol} (${r.chunk.structuralType})`,

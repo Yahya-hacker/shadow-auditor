@@ -50,8 +50,6 @@ export interface SwarmSupervisorOptions {
   runId: string;
 }
 
-// Maximum time a task can remain in_progress before the supervisor resets it.
-const STALE_IN_PROGRESS_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_FAILED_RETRIES = 3;
 
 type TaskGraph = ReturnType<Blackboard['getTaskGraph']>;
@@ -113,6 +111,11 @@ export function buildSwarmSupervisor(options: {
       }
 
       taskGraph.importTasks([]);
+      // A finished mission must not leak its claims, conflicts, consensus
+      // records, or agent registrations into the next one. Otherwise the
+      // reporter re-reports the previous run's verified/consensus findings on
+      // a new codebase or refactor, and stale agents accumulate.
+      blackboard.resetForNewMission();
     }
 
     const userMessage = coordinator.getUserMessage();
@@ -329,20 +332,33 @@ export function buildSwarmSupervisor(options: {
           await ensureWorkerForAgent(registeredAgent.agentId, registeredAgent.role);
           worker = coordinator.findWorkerByAgentId(agentId);
         } catch (error) {
-          debugLog(`[SwarmCoordinator] Lazy hydration failed for agent ${agentId}: ${error}`);
+              // Surface the real cause rather than a generic "unavailable" reason.
+              // The retry policy should distinguish a transient provider/model
+              // failure (permanent hydration blocker) from a genuinely absent
+              // worker. Marking the task failed with the underlying error lets
+              // that policy decide whether to retry.
+              const reason = error instanceof Error ? error.message : String(error);
+              debugLog(`[SwarmCoordinator] Lazy hydration failed for agent ${agentId}: ${reason}`);
+              if (task) {
+                taskGraph.failTask(taskId, `Hydration failed for agent ${agentId}: ${reason}`);
+              }
+            }
+          }
         }
-      }
-    }
 
-    if (!task || !worker) {
-      if (!task) {
-        debugLog(`[SwarmCoordinator] Task ${taskId} not found in task graph — may have been cancelled or already completed`);
-      }
+        if (!task || !worker) {
+          if (!task) {
+            debugLog(`[SwarmCoordinator] Task ${taskId} not found in task graph — may have been cancelled or already completed`);
+          }
 
-      if (task && !worker) {
-        debugLog(`[SwarmCoordinator] Worker ${agentId} unavailable for task ${taskId} (${task.taskType}) — marking task as failed`);
-        taskGraph.failTask(taskId, `Worker ${agentId} unavailable`);
-      }
+          if (task && !worker) {
+            debugLog(`[SwarmCoordinator] Worker ${agentId} unavailable for task ${taskId} (${task.taskType}) — marking task as failed`);
+            // Only mark permanently failed if this wasn't already failed by a
+            // hydration error above (which carries a more specific reason).
+            if (taskGraph.getTask(taskId)?.status !== 'failed') {
+              taskGraph.failTask(taskId, `Worker ${agentId} unavailable`);
+            }
+          }
 
       return { blackboard: blackboardToState(blackboard) };
     }
@@ -404,12 +420,25 @@ export function buildSwarmSupervisor(options: {
   }
 
   async function cleanup(): Promise<Partial<GraphState>> {
-    const patchProposals = collectPatchCompetitionProposals(blackboard);
-    const synthesis = await coordinator.finalizePatchCompetition(patchProposals);
-    if (synthesis) {
+    // The patch competition is an optional enhancement on top of a completed
+    // mission. If a single patch-engineer worker failed to produce the exact
+    // proposal shape we require, we must NOT fail the whole mission - the
+    // security report has already been produced and the work done elsewhere is
+    // valid. Treat a broken/missing competition as "skipped": log it and return
+    // the report without a synthesis section.
+    try {
+      const patchProposals = collectPatchCompetitionProposals(blackboard);
+      const synthesis = await coordinator.finalizePatchCompetition(patchProposals);
+      if (synthesis) {
+        coordinator.getOnActivity()?.('orchestrator', {
+          kind: 'patch_competition',
+          message: synthesis.summary,
+        });
+      }
+    } catch (error) {
       coordinator.getOnActivity()?.('orchestrator', {
         kind: 'patch_competition',
-        message: synthesis.summary,
+        message: `Patch competition skipped: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
 
@@ -554,15 +583,18 @@ async function executeTaskWithWorker(
   blackboard.completeTask(task.taskId, result);
 }
 
-function releaseStaleTasks(
+export function releaseStaleTasks(
   taskGraph: TaskGraph,
   activeAgents: ReturnType<Blackboard['getActiveAgents']>,
 ): void {
   for (const task of taskGraph.getTasksByStatus('in_progress')) {
     const agent = activeAgents.find((candidate) => candidate.agentId === task.assignedAgent);
-    const runningTooLong =
-      task.updatedAt && Date.now() - new Date(task.updatedAt).getTime() > STALE_IN_PROGRESS_MS;
-    if (!agent || agent.status === 'offline' || runningTooLong) {
+    // Only release when the assigned agent is actually gone or offline. A live
+    // worker heartbeats throughout long tool runs, so a task that has merely
+    // been running for a while must NOT be released — doing so would re-dispatch
+    // it to a second worker and run the same task twice in parallel, racing
+    // completeTask and marking the loser failed.
+    if (!agent || agent.status === 'offline') {
       taskGraph.releaseTask(task.taskId);
     }
   }

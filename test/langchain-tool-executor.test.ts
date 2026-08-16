@@ -216,6 +216,73 @@ describe('executeLangChainToolLoop', () => {
     expect(estimates[1]).to.be.greaterThan(300);
   });
 
+  it('falls back to collected evidence when budget-finalization returns DSML-only output (#33)', async () => {
+    const BAR = '\uFF5C';
+    const dsmlBlock =
+      `<${BAR}${BAR}DSML${BAR}${BAR}tool_calls>` +
+      `<${BAR}${BAR}DSML${BAR}${BAR}invoke name="read_file_content">` +
+      `<${BAR}${BAR}DSML${BAR}${BAR}parameter name="filePath" string="true">src/a.ts</${BAR}${BAR}DSML${BAR}${BAR}parameter>` +
+      `</${BAR}${BAR}DSML${BAR}${BAR}invoke>` +
+      `</${BAR}${BAR}DSML${BAR}${BAR}tool_calls>`;
+    let streamCount = 0;
+    const model = {
+      bindTools() {
+        return {
+          // Main loop: first invoke requests a tool, budget exhausts on the
+          // second invoke (step === maxToolSteps) which is denied and finalized.
+          async *stream() {
+            streamCount += 1;
+            yield streamCount === 1
+              ? new AIMessageChunk({
+                content: 'Synthesizing from collected evidence, final follows.',
+                tool_calls: [{
+                  args: {},
+                  id: 'runtime-call',
+                  name: 'inspect',
+                  type: 'tool_call' as const,
+                }],
+              })
+              : new AIMessageChunk({
+                content: '',
+                tool_calls: [{
+                  args: {},
+                  id: 'runtime-call-2',
+                  name: 'inspect',
+                  type: 'tool_call' as const,
+                }],
+              });
+          },
+        };
+      },
+      // The budget-finalization invocation uses options.model directly; it
+      // deliberately emits ONLY a DSML tool-call envelope (no prose), which
+      // used to hard-throw in the normalizer. With text-encoded calls allowed
+      // it is parsed, and since it carries no prose the executor falls back to
+      // the last collected evidence instead of returning a blank answer.
+      async invoke() {
+        return new AIMessage(dsmlBlock);
+      },
+    };
+
+    const result = await executeLangChainToolLoop({
+      maxToolSteps: 1,
+      model: model as never,
+      prompt: 'Analyze.',
+      providerHint: 'deepseek',
+      systemPrompt: 'Use tools.',
+      tools: {
+        inspect: {
+          description: 'Inspect.',
+          async execute() {
+            return 'ok';
+          },
+          inputSchema: z.object({}),
+        },
+      },
+    });
+
+    expect(result.text).to.contain('Synthesizing from collected evidence');
+  });
   it('does not expose an incomplete DeepSeek protocol prefix as worker progress', async () => {
     const activities: string[] = [];
     const model = {

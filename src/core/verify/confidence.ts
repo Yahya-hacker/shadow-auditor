@@ -51,11 +51,13 @@ export function calculateConfidence(factors: ConfidenceFactors): ConfidenceResul
   const breakdown: Record<string, number> = {};
   const warnings: string[] = [];
   let confidence = 0;
-
-  // Base evidence score from tool runs
+  // Base evidence score from tool runs. toolRunScore is capped at 0.3. The
+  // baseEvidence weight (0.2) is the share of overall confidence that tool-run
+  // evidence may contribute; scaling by 1/baseEvidence lets a full complement
+  // of tool runs reach that full share instead of a small fraction of it.
   const toolRunScore = Math.min(factors.toolRunCount * 0.1, 0.3);
   breakdown.tool_runs = toolRunScore;
-  confidence += toolRunScore * CONFIDENCE_WEIGHTS.baseEvidence * 5;
+  confidence += toolRunScore * CONFIDENCE_WEIGHTS.baseEvidence * (1 / CONFIDENCE_WEIGHTS.baseEvidence);
 
   // Code evidence
   if (factors.codeEvidencePresent) {

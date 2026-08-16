@@ -27,6 +27,7 @@ interface PinnedRequest {
   body: string;
   family: 4 | 6;
   headers: Record<string, string>;
+  method: 'GET' | 'POST';
   signal: AbortSignal;
   url: URL;
 }
@@ -34,6 +35,7 @@ interface PinnedRequest {
 interface PinnedResponse {
   body: string;
   headers: http.IncomingHttpHeaders;
+  statusCode: number;
 }
 
 export function maybeCreateHttpInvoker(endpoint?: string): MCPRawInvoker | undefined {
@@ -71,7 +73,7 @@ export function createHttpInvoker(
       throw new Error('MCP endpoint resolved to a blocked or unavailable address.');
     }
 
-    const response = await pinnedPost({
+    let response = await pinnedPost({
       address: resolved.address,
       body: JSON.stringify({
         ...(id === undefined ? {} : { id }),
@@ -85,9 +87,19 @@ export function createHttpInvoker(
         ...(sessionId ? { 'mcp-session-id': sessionId } : {}),
         'mcp-protocol-version': MCP_PROTOCOL_VERSION,
       },
+      method: 'POST',
       signal,
       url: resolved.url,
     });
+
+    // Streamable HTTP long-task flow: a spec-compliant server may defer slow
+    // operations (e.g. kali/chrome tools) with 202 Accepted plus a Location
+    // polling URL, delivering the JSON-RPC result only once the task finishes.
+    // Follow the Location chain instead of treating 202 as a hard error.
+    if (response.statusCode === 202 && typeof response.headers.location === 'string') {
+      response = await followLocation(response.headers.location, resolved.family, signal);
+    }
+
     const responseSession = response.headers['mcp-session-id'];
     if (typeof responseSession === 'string' && responseSession.trim()) {
       sessionId = responseSession;
@@ -103,6 +115,55 @@ export function createHttpInvoker(
     return payload.result;
   }
 
+  /**
+   * Poll a deferred 202+Location endpoint until the JSON-RPC result is ready.
+   * Each hop may return either the finished body or another 202+Location to
+   * keep polling. The session id is threaded through so the server associates
+   * the poll with the original request.
+   */
+  async function followLocation(
+    location: string,
+    family: 4 | 6,
+    signal: AbortSignal,
+  ): Promise<PinnedResponse> {
+    let target = new URL(location, validUrl);
+    let pollSessionId = sessionId;
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const resolved = await resolver(target.href);
+      if (!resolved) {
+        throw new Error('MCP endpoint resolved to a blocked or unavailable address.');
+      }
+
+      const response = await pinnedPost({
+        address: resolved.address,
+        body: '',
+        family: resolved.family,
+        headers: {
+          accept: 'text/event-stream, application/json',
+          ...(pollSessionId ? { 'mcp-session-id': pollSessionId } : {}),
+        },
+        method: 'GET',
+        signal,
+        url: resolved.url,
+      });
+
+      const pollSession = response.headers['mcp-session-id'];
+      if (typeof pollSession === 'string' && pollSession.trim()) {
+        pollSessionId = pollSession;
+      }
+
+      if (response.statusCode === 202 && typeof response.headers.location === 'string') {
+        target = new URL(response.headers.location, target);
+        continue;
+      }
+
+      return response;
+    }
+
+    throw new Error('MCP endpoint kept returning 202 Accepted with new polling URLs (dropped after 10 hops).');
+  }
+
   async function initialize(signal: AbortSignal): Promise<void> {
     await rpc('initialize', {
       capabilities: {},
@@ -113,12 +174,17 @@ export function createHttpInvoker(
   }
 
   return async (operation: string, input: Record<string, unknown>, signal?: AbortSignal) => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(new Error('MCP request timed out.')), 30_000);
-    const abortFromCaller = () => controller.abort(signal?.reason);
-    signal?.addEventListener('abort', abortFromCaller, { once: true });
+      // Bail immediately when the caller is already aborting: addEventListener
+      // does not re-fire for a pre-aborted signal, so without this a fresh request
+      // would still be dispatched and held for the full timeout window.
+      if (signal?.aborted) throw signal.reason ?? new Error('MCP request aborted.');
 
-    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(new Error('MCP request timed out.')), 30_000);
+      const abortFromCaller = () => controller.abort(signal?.reason);
+      signal?.addEventListener('abort', abortFromCaller, { once: true });
+
+      try {
       initializePromise ??= initialize(controller.signal).catch((error: unknown) => {
         initializePromise = undefined;
         sessionId = undefined;
@@ -137,12 +203,32 @@ export function createHttpInvoker(
 }
 
 function parseMcpResponse(body: string, expectedId: number): JsonRpcResponse {
-  const candidates = body
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith('data:'))
-    .map((line) => line.slice(5).trim())
-    .filter((line) => line && line !== '[DONE]');
-  const sources = candidates.length > 0 ? candidates : [body];
+  // SSE events are separated by blank lines; a single event may carry several
+  // `data:` lines that together form one payload (joined by `\n`). Parsing each
+  // line individually would break multi-line JSON, so we first group contiguous
+  // `data:` lines into whole events before attempting to parse.
+  const lines = body.split(/\r?\n/);
+  const events = lines
+    .reduce<string[]>((events, line) => {
+      if (line.trim() === '') {
+          if (events.length > 0 && events[events.length - 1] !== '') events.push('');
+        return events;
+      }
+      if (line.startsWith('data:')) {
+          const payload = line.slice(5).trim();
+          const last = events[events.length - 1];
+          if (last === undefined || last === '') {
+            events.push(payload);
+          } else {
+            events[events.length - 1] = `${last}\n${payload}`;
+          }
+        }
+        return events;
+      }, [])
+      .map((event) => event.trim())
+      .filter((event) => event && event !== '[DONE]');
+
+  const sources = events.length > 0 ? events : [body];
 
   for (const source of sources) {
     let parsed: unknown;
@@ -166,7 +252,7 @@ function parseMcpResponse(body: string, expectedId: number): JsonRpcResponse {
 }
 
 async function pinnedPost(requestOptions: PinnedRequest): Promise<PinnedResponse> {
-  const { address, body, family, headers, signal, url } = requestOptions;
+  const { address, body, family, headers, method, signal, url } = requestOptions;
   const transport = url.protocol === 'https:' ? https : http;
   const lookup: LookupFunction = (_hostname, options, callback) => {
     if (typeof options === 'object' && options.all) {
@@ -181,15 +267,15 @@ async function pinnedPost(requestOptions: PinnedRequest): Promise<PinnedResponse
     const request = transport.request(url, {
       headers: {
         ...headers,
-        'content-length': Buffer.byteLength(body).toString(),
+        ...(body ? { 'content-length': Buffer.byteLength(body).toString() } : {}),
         'content-type': 'application/json',
       },
       lookup,
-      method: 'POST',
+      method,
       signal,
     }, (response) => {
       const statusCode = response.statusCode ?? 0;
-      if (statusCode < 200 || statusCode >= 300) {
+      if (statusCode >= 300) {
         response.resume();
         reject(new Error(`MCP endpoint error (${statusCode}): ${response.statusMessage ?? 'Unknown error'}`));
         return;
@@ -209,6 +295,7 @@ async function pinnedPost(requestOptions: PinnedRequest): Promise<PinnedResponse
       response.on('end', () => resolve({
         body: Buffer.concat(chunks).toString('utf8'),
         headers: response.headers,
+        statusCode,
       }));
       response.on('error', reject);
     });

@@ -23,7 +23,7 @@ Use filesystem traversal and shell commands to ingest every file without omissio
 If full ingestion is not immediately possible (access denied, missing tools, extreme size), attempt workarounds such as cloning from source or requesting elevated permissions. If workarounds fail, stop that ingestion path and report: the specific files or directories affected, the reason access failed, and what was and was not successfully ingested. Partial ingestion is a critical failure — report completeness explicitly.
 
 **2. Repo-Map Generation**
-Produce a complete, navigable map of the repository structure in **JSON or YAML**, suitable for programmatic consumption by downstream agents. The map must reflect the actual file tree, distinguish between logical layers (entry points, core modules, utilities, tests, config, infrastructure), and annotate each node with its role and significance. In a monorepo, the map must capture the top-level workspace structure as well as per-package subtrees. The repo-map is the authoritative reference all downstream agents will use — accuracy is non-negotiable.
+Produce a complete, navigable map of the repository structure that is emitted inside a `<repo_map>` tagged section. The section content must be Markdown; if needed, include a fenced JSON/YAML block inside that Markdown for machine readability. The map must reflect the actual file tree, distinguish between logical layers (entry points, core modules, utilities, tests, config, infrastructure), and annotate each node with its role and significance. In a monorepo, the map must capture the top-level workspace structure as well as per-package subtrees. The repo-map is the authoritative reference all downstream agents will use — accuracy is non-negotiable.
 
 **3. Code Location & Indexing**
 Use AST tools (tree-sitter, ctags, or ripgrep-based symbol search) to identify and index all meaningful code units at the depth prescribed by the tiered strategy: functions, classes, modules, interfaces, exported symbols, and entry points. For each unit, record its file path, line range, signature, and purpose inferred from implementation and context. Ambiguous purpose must be flagged, not guessed.
@@ -34,7 +34,7 @@ Map all dependencies at every level:
 - **External**: all third-party packages with declared versions (from manifests and lockfiles), distinguishing runtime, dev, peer, and optional dependencies
 - **Implicit**: environment variables consumed, external services called, filesystem paths assumed, ports bound
 
-Produce a dependency graph embedded in the JSON/YAML repo-map output. Flag version conflicts, deprecated packages, and unresolved imports.
+Produce a dependency graph embedded in the `<repo_map>` output. Flag version conflicts, deprecated packages, and unresolved imports.
 
 **5. Environment Inspection**
 Extract the full environment contract the codebase expects:
@@ -62,14 +62,14 @@ Synthesize the above into a **markdown analysis report** (human-readable) coveri
 
 ---
 
-**Output Contract**
+**Output Contract (Parser-Aligned)**
 
-Deliver two artifacts:
+Deliver exactly two tagged sections, in order:
 
-1. **Structured Repo-Map** (JSON or YAML): file tree with annotations, dependency graph, entry points, symbol index, environment contract, and secret detection findings (locations only). This is the machine-readable artifact consumed by downstream agents.
+1. `<repo_map>`: Non-empty Markdown containing the structured repository map (file tree with annotations, dependency graph, entry points, symbol index, environment contract, and secret findings locations only). If you need rigid structure, embed fenced JSON/YAML inside this Markdown section.
 
-2. **Markdown Analysis Report**: human-readable synthesis of findings organized into clearly labeled sections. Every claim must cite the source file and line range. Every gap or uncertainty must be explicitly flagged with its location and the reason it could not be resolved.
+2. `<codebase_report>`: Non-empty Markdown analysis report with evidence-backed architecture, data flows, coverage, exclusions, anomalies, and unresolved items. Every claim must cite file path and line range.
 
-Do not summarize when detail is required. Do not omit files because they seem unimportant. Do not speculate about intent — report what the code does and where it does it.
+Do not emit the final handoff outside these two tags. Do not summarize when detail is required. Do not omit files because they seem unimportant. Do not speculate about intent — report what the code does and where it does it.
 
-Close with a completion summary: total files ingested, total symbols indexed, languages detected, secret findings count (no values), tiered depth strategy applied, ingestion failures or workarounds attempted, and all unresolved items — so downstream agents know the completeness of the intelligence they are receiving.
+Close the `<codebase_report>` section with a completion summary: total files ingested, total symbols indexed, languages detected, secret findings count (no values), tiered depth strategy applied, ingestion failures or workarounds attempted, and all unresolved items.
