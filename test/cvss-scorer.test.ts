@@ -49,6 +49,16 @@ describe('cvss-scorer', () => {
       expect(score).to.be.closeTo(9.8, 0.1);
     });
 
+    it('scores PR:L with Unchanged scope as 8.8 (High), not inflated to Critical', () => {
+      // Regression: Unchanged-scope PR:L must use 0.62, not the Changed-scope
+      // value 0.68. With the bug the score inflated to 9.0 (Critical).
+      const parsed = parseCvssVector('CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H');
+      expect(parsed.valid).to.be.true;
+      const score = computeCvssBaseScore(parsed.metrics!);
+      expect(score).to.equal(8.8);
+      expect(cvssScoreToSeverityLabel(score)).to.equal('High');
+    });
+
     it('computes 0 when all impact metrics are None', () => {
       const parsed = parseCvssVector('CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N');
       expect(parsed.valid).to.be.true;

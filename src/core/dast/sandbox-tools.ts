@@ -11,6 +11,7 @@
 import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 
+import { type SignedExecutionEvidenceStore } from './evidence-store.js';
 import { type SandboxManager } from './sandbox-manager.js';
 
 // =============================================================================
@@ -18,6 +19,7 @@ import { type SandboxManager } from './sandbox-manager.js';
 // =============================================================================
 
 export interface SandboxToolsOptions {
+  evidenceStore?: SignedExecutionEvidenceStore;
   sandboxManager: SandboxManager;
 }
 
@@ -25,11 +27,25 @@ export interface SandboxToolsOptions {
  * Create agent-facing sandbox tools for verifier and exploit-analyst roles.
  */
 export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
-  const { sandboxManager } = options;
+  const {evidenceStore, sandboxManager} = options;
   const mirage = sandboxManager.getMirage();
+  const sandboxExecInputSchema = z.object({
+    command: z.string().min(1).describe('Shell command to execute inside the sandbox'),
+    findingId: z.string().min(1).max(200).optional().describe(
+      'Exact SAST candidate finding ID this execution validates.',
+    ),
+  }).superRefine((value, context) => {
+    if (evidenceStore && !value.findingId) {
+      context.addIssue({
+        code: 'custom',
+        message: 'findingId is required when signed execution evidence is enabled.',
+        path: ['findingId'],
+      });
+    }
+  });
 
   return {
-    check_oast_logs: tool<{ domain?: string; token?: string }, string>({
+    check_oast_logs: tool({
       description: [
         'Query the Mirage OAST callback log to check if the target application',
         'made an outbound request to a specific domain or OAST token.',
@@ -38,9 +54,10 @@ export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
         'Provide either a domain filter (e.g., "oast-abc123.shadow.local") or a token.',
       ].join(' '),
 
-      async execute({ domain, token }) {
+      async execute({ domain, token }, executionOptions) {
+        executionOptions.abortSignal?.throwIfAborted();
         // Sync latest logs from the Mirage container
-        await mirage.syncLog();
+        await mirage.syncLog(executionOptions.abortSignal);
 
         const filter = domain ?? token ?? '';
         const callbacks = filter
@@ -65,7 +82,7 @@ export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
       }),
     }),
 
-    sandbox_deploy: tool<{ startCommand?: string }, string>({
+    sandbox_deploy: tool({
       description: [
         'Start the target application inside the DAST sandbox container.',
         'Optionally provide a start command override (e.g., "npm start").',
@@ -73,15 +90,16 @@ export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
         'network with all outbound traffic routed through the Mirage OAST proxy.',
       ].join(' '),
 
-      async execute({ startCommand }) {
+      async execute({ startCommand }, executionOptions) {
         try {
           if (!sandboxManager.isRunning()) {
-            await sandboxManager.create();
+            await sandboxManager.create(executionOptions.abortSignal);
           }
 
-          const result = await sandboxManager.deploy();
+          const result = await sandboxManager.deploy(executionOptions.abortSignal, startCommand);
           return result;
         } catch (error) {
+          executionOptions.abortSignal?.throwIfAborted();
           return `[ERROR] Sandbox deploy failed: ${error instanceof Error ? error.message : String(error)}`;
         }
       },
@@ -91,7 +109,7 @@ export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
       }),
     }),
 
-    sandbox_exec: tool<{ command: string }, string>({
+    sandbox_exec: tool({
       description: [
         'Execute a command inside the DAST sandbox target container.',
         'Use this to run exploit payloads (e.g., curl commands, Python scripts)',
@@ -100,41 +118,51 @@ export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
         'Returns stdout, stderr, exit code, and execution duration.',
       ].join(' '),
 
-      async execute({ command }) {
+      async execute({command, findingId}, executionOptions) {
         try {
           if (!sandboxManager.isRunning()) {
             return '[ERROR] Sandbox is not running. Call sandbox_deploy first.';
           }
 
-          const result = await sandboxManager.exec(command);
+          const result = await sandboxManager.exec(command, executionOptions.abortSignal);
+          const evidenceArtifact = evidenceStore
+            ? await evidenceStore.recordSandboxExecution(findingId!, result)
+            : undefined;
 
           return JSON.stringify({
             command: result.command,
             durationMs: result.durationMs,
+            evidenceArtifact: evidenceArtifact && {
+              artifactId: evidenceArtifact.artifactId,
+              digest: evidenceArtifact.digest,
+              findingId: evidenceArtifact.findingId,
+              publicKeyFingerprint: evidenceArtifact.publicKeyFingerprint,
+              signatureAlgorithm: evidenceArtifact.signatureAlgorithm,
+            },
             exitCode: result.exitCode,
             stderr: result.stderr.slice(0, 3000),
             stdout: result.stdout.slice(0, 5000),
           }, null, 2);
         } catch (error) {
+          executionOptions.abortSignal?.throwIfAborted();
           return `[ERROR] Sandbox exec failed: ${error instanceof Error ? error.message : String(error)}`;
         }
       },
 
-      inputSchema: z.object({
-        command: z.string().min(1).describe('Shell command to execute inside the sandbox'),
-      }),
+      inputSchema: sandboxExecInputSchema,
     }),
 
-    sandbox_status: tool<Record<string, never>, string>({
+    sandbox_status: tool({
       description: [
         'Check the status of the DAST sandbox environment.',
         'Returns whether the target container and Mirage OAST proxy are running,',
         'the network name, and the count of OAST callbacks captured so far.',
       ].join(' '),
 
-      async execute() {
+      async execute(_input, executionOptions) {
         try {
-          const status = await sandboxManager.status();
+          executionOptions.abortSignal?.throwIfAborted();
+          const status = await sandboxManager.status(executionOptions.abortSignal);
 
           return JSON.stringify({
             containerRunning: status.containerRunning,
@@ -143,6 +171,7 @@ export function createSandboxTools(options: SandboxToolsOptions): ToolSet {
             oastCallbackCount: status.oastCallbackCount,
           }, null, 2);
         } catch (error) {
+          executionOptions.abortSignal?.throwIfAborted();
           return `[ERROR] Status check failed: ${error instanceof Error ? error.message : String(error)}`;
         }
       },

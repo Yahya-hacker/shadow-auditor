@@ -1,618 +1,298 @@
-import { Box, Static, Text, useApp } from 'ink';
-import SelectInput from 'ink-select-input';
-import Spinner from 'ink-spinner';
-import TextInput from 'ink-text-input';
-import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import React, { useEffect, useRef, useState } from 'react';
+/**
+ * Shadow Auditor — OpenTUI Application Root.
+ *
+ * Replaces the Ink render tree with OpenTUI's Yoga-based renderer.
+ * Screen routing and Zustand store integration remain identical —
+ * only the rendering layer has changed.
+ */
+import React, { useCallback, useEffect, useState } from 'react';
 
-import { AgentSession, type AgentStreamEvent } from '../core/agent.js';
-import { enforceLicenseGate, type LicenseGateResult } from '../core/policy/license-guard.js';
+import type { ShadowConfig } from '../utils/config.js';
+
+import { enforceLicenseGate } from '../core/policy/license-guard.js';
 import { buildDiffScopeHint, getChangedFiles } from '../core/tools/git-diff.js';
-import { AsciiMotionCli } from '../utils/ascii-motion-cli.js';
-import { loadConfig, registerSecretStoreAdapter, saveConfig, ShadowConfig } from '../utils/config.js';
-import { KeychainAdapter } from '../utils/keychain.js';
-import { generateRepoMap } from '../utils/repo-map.js';
-import { getModelPlaceholder } from '../utils/setup.js';
+import {
+  assertAuditTargetIdentity,
+  isAuditTargetChangedError,
+} from '../utils/audit-target.js';
+import { AgentSessionProvider } from './AgentSessionContext.js';
+import { ErrorBoundary } from './components/ErrorBoundary.js';
+import { ConfirmDialog } from './ConfirmDialog.js';
+import { buildEffectiveConfig } from './effective-config.js';
+import { useAgentSession } from './hooks/useAgentSession.js';
+import { useIncrementalWatch } from './hooks/useIncrementalWatch.js';
+import { Box, useKeyHandler } from "./primitives.js";
+import { resumeRestoredSession } from './resume-session.js';
+import { BootScreen } from './screens/BootScreen.js';
+import { HistoryScreen } from './screens/HistoryScreen.js';
+import { InitializingScreen } from './screens/InitializingScreen.js';
+import { LicensePaywallScreen } from './screens/LicensePaywallScreen.js';
+import { SetupScreen } from './screens/SetupScreen.js';
+import { ShellScreen } from './screens/ShellScreen.js';
+import { TargetSelectionScreen } from './screens/TargetSelectionScreen.js';
+import { ToolsScreen } from './screens/ToolsScreen.js';
+import { requestShutdown } from './shutdown.js';
+import { useAppStore } from './store/appStore.js';
 
-// Types
-type AppState =
-  | 'booting'
-  | 'initializing'
-  | 'license-blocked'
-  | 'setup'
-  | 'setup-apikey'
-  | 'setup-baseurl'
-  | 'setup-license'
-  | 'setup-model'
-  | 'setup-provider'
-  | 'shell'
-  | 'targetSelection';
-
-type Message = {
-  id: string;
-  role: 'agent' | 'error' | 'system' | 'user';
-  text: string;
-};
-
-type ActivityEventLine = {
-  id: string;
-  text: string;
-  kind: AgentStreamEvent['kind'];
-};
-
-const MAX_ACTIVITY_EVENTS = 40;
-
-function formatActivityLine(event: AgentStreamEvent): string {
-  const timestamp = new Date(event.timestamp).toLocaleTimeString();
-  const toolSuffix = event.toolName ? ` [${event.toolName}]` : '';
-
-  switch (event.kind) {
-    case 'tool_call': {
-      return `${timestamp} ▶ ${event.message}${toolSuffix}`;
-    }
-
-    case 'tool_result': {
-      return `${timestamp} ✓ ${event.message}${toolSuffix}`;
-    }
-
-    default: {
-      return `${timestamp} • ${event.message}${toolSuffix}`;
-    }
-  }
-}
-
-const ActivityStreamPanel = ({
-  activityEvents,
-  isProcessing,
-}: {
-  activityEvents: ActivityEventLine[];
-  isProcessing: boolean;
-}) => (
-  <Box borderColor="blue" borderStyle="round" flexDirection="column" marginBottom={1} paddingX={1}>
-    <Text bold color="blue">Live Activity Stream</Text>
-    {activityEvents.length === 0 && isProcessing && (
-      <Text color="gray">Waiting for first tool or status event...</Text>
-    )}
-    {activityEvents.slice(-8).map((event) => {
-      let color = 'gray';
-      let isItalic = false;
-
-
-      return (
-        <Text color={color} key={event.id}>
-          {isItalic ? `\x1b[3m${event.text}\x1b[0m` : event.text}
-        </Text>
-      );
-    })}
-  </Box>
-);
-
-const providerOptions = [
-  { label: 'Anthropic (Claude)', value: 'anthropic' },
-  { label: 'OpenAI (GPT-4o, o1, o3)', value: 'openai' },
-  { label: 'Google (Gemini)', value: 'google' },
-  { label: 'Mistral', value: 'mistral' },
-  { label: 'Ollama (Local)', value: 'ollama' },
-  { label: 'Custom (OpenAI-Compatible)', value: 'custom' },
-];
-
-// =============================================================================
-// License Paywall Component
-// =============================================================================
-
-const LicensePaywall = ({ gateResult, onRetry }: { gateResult: LicenseGateResult; onRetry: () => void }) => (
-  <Box flexDirection="column" padding={1}>
-    <Box borderColor="yellow" borderStyle="round" flexDirection="column" paddingX={2} paddingY={1}>
-      <Text bold color="yellow">⚡ PRO FEATURE</Text>
-      <Box marginTop={1}>
-        <Text>
-          The feature <Text bold color="cyan">{gateResult.feature}</Text> requires a{' '}
-          <Text bold color="magenta">{gateResult.requiredTier?.toUpperCase()}</Text> license.
-        </Text>
-      </Box>
-      <Box marginTop={1}>
-        <Text color="gray">
-          Your current tier: <Text bold>{gateResult.currentTier?.toUpperCase() ?? 'FREE'}</Text>
-        </Text>
-      </Box>
-    </Box>
-
-    <Box flexDirection="column" marginTop={1} paddingX={1}>
-      <Text bold color="green">🔑 Upgrade to unlock:</Text>
-      <Text color="gray">  • Deep SAST analysis with full taint tracing</Text>
-      <Text color="gray">  • Comprehensive PDF/Markdown security reports</Text>
-      <Text color="gray">  • CI/CD integration with exit codes</Text>
-      <Text color="gray">  • Priority support</Text>
-    </Box>
-
-    <Box marginTop={1} paddingX={1}>
-      <Text>
-        👉 <Text bold color="cyan" underline>{gateResult.upgradeUrl}</Text>
-      </Text>
-    </Box>
-
-    <Box marginTop={1} paddingX={1}>
-      <Text color="gray" dimColor>
-        Already purchased? Run <Text bold>shadow-auditor --reconfigure</Text> to enter your license key.
-      </Text>
-    </Box>
-  </Box>
-);
-
-const App = ({
-  ciEnabled,
-  diffEnabled,
-  expertUnsafe,
-  failOn,
-  forceReconfigure,
-  mode,
-  since,
-}: {
+export interface AppProps {
   ciEnabled?: boolean;
+  config: null | ShadowConfig;
   diffEnabled?: boolean;
   expertUnsafe: boolean;
   failOn?: string;
-  forceReconfigure: boolean;
+  initialTarget?: string;
   mode?: string;
+  needsSetup?: boolean;
+  resumeRunId?: string;
   since?: string;
-  // eslint-disable-next-line complexity
+  swarmEnabled?: boolean;
+  watchEnabled?: boolean;
+}
+
+export const App: React.FC<AppProps> = ({
+  ciEnabled,
+  config: initialConfig,
+  diffEnabled,
+  expertUnsafe,
+  failOn,
+  initialTarget,
+  mode,
+  needsSetup,
+  resumeRunId,
+  since,
+  swarmEnabled,
+  watchEnabled,
 }) => {
-  const [appState, setAppState] = useState<AppState>('booting');
-  const [config, setConfig] = useState<null | ShadowConfig>(null);
-  const [targetPath, setTargetPath] = useState<string>('');
-  const [licenseGateResult, setLicenseGateResult] = useState<LicenseGateResult | null>(null);
-
-  // Setup Wizard State
-  const [setupData, setSetupData] = useState<Partial<ShadowConfig>>({});
-  const [setupInput, setSetupInput] = useState<string>('');
-
-  // Custom Path Input
-  const [useCurrentDir, setUseCurrentDir] = useState<boolean>(true);
-  const [customPathInput, setCustomPathInput] = useState<string>('');
-  const [pathError, setPathError] = useState<string>('');
-
-  // Shell State
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [activeMessage, setActiveMessage] = useState<Message | null>(null);
-  const [input, setInput] = useState<string>('');
-  const [agentSession, setAgentSession] = useState<AgentSession | null>(null);
-  const [activityEvents, setActivityEvents] = useState<ActivityEventLine[]>([]);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const activityEventCounter = useRef(0);
-  const keychainRegistered = useRef(false);
+  const setConfig = useAppStore((state) => state.setConfig);
+  const screen = useAppStore((state) => state.screen);
+  const setScreen = useAppStore((state) => state.setScreen);
+  const sessionTarget = useAppStore((state) => state.session.targetPath);
+  const targetIdentity = useAppStore((state) => state.session.targetIdentity);
+  const setSessionError = useAppStore((state) => state.setSessionError);
+  const setSessionPhase = useAppStore((state) => state.setSessionPhase);
+  const setLicenseGate = useAppStore((state) => state.setLicenseGate);
+  const addErrorMessage = useAppStore((state) => state.addErrorMessage);
+  const setFocusScope = useAppStore((state) => state.setFocusScope);
+  const setTargetPath = useAppStore((state) => state.setSessionTarget);
+  const setHumanInputRequest = useAppStore((state) => state.setHumanInputRequest);
+  const userName = useAppStore((state) => state.userName);
+  // Dialog state subscriptions — required so App re-renders when
+  // a confirmation or human-input request becomes active.
+  const confirmationOpen = useAppStore((s) => s.confirmation.open);
+  const humanInputRequest = useAppStore((s) => s.humanInputRequest);
+  useKeyHandler((event) => {
+    if (event.ctrlKey && event.key.toLowerCase() === 'c') {
+      requestShutdown(130).catch(() => {
+        process.exitCode = 130;
+      });
+    }
+  }, screen !== 'shell' || Boolean(confirmationOpen) || Boolean(humanInputRequest));
+  const { agentSessionRef, initSession } = useAgentSession();
+  useIncrementalWatch(Boolean(watchEnabled && screen === 'shell'), sessionTarget, agentSessionRef);
 
   useEffect(() => {
-    // Config Load Effect
-    const checkConfig = async () => {
-      const cfg = forceReconfigure ? null : await loadConfig();
-      if (cfg) {
-        setConfig(cfg);
-        setAppState('targetSelection');
-      } else {
-        setAppState('setup-provider');
+    if (initialConfig) {
+      setConfig(initialConfig);
+    }
+  }, [initialConfig, setConfig]);
+
+  const [_pendingSetup, setPendingSetup] = useState(needsSetup);
+
+  // Track terminal height so the root can be clamped to the viewport. Without a
+  // concrete height the flex chain has no bound, the frame grows taller than the
+  // terminal, and Ink leaves un-erased "ghost" copies of prior frames on screen.
+  const [terminalRows, setTerminalRows] = useState(process.stdout.rows || 24);
+  useEffect(() => {
+    const onResize = () => setTerminalRows(process.stdout.rows || 24);
+    if (process.stdout.isTTY) process.stdout.on('resize', onResize);
+    return () => {
+      if (process.stdout.isTTY) process.stdout.off('resize', onResize);
+    };
+  }, []);
+
+  const handleBootComplete = useCallback(() => {
+    setPendingSetup(false);
+    if (needsSetup) {
+      setScreen('setup');
+    } else if (initialTarget) {
+      setTargetPath(path.resolve(initialTarget));
+      setScreen('target');
+    } else {
+      setScreen('target');
+    }
+  }, [initialTarget, needsSetup, setScreen, setTargetPath]);
+
+  useEffect(() => {
+    const storedConfig = useAppStore.getState().config;
+    if (screen !== 'initializing' || !sessionTarget || !targetIdentity || !storedConfig) return;
+
+    let cancelled = false;
+
+    const init = async () => {
+      try {
+        assertAuditTargetIdentity(targetIdentity);
+        const effectiveConfig = buildEffectiveConfig(storedConfig, {
+          ciEnabled,
+          diffBase: since,
+          diffEnabled,
+          failOn,
+          mode,
+          swarmEnabled,
+        });
+
+        const gateResult = await enforceLicenseGate(effectiveConfig);
+        if (!gateResult.allowed) {
+          if (cancelled) return;
+          setLicenseGate(gateResult);
+          setScreen('license-blocked');
+          return;
+        }
+
+        let diffScopeHint: string | undefined;
+        if (diffEnabled) {
+          const changedFiles = await getChangedFiles({
+            baseRef: since ?? 'HEAD~1',
+            cwd: sessionTarget,
+          });
+          diffScopeHint = buildDiffScopeHint(changedFiles) || undefined;
+        }
+
+        await initSession(effectiveConfig, targetIdentity, {
+          diffScopeHint,
+          expertUnsafe,
+          resumeRunId,
+          userName: userName || undefined,
+        });
+        const restoredHumanInput = resumeRunId
+          ? await agentSessionRef.current?.getPendingHumanInput() ?? null
+          : null;
+        if (resumeRunId && !restoredHumanInput && agentSessionRef.current) {
+          await resumeRestoredSession(agentSessionRef.current);
+        }
+
+        if (cancelled) return;
+
+        setHumanInputRequest(restoredHumanInput);
+        setSessionPhase('ready');
+        setFocusScope(path.basename(sessionTarget) || sessionTarget);
+        setScreen('shell');
+      } catch (error) {
+        if (cancelled) return;
+        const message = (error as Error).message;
+        setSessionError(message);
+        setSessionPhase('error');
+        addErrorMessage(`Failed to initialize: ${message}`);
+        if (isAuditTargetChangedError(error)) {
+          setTargetPath(sessionTarget);
+          setScreen('target');
+          return;
+        }
+
+        setScreen('shell');
       }
     };
 
-    if (appState === 'setup') {
-      checkConfig();
-    }
-  }, [appState, forceReconfigure]);
+    init();
 
-  const handleProviderSelect = (item: { value: string }) => {
-    setSetupData({ ...setupData, provider: item.value });
-    if (item.value === 'custom') {
-      setAppState('setup-baseurl');
-    } else {
-      setAppState('setup-model');
-    }
-  };
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    screen,
+    sessionTarget,
+    targetIdentity,
+    mode,
+    ciEnabled,
+    diffEnabled,
+    expertUnsafe,
+    failOn,
+    resumeRunId,
+    since,
+    swarmEnabled,
+    agentSessionRef,
+    initSession,
+    addErrorMessage,
+    setSessionError,
+    setLicenseGate,
+    setHumanInputRequest,
+    setScreen,
+  ]);
 
-  const handleBaseUrlInput = (value: string) => {
-    setSetupData({ ...setupData, customBaseUrl: value });
-    setSetupInput('');
-    setAppState('setup-model');
-  };
+  // ── Screen routing ────────────────────────────────────────────────────
 
-  const handleModelInput = async (value: string) => {
-    const updated = { ...setupData, model: value };
-    setSetupData(updated);
-    setSetupInput('');
+  const renderScreen = () => {
+    switch (screen) {
+      case 'boot': {
+        return <BootScreen onBootComplete={handleBootComplete} />;
+      }
 
-    if (updated.provider === 'ollama') {
-      const finalConfig = { ...updated, apiKey: '' } as ShadowConfig;
-      await saveConfig(finalConfig);
-      setConfig(finalConfig);
-      setAppState('targetSelection');
-    } else {
-      setAppState('setup-apikey');
-    }
-  };
+      case 'history': {
+              return (
+                <ErrorBoundary>
+                  <HistoryScreen />
+                </ErrorBoundary>
+              );
+            }
 
-  const handleApiKeyInput = async (value: string) => {
-    const finalConfig = { ...setupData, apiKey: value } as ShadowConfig;
-    await saveConfig(finalConfig);
-    setConfig(finalConfig);
-    setSetupInput('');
-    setAppState('setup-license');
-  };
+      case 'initializing': {
+        return <InitializingScreen />;
+      }
 
-  const handleLicenseKeyInput = async (value: string) => {
-    if (value.trim()) {
-      const updatedConfig = { ...config!, licenseKey: value.trim() };
-      await saveConfig(updatedConfig);
-      setConfig(updatedConfig);
-    }
+      case 'license-blocked': {
+        return <LicensePaywallScreen />;
+      }
 
-    setSetupInput('');
-    setAppState('targetSelection');
-  };
+      case 'setup': {
+        return <SetupScreen />;
+      }
 
-  useEffect(() => {
-    // Register KeychainAdapter once at boot
-    if (!keychainRegistered.current) {
-      keychainRegistered.current = true;
-      registerSecretStoreAdapter(new KeychainAdapter());
-    }
-
-    if (appState === 'booting') {
-      // The animation has ~1 frame taking 83.3ms, we loop false
-      // Give it 1.5s then jump to next state
-      const timer = setTimeout(() => {
-        setAppState('setup');
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-
-    if (appState === 'initializing' && targetPath && config) {
-      const initSession = async () => {
-        try {
-          // Build effective config with CLI flag overrides
-          const effectiveConfig: ShadowConfig = {
-            ...config,
-            ...(mode ? { auditMode: mode as ShadowConfig['auditMode'] } : {}),
-            ...(ciEnabled ? { ci: { enabled: true, failOn: (failOn ?? 'high') as 'critical' | 'high' | 'low' | 'medium' | 'none' } } : {}),
-            ...(diffEnabled ? { diff: { baseRef: since ?? 'HEAD~1', enabled: true } } : {}),
-          };
-
-          // License gate check
-          const gateResult = await enforceLicenseGate(effectiveConfig);
-          if (!gateResult.allowed) {
-            setLicenseGateResult(gateResult);
-            setAppState('license-blocked');
-            return;
-          }
-
-          const map = await generateRepoMap(targetPath);
-
-          // Build diff scope hint for incremental mode
-          let diffScopeHint: string | undefined;
-          if (diffEnabled) {
-            const changedFiles = await getChangedFiles({
-              baseRef: since ?? 'HEAD~1',
-              cwd: targetPath,
-            });
-            diffScopeHint = buildDiffScopeHint(changedFiles) || undefined;
-          }
-
-          const session = new AgentSession(effectiveConfig, map, targetPath, {
-            diffScopeHint,
-            expertUnsafe,
-          });
-          setAgentSession(session);
-
-          setAppState('shell');
-        } catch (error) {
-          setMessages([{
-            id: 'init-error',
-            role: 'error',
-            text: `Failed to initialize: ${(error as Error).message}`
-          }]);
-          setAppState('shell'); // Go to shell to show error
+      case 'shell': {
+        // When a confirmation dialog or human-input request is active,
+        // render ONLY the dialog (modal behavior). Uses subscribed
+        // values so the component re-renders when dialog state changes.
+        const hasDialog = confirmationOpen || humanInputRequest;
+        if (hasDialog) {
+          return (
+            <AgentSessionProvider agentSessionRef={agentSessionRef}>
+              <ConfirmDialog />
+            </AgentSessionProvider>
+          );
         }
-      };
 
-      initSession();
-    }
-  }, [appState, targetPath, config, expertUnsafe, mode, ciEnabled, failOn, diffEnabled, since]);
-
-  const handlePathSubmit = async (p: string) => {
-    try {
-      const resolved = path.resolve(p);
-      const stat = await fs.stat(resolved);
-      if (!stat.isDirectory()) {
-        setPathError('Target path is not a directory.');
-        return;
+        return (
+          <AgentSessionProvider agentSessionRef={agentSessionRef}>
+            <ErrorBoundary>
+              <ShellScreen />
+            </ErrorBoundary>
+          </AgentSessionProvider>
+        );
       }
 
-      setTargetPath(resolved);
-      setAppState('initializing');
-    } catch {
-      setPathError('Target path does not exist.');
-    }
-  };
-
-  const handleUseCurrentDirSubmit = (value: string) => {
-    if (value.toLowerCase() === 'y' || value.toLowerCase() === 'yes' || value === '') {
-      handlePathSubmit(process.cwd());
-    } else {
-      setUseCurrentDir(false);
-      setCustomPathInput(''); // clear the "n" typed
-    }
-  };
-
-  const { exit } = useApp();
-
-  const handleCommandSubmit = async (command: string) => {
-    if (!command.trim() || isProcessing) return;
-
-    if ([':q', ':quit', 'exit', 'quit'].includes(command.trim().toLowerCase())) {
-      exit();
-      return;
-    }
-
-    const newMsgId = Date.now().toString();
-    const userMsg: Message = { id: `u-${newMsgId}`, role: 'user', text: command };
-    setMessages(prev => [...prev, userMsg]);
-    setInput('');
-
-    if (!agentSession) {
-       setMessages(prev => [...prev, { id: `e-${newMsgId}`, role: 'error', text: 'Agent session not initialized.' }]);
-       return;
-    }
-
-    setIsProcessing(true);
-    setActivityEvents([]);
-    const agentMsgId = `a-${newMsgId}`;
-    setActiveMessage({ id: agentMsgId, role: 'agent', text: '' });
-
-    try {
-      let finalResponse = '';
-      await agentSession.sendMessage(
-        command,
-        (chunk: string) => {
-          finalResponse += chunk;
-          setActiveMessage({ id: agentMsgId, role: 'agent', text: finalResponse });
-        },
-        (event: AgentStreamEvent) => {
-          const line = formatActivityLine(event);
-          activityEventCounter.current += 1;
-          setActivityEvents((prev) => [
-            ...prev,
-            {
-              id: `activity-${activityEventCounter.current}`,
-              kind: event.kind,
-              text: line,
-            },
-          ].slice(-MAX_ACTIVITY_EVENTS));
-        },
-      );
-      setMessages(prev => [...prev, { id: agentMsgId, role: 'agent', text: finalResponse }]);
-      setActiveMessage(null);
-    } catch (error) {
-      const errMsg = (error as Error).message;
-      if (errMsg.includes('API key') || errMsg.includes('401') || errMsg.includes('authentication')) {
-        setMessages(prev => [...prev, { id: `e-${Date.now()}`, role: 'error', text: 'Authentication failed. Run again with --reconfigure.' }]);
-      } else {
-        setMessages(prev => [...prev, { id: `e-${Date.now()}`, role: 'error', text: `Error: ${errMsg}` }]);
+      case 'target': {
+        return <TargetSelectionScreen initialTarget={sessionTarget ?? undefined} />;
       }
 
-      setActiveMessage(null);
-    } finally {
-      setIsProcessing(false);
+      case 'tools': {
+        return (
+          <AgentSessionProvider agentSessionRef={agentSessionRef}>
+            <ToolsScreen />
+          </AgentSessionProvider>
+        );
+      }
+
+      default: {
+        return <BootScreen />;
+      }
     }
   };
 
-  const rows = process.stdout.rows || 24;
-  const columns = process.stdout.columns || 80;
-
+  // Root: clamp to the terminal height and clip overflow. A concrete height
+  // gives the flex chain a definite bound (so OutputArea's viewport can size
+  // itself) and keeps Ink from emitting frames taller than the screen.
   return (
-    <Box flexDirection="column" minHeight={rows} width={columns}>
-      {appState === 'booting' && (
-        <Box alignItems="center" flexDirection="column" height="100%" justifyContent="center">
-          <AsciiMotionCli autoPlay loop={false} />
-          <Box marginTop={1}>
-            <Text color="cyan">Booting Shadow Auditor...</Text>
-          </Box>
-        </Box>
-      )}
-      {appState === 'setup' && (
-        <Text>Loading configuration...</Text>
-      )}
-      {appState === 'setup-provider' && (
-        <Box flexDirection="column" padding={1}>
-          <Box marginBottom={1}>
-            <Text bold color="cyan">🔓 SHADOW AUDITOR :: Configuration Wizard</Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text>Select your LLM provider:</Text>
-          </Box>
-          <SelectInput items={providerOptions} onSelect={handleProviderSelect} />
-        </Box>
-      )}
-      {appState === 'setup-baseurl' && (
-        <Box flexDirection="column" padding={1}>
-          <Box marginBottom={1}>
-            <Text bold color="cyan">🔓 SHADOW AUDITOR :: Configuration Wizard</Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text>Enter your custom API base URL:</Text>
-          </Box>
-          <Box>
-            <Text color="gray">❯ </Text>
-            <TextInput
-              onChange={setSetupInput}
-              onSubmit={handleBaseUrlInput}
-              placeholder="https://api.your-provider.com/v1"
-              value={setupInput}
-            />
-          </Box>
-        </Box>
-      )}
-      {appState === 'setup-model' && (
-        <Box flexDirection="column" padding={1}>
-          <Box marginBottom={1}>
-            <Text bold color="cyan">🔓 SHADOW AUDITOR :: Configuration Wizard</Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text>Enter the model name:</Text>
-          </Box>
-          <Box>
-            <Text color="gray">❯ </Text>
-            <TextInput
-              onChange={setSetupInput}
-              onSubmit={handleModelInput}
-              placeholder={getModelPlaceholder(setupData.provider || '')}
-              value={setupInput}
-            />
-          </Box>
-        </Box>
-      )}
-      {appState === 'setup-apikey' && (
-        <Box flexDirection="column" padding={1}>
-          <Box marginBottom={1}>
-            <Text bold color="cyan">🔓 SHADOW AUDITOR :: Configuration Wizard</Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text>Enter your API key:</Text>
-          </Box>
-          <Box>
-            <Text color="gray">❯ </Text>
-            <TextInput
-              mask="*"
-              onChange={setSetupInput}
-              onSubmit={handleApiKeyInput}
-              value={setupInput}
-            />
-          </Box>
-        </Box>
-      )}
-      {appState === 'setup-license' && (
-        <Box flexDirection="column" padding={1}>
-          <Box marginBottom={1}>
-            <Text bold color="cyan">🔓 SHADOW AUDITOR :: Configuration Wizard</Text>
-          </Box>
-          <Box marginBottom={1}>
-            <Text>Enter your license key <Text color="gray">(press Enter to skip — free tier)</Text>:</Text>
-          </Box>
-          <Box>
-            <Text color="gray">❯ </Text>
-            <TextInput
-              onChange={setSetupInput}
-              onSubmit={handleLicenseKeyInput}
-              placeholder="SA-XXXX-XXXX-XXXX-XXXX"
-              value={setupInput}
-            />
-          </Box>
-          <Box marginTop={1}>
-            <Text color="gray" dimColor>Get a license at: https://polar.sh/Yahya-hacker/shadow-auditor</Text>
-          </Box>
-        </Box>
-      )}
-      {appState === 'license-blocked' && licenseGateResult && (
-        <LicensePaywall gateResult={licenseGateResult} onRetry={() => setAppState('setup-license')} />
-      )}
-      {appState === 'targetSelection' && (
-        <Box flexDirection="column">
-          <Box borderColor="cyan" borderStyle="round" paddingX={2} paddingY={1}>
-            <Text bold color="cyan">Shadow Auditor Target Selection</Text>
-          </Box>
-          <Box flexDirection="column" marginTop={1}>
-            {useCurrentDir ? (
-              <Box>
-                <Text color="yellow">Use current directory (</Text>
-                <Text bold>{process.cwd()}</Text>
-                <Text color="yellow">) for the audit? [Y/n] </Text>
-                <TextInput
-                  onChange={setCustomPathInput}
-                  onSubmit={handleUseCurrentDirSubmit}
-                  value={customPathInput}
-                />
-              </Box>
-            ) : (
-              <Box flexDirection="column">
-                <Box>
-                  <Text color="yellow">Enter target directory: </Text>
-                  <TextInput
-                    onChange={setCustomPathInput}
-                    onSubmit={handlePathSubmit}
-                    value={customPathInput}
-                  />
-                </Box>
-                {pathError && <Text color="red">{pathError}</Text>}
-              </Box>
-            )}
-          </Box>
-        </Box>
-      )}
-      {appState === 'initializing' && (
-        <Box flexDirection="column" padding={1}>
-          <Text color="cyan"><Spinner type="dots" /> Parsing AST with tree-sitter & initializing agent...</Text>
-        </Box>
-      )}
-      {appState === 'shell' && (
-        <Box flexDirection="column" height="100%">
-          {/* Header */}
-          <Box borderColor="magenta" borderStyle="round" flexDirection="column" paddingX={2} paddingY={1}>
-            <Text bold color="magenta">Shadow Auditor</Text>
-            <Text color="gray">Interactive Security Analysis Shell</Text>
-            <Text color="yellow">Tip: Type a command to start investigating the codebase.</Text>
-          </Box>
-
-          {/* Status Bar */}
-          <Box marginBottom={1} paddingX={1}>
-            <Text color="blue">● Environment loaded: </Text>
-            <Text color="white">
-              Provider: {config?.provider} | Model: {config?.model} | Target: {path.basename(targetPath)}
-              {expertUnsafe ? ' | Mode: EXPERT-UNSAFE' : ''}
-            </Text>
-          </Box>
-
-          {/* Chat History */}
-          <Static items={messages}>
-            {(msg) => (
-              <Box flexDirection="column" key={msg.id} marginBottom={1}>
-                <Text color={msg.role === 'user' ? 'green' : msg.role === 'error' ? 'red' : 'cyan'}>
-                  {msg.role === 'user' ? '❯ ' : msg.role === 'error' ? '✖ ' : '● '}
-                  {msg.text}
-                </Text>
-              </Box>
-            )}
-          </Static>
-
-          {/* Input Area */}
-          <Box flexDirection="column" marginTop={1}>
-            {(isProcessing || activityEvents.length > 0) && (
-              <ActivityStreamPanel activityEvents={activityEvents} isProcessing={isProcessing} />
-            )}
-            {activeMessage && (
-               <Box flexDirection="column" marginBottom={1}>
-                 <Text color="cyan">● Streaming response</Text>
-                 <Text color="cyan">{activeMessage.text}</Text>
-                </Box>
-             )}
-            <Box>
-              <Text color="green">{targetPath} [✓] </Text>
-            </Box>
-            <Box>
-              <Text bold color="magenta">❯ </Text>
-              {isProcessing ? (
-                 <Text color="cyan"><Spinner type="dots" /> Agent is thinking...</Text>
-              ) : (
-                <TextInput
-                  onChange={setInput}
-                  onSubmit={handleCommandSubmit}
-                  placeholder="Describe a task or ask a question to get started..."
-                  value={input}
-                />
-              )}
-            </Box>
-            <Box marginTop={1}>
-              <Text color="gray" dimColor>Type 'exit' or Ctrl+C to leave the shell.</Text>
-            </Box>
-          </Box>
-        </Box>
-      )}
+    <Box flexDirection="column" height={terminalRows} overflow="hidden" width="100%">
+      {renderScreen()}
     </Box>
   );
 };

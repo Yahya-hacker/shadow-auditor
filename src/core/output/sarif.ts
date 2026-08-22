@@ -1,7 +1,13 @@
+import type {
+  ReportingDescriptor,
+  Log as SarifLog,
+  Result as SarifResult,
+} from 'sarif';
+
 import type { EnhancedFinding, EnhancedReport } from './finding-schema.js';
 import type { SecurityFinding, SecurityReport } from './report-schema.js';
 
-type SarifLevel = 'error' | 'note' | 'warning';
+type SarifLevel = 'error' | 'none' | 'note' | 'warning';
 
 function toSarifLevel(severity: EnhancedFinding['severityLabel'] | SecurityFinding['severity_label']): SarifLevel {
   switch (severity) {
@@ -10,14 +16,17 @@ function toSarifLevel(severity: EnhancedFinding['severityLabel'] | SecurityFindi
       return 'error';
     }
 
+    case 'Low': {
+      return 'note';
+    }
+
     case 'Medium': {
       return 'warning';
     }
 
     case 'Info':
-    case 'Low':
     default: {
-      return 'note';
+      return 'none';
     }
   }
 }
@@ -34,7 +43,7 @@ function enhancedFindingMessage(finding: EnhancedFinding): string {
   return `${finding.title} (${finding.cwe}, CVSS 3.1: ${finding.cvssV31Score}, Confidence: ${(finding.confidence * 100).toFixed(0)}%)`;
 }
 
-export function generateSarifReport(report: SecurityReport): Record<string, unknown> {
+export function generateSarifReport(report: SecurityReport): SarifLog {
   const sortedFindings = [...report.findings].sort((a, b) => a.vuln_id.localeCompare(b.vuln_id));
   const uniqueRules = new Map<string, SecurityFinding>();
 
@@ -44,7 +53,10 @@ export function generateSarifReport(report: SecurityReport): Record<string, unkn
     }
   }
 
-  const rules = [...uniqueRules.values()].map((finding) => ({
+  const rules: ReportingDescriptor[] = [...uniqueRules.values()].map((finding) => ({
+    defaultConfiguration: {
+      level: toSarifLevel(finding.severity_label),
+    },
     id: finding.vuln_id,
     name: finding.title,
     shortDescription: {
@@ -52,7 +64,7 @@ export function generateSarifReport(report: SecurityReport): Record<string, unkn
     },
   }));
 
-  const results = sortedFindings.map((finding) => ({
+  const results: SarifResult[] = sortedFindings.map((finding) => ({
     level: toSarifLevel(finding.severity_label),
     locations: finding.file_paths.map((filePath) => ({
       physicalLocation: {
@@ -89,7 +101,7 @@ export function generateSarifReport(report: SecurityReport): Record<string, unkn
 /**
  * Generate SARIF 2.1.0 report from enhanced report format.
  */
-export function generateEnhancedSarifReport(report: EnhancedReport): Record<string, unknown> {
+export function generateEnhancedSarifReport(report: EnhancedReport): SarifLog {
   const sortedFindings = [...report.findings].sort((a, b) => a.vulnId.localeCompare(b.vulnId));
   const uniqueRules = new Map<string, EnhancedFinding>();
 
@@ -136,13 +148,13 @@ export function generateEnhancedSarifReport(report: EnhancedReport): Record<stri
     },
   }));
 
-  const results = sortedFindings.map((finding) => {
-    const result: Record<string, unknown> = {
+  const results: SarifResult[] = sortedFindings.map((finding) => {
+    const result: SarifResult = {
       level: toSarifLevel(finding.severityLabel),
       locations: finding.locations.map((loc) => ({
         logicalLocations: loc.functionName || loc.className ? [
           {
-            fullyQualifiedName: loc.className 
+            fullyQualifiedName: loc.className
               ? `${loc.className}.${loc.functionName ?? ''}`
               : loc.functionName,
             kind: loc.className ? 'member' : 'function',
@@ -167,9 +179,9 @@ export function generateEnhancedSarifReport(report: EnhancedReport): Record<stri
       message: {
         text: enhancedFindingMessage(finding),
       },
-      partialFingerprints: {
-        'primaryLocationLineHash': finding.locations[0]?.snippetHash,
-      },
+      partialFingerprints: finding.locations[0]?.snippetHash
+        ? { primaryLocationLineHash: finding.locations[0].snippetHash }
+        : undefined,
       properties: {
         attackerPersonas: finding.attackerPersonas,
         confidence: finding.confidence,
@@ -230,16 +242,6 @@ export function generateEnhancedSarifReport(report: EnhancedReport): Record<stri
         }));
     }
 
-    // Add fixes if code example provided
-    if (finding.remediation.codeExample) {
-      result.fixes = [{
-        description: {
-          text: finding.remediation.summary,
-        },
-        // Note: SARIF fixes require specific replacements, simplified here
-      }];
-    }
-
     return result;
   });
 
@@ -250,7 +252,13 @@ export function generateEnhancedSarifReport(report: EnhancedReport): Record<stri
         invocations: [{
           endTimeUtc: report.metadata.generatedAt,
           executionSuccessful: true,
-          startTimeUtc: report.metadata.generatedAt,
+          // Compute startTimeUtc defensively: it MUST be before endTimeUtc
+          // per SARIF spec §3.13.3. Fall back to 1s before endTime if
+          // durationMs is missing, zero, or negative.
+          startTimeUtc: computeSafeStartTime(
+            report.metadata.generatedAt,
+            report.metadata.durationMs,
+          ),
         }],
         properties: {
           runId: report.metadata.runId,
@@ -259,9 +267,12 @@ export function generateEnhancedSarifReport(report: EnhancedReport): Record<stri
         results,
         tool: {
           driver: {
+            fullName: 'Shadow Auditor — AI-Native SAST',
             informationUri: 'https://github.com/Yahya-hacker/shadow-auditor',
             name: 'shadow-auditor',
+            organization: 'Shadow Auditor',
             rules,
+            semanticVersion: report.metadata.toolVersion,
             version: report.metadata.toolVersion,
           },
         },
@@ -274,4 +285,42 @@ export function generateEnhancedSarifReport(report: EnhancedReport): Record<stri
     ],
     version: '2.1.0',
   };
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+/**
+ * Compute a safe startTimeUtc that is always strictly before endTimeUtc.
+ * Per SARIF spec §3.13.3, startTimeUtc MUST precede endTimeUtc.
+ *
+ * Guards against NaN from malformed ISO 8601 inputs — if Date.parse fails,
+ * endMs is NaN and all arithmetic cascades to 0 (epoch). We defensively
+ * fall back to one second before the current time so the result is always
+ * a valid ISO 8601 timestamp where startTime < endTime.
+ */
+function computeSafeStartTime(
+  endTimeIso: string,
+  durationMs?: number,
+): string {
+  const endMs = new Date(endTimeIso).getTime();
+  if (Number.isNaN(endMs)) {
+    // Defensive fallback: use current time as endTime
+    const now = Date.now();
+    return new Date(now - 1000).toISOString();
+  }
+
+  if (durationMs != null && durationMs > 0) { // eslint-disable-line no-eq-null, eqeqeq
+    const startMs = Math.max(0, endMs - durationMs);
+    // Ensure startTime is strictly before endTime (minimum 1ms gap)
+    if (startMs >= endMs) {
+      return new Date(endMs - 1000).toISOString();
+    }
+
+    return new Date(startMs).toISOString();
+  }
+
+  // Fallback: assume at least 1 second before endTime
+  return new Date(Math.max(0, endMs - 1000)).toISOString();
 }

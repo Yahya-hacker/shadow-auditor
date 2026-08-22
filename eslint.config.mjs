@@ -13,7 +13,7 @@ export default [
 	{
 		files: ['**/*.{ts,tsx,js,mjs,cjs}'],
 		rules: {
-			'@typescript-eslint/no-unused-vars': 'off',
+			'@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
 			camelcase: 'off',
 			'no-await-in-loop': 'off',
 			'prefer-destructuring': 'off',

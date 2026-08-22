@@ -83,31 +83,38 @@ export async function validateAndRepairReport({
   repair,
   responseText,
 }: ValidateAndRepairOptions): Promise<ValidateAndRepairResult> {
-  let attempts = 0;
   let candidate = extractJsonBlock(responseText);
 
-  while (true) {
+  // At most (maxRetries + 1) total attempts: the initial parse plus up to
+  // maxRetries repair rounds. The loop condition is explicit rather than
+  // while(true) so the bound is visible at the declaration site.
+  const maxTotalAttempts = maxRetries + 1;
+  for (let attempt = 0; attempt < maxTotalAttempts; attempt++) {
     const validation = validateCandidate(candidate);
     if (validation.report) {
       return {
-        attempts,
+        attempts: attempt,
         jsonText: candidate ?? JSON.stringify(validation.report),
-        repaired: attempts > 0,
+        repaired: attempt > 0,
         report: validation.report,
       };
     }
 
-    if (!repair || attempts >= maxRetries) {
+    // No repair function or we're on the last allowed attempt — fail fast.
+    if (!repair || attempt >= maxRetries) {
       throw new Error(`Unable to validate report JSON. ${validation.error ?? 'Unknown validation failure.'}`);
     }
 
-    attempts += 1;
     const repairedOutput = await repair({
-      attempt: attempts,
+      attempt: attempt + 1,
       lastCandidate: candidate,
       validationError: validation.error ?? 'Unknown validation failure.',
     });
 
     candidate = extractJsonBlock(repairedOutput) ?? repairedOutput.trim();
   }
+
+  // Should be unreachable (the loop always throws or returns), but the
+  // exhaustive check satisfies TypeScript's control-flow analysis.
+  throw new Error('Report validation exceeded maximum repair attempts.');
 }

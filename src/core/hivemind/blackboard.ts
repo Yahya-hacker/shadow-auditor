@@ -6,7 +6,13 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
+import type { EventStore } from '../memory/event-store.js';
+import type { KnowledgeGraph } from '../memory/knowledge-graph.js';
+
+import { recoverAtomicWrite, writeFileAtomic } from '../../utils/fs-atomic.js';
+import { logToStderr } from '../../utils/stderr-logger.js';
 import { err, ok, type Result, safeParseJson } from '../schema/base.js';
+import { ConsensusManager } from './consensus.js';
 import {
   type AgentRegistration,
   agentRegistrationSchema,
@@ -14,8 +20,8 @@ import {
   type BlackboardState,
   blackboardStateSchema,
   type ConflictMarker,
-  conflictMarkerSchema,
   type ConflictType,
+  type ConsensusRecord,
   type EvidenceClaim,
   evidenceClaimSchema,
   type EvidenceClaimStatus,
@@ -25,7 +31,10 @@ import {
 import { TaskGraph } from './task-graph.js';
 
 export interface BlackboardOptions {
+  consensusManager?: ConsensusManager;
+  eventStore?: EventStore;
   heartbeatTimeout?: number; // ms before agent considered offline
+  knowledgeGraph?: KnowledgeGraph;
   runId: string;
   storagePath: string;
 }
@@ -39,23 +48,32 @@ export type TaskListener = (task: Task) => void;
  */
 export class Blackboard {
   private agents: Map<string, AgentRegistration> = new Map();
+  private agentTrustScores: Map<string, number> = new Map();
   private claims: Map<string, EvidenceClaim> = new Map();
   private claimSubmittedListeners: Set<ClaimListener> = new Set();
   private claimTypeListeners: Map<string, Set<ClaimListener>> = new Map();
   private claimVerifiedListeners: Set<ClaimListener> = new Set();
   private conflictCreatedListeners: Set<ConflictListener> = new Set();
   private conflicts: Map<string, ConflictMarker> = new Map();
-private readonly heartbeatTimeout: number;
+  private readonly consensusManager: ConsensusManager;
+  private readonly eventStore?: EventStore;
+  private readonly heartbeatTimeout: number;
+  private readonly knowledgeGraph?: KnowledgeGraph;
   private readonly runId: string;
   private readonly snapshotPath: string;
   private taskCompletedListeners: Set<TaskListener> = new Set();
   private readonly taskGraph: TaskGraph;
+  // Serializes mutating operations so concurrent async writes cannot interleave.
+  private writeQueue: Promise<void> = Promise.resolve();
 
   private constructor(options: BlackboardOptions) {
     this.runId = options.runId;
     this.snapshotPath = path.join(options.storagePath, 'blackboard.json');
     this.heartbeatTimeout = options.heartbeatTimeout ?? 60_000;
     this.taskGraph = new TaskGraph();
+    this.eventStore = options.eventStore;
+    this.knowledgeGraph = options.knowledgeGraph;
+    this.consensusManager = options.consensusManager ?? new ConsensusManager();
   }
 
   /**
@@ -120,6 +138,15 @@ private readonly heartbeatTimeout: number;
       return err('Agent cannot contest its own claim');
     }
 
+    if (claim.contestedBy.includes(contestingAgentId)) {
+      return err('Agent has already contested this claim');
+    }
+
+    const contestingTrustScore = this.agentTrustScores.get(contestingAgentId);
+    if (contestingTrustScore === undefined) {
+      return err(`Trust score is not registered for contesting agent: ${contestingAgentId}`);
+    }
+
     const updated: EvidenceClaim = {
       ...claim,
       contestedBy: [...claim.contestedBy, contestingAgentId],
@@ -128,7 +155,19 @@ private readonly heartbeatTimeout: number;
 
     this.claims.set(claimId, updated);
 
-    // Create conflict marker
+    // Cast a rejection vote on the consensus proposal for this claim,
+    // including evidence hash and trust score for epistemic gating.
+    const proposal = this.consensusManager.getActiveProposals().find((p) => p.topic === claimId);
+    if (proposal) {
+      this.consensusManager.vote(proposal.consensusId, contestingAgentId, 'reject', {
+        evidenceHash: updated.evidenceHash,
+        trustScore: contestingTrustScore,
+      });
+          // Propagate the final consensus decision to the claim status.
+          this.applyConsensusDecision(claimId);
+        }
+
+        // Create conflict marker
     this.createConflict('contradictory_evidence', [claim.agentId, contestingAgentId], {
       claimId,
       reason,
@@ -170,6 +209,17 @@ private readonly heartbeatTimeout: number;
   }
 
   /**
+   * Close expired consensus proposals and return the records that timed out.
+   *
+   * The supervisor calls this each consensus-evaluation superstep so proposals
+   * do not linger in 'voting' forever — without it, `checkTimeouts` is never
+   * invoked and consensus state never transitions to 'timeout'/'failed'.
+   */
+  expireConsensusProposals(): ConsensusRecord[] {
+    return this.consensusManager.checkTimeouts();
+  }
+
+  /**
    * Get all active agents.
    */
   getActiveAgents(): AgentRegistration[] {
@@ -185,6 +235,20 @@ private readonly heartbeatTimeout: number;
    */
   getAgentsByRole(role: AgentRole): AgentRegistration[] {
     return this.getActiveAgents().filter((agent) => agent.role === role);
+  }
+
+  /**
+   * Get all claims.
+   */
+  getAllClaims(): EvidenceClaim[] {
+    return [...this.claims.values()];
+  }
+
+  /**
+   * Get all conflicts.
+   */
+  getAllConflicts(): ConflictMarker[] {
+    return [...this.conflicts.values()];
   }
 
   /**
@@ -209,11 +273,47 @@ private readonly heartbeatTimeout: number;
   }
 
   /**
+   * Get all consensus records (proposals and their votes).
+   *
+   * Delegates to the consensus manager so the supervisor can flow consensus
+   * state into the checkpointed LangGraph blackboard channel — without this,
+   * proposals and votes are only persisted to the JSON snapshot and are lost
+   * from graph checkpoints.
+   */
+  getConsensusRecords(): ConsensusRecord[] {
+    return this.consensusManager.exportRecords();
+  }
+
+  /**
    * Get open conflicts.
    */
   getOpenConflicts(): ConflictMarker[] {
     return [...this.conflicts.values()].filter((c) => c.status === 'open' || c.status === 'resolving');
   }
+
+  /**
+   * Get every registered agent, regardless of heartbeat freshness.
+   *
+   * Unlike `getActiveAgents`, this does not filter by heartbeat. It is
+   * used by the supervisor to reconcile in-memory workers against persisted
+   * agent registrations when resuming a run from a checkpoint — a crashed
+   * process has stale heartbeats but the agent identities must still map to
+   * live workers for task dispatch to resume.
+   */
+  getRegisteredAgents(): AgentRegistration[] {
+    return [...this.agents.values()];
+  }
+
+  /**
+   * Get the run ID.
+   */
+  getRunId(): string {
+    return this.runId;
+  }
+
+  // ==========================================================================
+  // Evidence Claims
+  // ==========================================================================
 
   /**
    * Get claims with skepticism annotations for cross-tier consumption.
@@ -236,10 +336,6 @@ private readonly heartbeatTimeout: number;
       return { ...claim };
     });
   }
-
-  // ==========================================================================
-  // Evidence Claims
-  // ==========================================================================
 
   /**
    * Get the task graph.
@@ -326,12 +422,9 @@ private readonly heartbeatTimeout: number;
     }
 
     this.agents.set(agentId, registration);
+    this.agentTrustScores.set(agentId, 0.5);
     return ok(registration);
   }
-
-  // ==========================================================================
-  // Persistence
-  // ==========================================================================
 
   /**
    * Resolve a conflict.
@@ -353,38 +446,80 @@ private readonly heartbeatTimeout: number;
     return ok(updated);
   }
 
+  // ==========================================================================
+  // Persistence
+  // ==========================================================================
+
   /**
    * Save blackboard state.
+   *
+   * Enqueued behind `writeQueue` so that snapshot captures are atomic with
+   * respect to concurrent claim submissions — without this, a snapshot write
+   * could interleave with a `submitClaim` mutation and produce a corrupt or
+   * inconsistent JSON file.
    */
   async saveSnapshot(): Promise<void> {
-    const state: BlackboardState = {
-      agents: [...this.agents.values()],
-      claims: [...this.claims.values()],
-      conflicts: [...this.conflicts.values()],
-      consensusRecords: [], // Persisted via dedicated consensus manager flow.
-      runId: this.runId,
-      schemaVersion: '1.0.0',
-      snapshotAt: new Date().toISOString(),
-      tasks: this.taskGraph.exportTasks(),
-    };
+    return this.enqueueWrite(async () => {
+      const state: BlackboardState = {
+        agents: [...this.agents.values()],
+        claims: [...this.claims.values()],
+        conflicts: [...this.conflicts.values()],
+        consensusRecords: this.consensusManager.exportRecords(),
+        runId: this.runId,
+        schemaVersion: '1.0.0',
+        snapshotAt: new Date().toISOString(),
+        tasks: this.taskGraph.exportTasks(),
+      };
 
-    const validation = blackboardStateSchema.safeParse(state);
-    if (!validation.success) {
-      throw new Error(`Invalid blackboard state: ${validation.error.message}`);
+      const validation = blackboardStateSchema.safeParse(state);
+      if (!validation.success) {
+        throw new Error(`Invalid blackboard state: ${validation.error.message}`);
+      }
+
+      await writeFileAtomic(this.snapshotPath, JSON.stringify(state, null, 2));
+    });
+  }
+
+  /**
+   * Reset all mission-scoped collaboration state (claims, conflicts, consensus
+   * records, agent registrations and trust scores) so a new mission starts from
+   * a clean slate. The supervisor calls this when a previous mission has fully
+   * finished. Without it, the reporter would re-report the previous run's
+   * verified/consensus claims on a new codebase or refactor, and stale agents
+   * would accumulate across runs.
+   */
+  resetForNewMission(): void {
+    this.claims.clear();
+    this.conflicts.clear();
+    this.consensusManager.importRecords([]);
+    this.agents.clear();
+    this.agentTrustScores.clear();
+  }
+
+  setAgentTrustScore(agentId: string, trustScore: number): Result<void, string> {
+    if (!this.agents.has(agentId)) {
+      return err(`Agent not found: ${agentId}`);
     }
 
-    await fs.writeFile(this.snapshotPath, JSON.stringify(state, null, 2), 'utf8');
+    if (!Number.isFinite(trustScore) || trustScore < 0 || trustScore > 1) {
+      return err(`Invalid trust score for agent ${agentId}`);
+    }
+
+    this.agentTrustScores.set(agentId, trustScore);
+    return ok();
   }
 
   /**
    * Submit an evidence claim.
+   * This operation is async because it persists an event to the event store
+   * and computes an evidence hash linking the claim to the knowledge graph.
    */
-  submitClaim(
+  async submitClaim(
     agentId: string,
     claimType: string,
     data: Record<string, unknown>,
-    options: { confidence?: number; entityId?: string; modelTier?: ModelTier; trustScore?: number } = {},
-  ): Result<EvidenceClaim, string> {
+    options: { confidence?: number; entityId?: string; linkedEntityIds?: string[]; linkedEventIds?: string[]; modelTier?: ModelTier; trustScore?: number } = {},
+  ): Promise<Result<EvidenceClaim, string>> {
     const agent = this.agents.get(agentId);
     if (!agent) {
       return err(`Agent not found: ${agentId}`);
@@ -393,7 +528,11 @@ private readonly heartbeatTimeout: number;
     const now = new Date().toISOString();
     const claimId = `claim_${crypto.randomBytes(8).toString('hex')}`;
 
-    const claim: EvidenceClaim = {
+    // Build linked entity list: explicit IDs plus the primary entity if provided.
+    const linkedEntityIds = [...new Set([...(options.entityId ? [options.entityId] : []), ...(options.linkedEntityIds ?? [])])];
+
+    // Create a preliminary claim for hashing.
+    const preliminaryClaim: EvidenceClaim = {
       agentId,
       claimId,
       claimType,
@@ -402,35 +541,69 @@ private readonly heartbeatTimeout: number;
       createdAt: now,
       data,
       entityId: options.entityId,
+      evidenceHash: '',
+      linkedEntityIds,
+      linkedEventIds: [],
       modelTier: options.modelTier ?? 'standard',
       status: 'proposed',
       trustScore: options.trustScore ?? 0.7,
       verifiedBy: [],
     };
 
-    const validation = evidenceClaimSchema.safeParse(claim);
-    if (!validation.success) {
-      return err(`Invalid claim: ${validation.error.message}`);
-    }
+    return this.enqueueWrite(async () => {
+      // Persist an event so the claim has an audit trail.
+      const linkedEventIds: string[] = [...(options.linkedEventIds ?? [])];
+      if (this.eventStore) {
+        const eventResult = await this.eventStore.append('finding_created', {
+          agentId,
+          claimId,
+          claimType,
+          entityId: options.entityId,
+          linkedEntityIds,
+        });
+        if (eventResult.ok) {
+          linkedEventIds.push(eventResult.value.eventId);
+        }
+      }
 
-    this.claims.set(claimId, claim);
+      const evidenceHash = this.computeEvidenceHash(preliminaryClaim, linkedEventIds, linkedEntityIds);
 
-    // Notify listeners
-    for (const listener of this.claimSubmittedListeners) {
-      listener(claim);
-    }
+      const claim: EvidenceClaim = {
+        ...preliminaryClaim,
+        evidenceHash,
+        linkedEventIds,
+      };
 
-    const typeListeners = this.claimTypeListeners.get(claimType);
-    if (typeListeners) {
-      for (const listener of typeListeners) {
+      const validation = evidenceClaimSchema.safeParse(claim);
+      if (!validation.success) {
+        return err(`Invalid claim: ${validation.error.message}`);
+      }
+
+      this.claims.set(claimId, claim);
+
+      // Trigger consensus review of this claim.
+      this.consensusManager.createProposal(agentId, claimId, `Claim ${claimId} of type ${claimType}`, {
+        quorum: 2,
+        timeout: 60_000,
+      });
+
+      // Notify listeners
+      for (const listener of this.claimSubmittedListeners) {
         listener(claim);
       }
-    }
 
-    // Check for conflicts with existing claims
-    this.checkForClaimConflicts(claim);
+      const typeListeners = this.claimTypeListeners.get(claimType);
+      if (typeListeners) {
+        for (const listener of typeListeners) {
+          listener(claim);
+        }
+      }
 
-    return ok(claim);
+      // Check for conflicts with existing claims
+      this.checkForClaimConflicts(claim);
+
+      return ok(claim);
+    });
   }
 
   // ==========================================================================
@@ -469,6 +642,15 @@ private readonly heartbeatTimeout: number;
       return err('Agent cannot verify its own claim');
     }
 
+    if (claim.verifiedBy.includes(verifyingAgentId)) {
+      return err('Agent has already verified this claim');
+    }
+
+    const verifierTrustScore = this.agentTrustScores.get(verifyingAgentId);
+    if (verifierTrustScore === undefined) {
+      return err(`Trust score is not registered for verifying agent: ${verifyingAgentId}`);
+    }
+
     const updated: EvidenceClaim = {
       ...claim,
       status: this.determineClaimStatus(claim.verifiedBy.length + 1, claim.contestedBy.length),
@@ -476,6 +658,19 @@ private readonly heartbeatTimeout: number;
     };
 
     this.claims.set(claimId, updated);
+
+    // Cast an approval vote on the consensus proposal for this claim,
+    // including evidence hash and trust score for epistemic gating.
+    const proposal = this.consensusManager.getActiveProposals().find((p) => p.topic === claimId);
+    if (proposal) {
+      this.consensusManager.vote(proposal.consensusId, verifyingAgentId, 'approve', {
+        evidenceHash: updated.evidenceHash,
+        trustScore: verifierTrustScore,
+      });
+          // Propagate the final consensus decision to the claim status so the
+          // claim reflects the majority verdict, not just raw verify/contest counts.
+          this.applyConsensusDecision(claimId);
+        }
 
     // Notify listeners
     for (const listener of this.claimVerifiedListeners) {
@@ -500,6 +695,24 @@ private readonly heartbeatTimeout: number;
     }
   }
 
+  private computeEvidenceHash(
+    claim: EvidenceClaim,
+    linkedEventIds: string[],
+    linkedEntityIds: string[],
+  ): string {
+    const payload = JSON.stringify({
+      agentId: claim.agentId,
+      claimType: claim.claimType,
+      data: claim.data,
+      entityId: claim.entityId,
+      linkedEntityIds: linkedEntityIds.sort(),
+      linkedEventIds: linkedEventIds.sort(),
+      trustScore: claim.trustScore,
+    });
+
+    return crypto.createHash('sha256').update(payload).digest('hex');
+  }
+
   private determineClaimStatus(verifyCount: number, contestCount: number): EvidenceClaimStatus {
     if (contestCount >= 2) {
       return 'rejected';
@@ -520,16 +733,66 @@ private readonly heartbeatTimeout: number;
     return 'proposed';
   }
 
+    /**
+     * Propagate a final consensus decision to the claim it was created for.
+     *
+     * Without this, a claim's status is derived purely from raw verify/contest
+     * counts (`determineClaimStatus`), and the consensus manager's majority
+     * verdict — which weighs vote trust scores and evidence hashes — never
+     * influences the label the reporter sees. A majority "reject" in the consensus
+     * layer could therefore coexist with the claim still being labeled
+     * `verified`/`consensus` by the count heuristic, and vice-versa.
+     *
+     * When the proposal for a claim has fully closed (`reached` or `timeout`),
+     * apply its decision: rejections become `rejected`, approvals stay at the
+     * already-computed count-based status. Proposals still `voting` are left
+     * untouched so the count heuristic remains the live source of truth until the
+     * decision is final.
+     */
+    private applyConsensusDecision(claimId: string): void {
+      const claim = this.claims.get(claimId);
+      if (!claim) return;
+
+      const record = this.consensusManager
+        .getProposalsByTopic(claimId)
+        .find((r) => r.topic === claimId);
+      if (!record || record.status === 'voting') return;
+
+      // Apply the consensus verdict only for a *final, explicit* majority
+      // rejection. A `failed`/timeout status carries no decision (it merely means
+      // not enough eligible votes arrived) and must not void a claim the count
+      // heuristic already accepted.
+      if (record.decision === 'rejected') {
+        this.claims.set(claimId, { ...claim, status: 'rejected' });
+      }
+    }
+
+  private enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
+      const result = this.writeQueue.then(operation);
+      // Single-settle: the next queued operation chains off `result` so the queue
+      // stays linear and a failure is NOT silently swallowed. The caller receives
+      // the rejection directly; `saveSnapshot` reaching `evaluateConsensus` lets
+      // the run pause or notify instead of silently proceeding on a lost write.
+      this.writeQueue = result.then(
+        () => undefined,
+        (error) => {
+          logToStderr(`[Blackboard] Queued write operation failed: ${error instanceof Error ? error.message : String(error)}`);
+        },
+      );
+      return result;
+    }
+
   /**
    * Load blackboard state.
    */
   private async loadSnapshot(): Promise<void> {
     try {
+      await recoverAtomicWrite(this.snapshotPath);
       const content = await fs.readFile(this.snapshotPath, 'utf8');
       const result = safeParseJson(blackboardStateSchema, content);
 
       if (!result.ok) {
-        console.warn('[Blackboard] Invalid snapshot, starting fresh:', result.error);
+        logToStderr(`[Blackboard] Invalid snapshot, starting fresh: ${result.error}`);
         return;
       }
 
@@ -538,6 +801,7 @@ private readonly heartbeatTimeout: number;
       // Restore agents
       for (const agent of state.agents) {
         this.agents.set(agent.agentId, agent);
+        this.agentTrustScores.set(agent.agentId, 0.5);
       }
 
       // Restore claims
@@ -552,6 +816,9 @@ private readonly heartbeatTimeout: number;
 
       // Restore tasks
       this.taskGraph.importTasks(state.tasks);
+
+      // Restore consensus records
+      this.consensusManager.importRecords(state.consensusRecords);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return;

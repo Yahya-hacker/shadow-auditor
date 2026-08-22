@@ -1,11 +1,25 @@
 /**
  * Checkpoints - Persistent mission state snapshots for recovery.
+ *
+ * @deprecated The authoritative checkpoint system for workflow state is
+ * `PersistentCheckpointSaver` (checkpoint-saver.ts), which implements
+ * LangGraph's `BaseCheckpointSaver` interface and handles graph state
+ * persistence including human-in-the-loop interrupts.
+ *
+ * This `CheckpointManager` persists MissionEngine OODA-loop state snapshots
+ * as a secondary recovery mechanism. New code should prefer LangGraph's
+ * built-in checkpointing via `PersistentCheckpointSaver`.
+ *
+ * This module is retained for backward compatibility with existing
+ * checkpoint files and for MissionEngine's internal state recovery.
  */
 
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
+import { recoverAtomicWrite, writeFileAtomic } from '../../utils/fs-atomic.js';
+import { logToStderr } from '../../utils/stderr-logger.js';
 import { err, ok, type Result, safeParseJson } from '../schema/base.js';
 import { type MissionState, missionStateSchema } from './mission-state.js';
 
@@ -25,6 +39,14 @@ export interface CheckpointManagerOptions {
 
 /**
  * Manages persistent checkpoints for mission state recovery.
+ *
+ * @deprecated Prefer `PersistentCheckpointSaver` (checkpoint-saver.ts) for
+ * new code. This class is retained for backward compatibility with existing
+ * checkpoint files written by earlier versions.
+ *
+ * Migration: existing checkpoint files under `<storagePath>/checkpoints/`
+ * remain readable via `loadLatestCheckpoint()`. The LangGraph checkpointer
+ * stores its state under `<storagePath>/langgraph-checkpoints/` instead.
  */
 export class CheckpointManager {
   private readonly checkpointsDir: string;
@@ -73,11 +95,12 @@ export class CheckpointManager {
       for (const metaFile of metaFiles) {
         const metaPath = path.join(this.checkpointsDir, metaFile);
         try {
+          await recoverAtomicWrite(metaPath);
           const content = await fs.readFile(metaPath, 'utf8');
           const metadata = JSON.parse(content) as CheckpointMetadata;
           checkpoints.push(metadata);
         } catch (error) {
-          console.warn(
+          logToStderr(
             `[CheckpointManager] Skipping invalid metadata file ${metaFile}: ${
               error instanceof Error ? error.message : String(error)
             }`,
@@ -103,6 +126,7 @@ export class CheckpointManager {
     const checkpointPath = path.join(this.checkpointsDir, `${checkpointId}.json`);
 
     try {
+      await recoverAtomicWrite(checkpointPath);
       const content = await fs.readFile(checkpointPath, 'utf8');
       return safeParseJson(missionStateSchema, content);
     } catch (error) {
@@ -123,10 +147,15 @@ export class CheckpointManager {
       return ok(null);
     }
 
-    // Sort by creation time descending
-    const sorted = checkpoints.value.sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    );
+    // Sort by creation time descending. Fall back to the checkpoint ID (which
+        // embeds a base-36 timestamp) when a createdAt string fails to parse, so a
+        // single malformed metadata record cannot push resume to a wrong snapshot.
+        const sorted = checkpoints.value.sort((a, b) => {
+          const aTime = new Date(a.createdAt).getTime();
+          const bTime = new Date(b.createdAt).getTime();
+          if (!Number.isNaN(aTime) && !Number.isNaN(bTime)) return bTime - aTime;
+          return b.checkpointId.localeCompare(a.checkpointId);
+        });
 
     return this.loadCheckpoint(sorted[0].checkpointId);
   }
@@ -157,8 +186,8 @@ export class CheckpointManager {
     const metadataPath = path.join(this.checkpointsDir, `${checkpointId}.meta.json`);
 
     try {
-      await fs.writeFile(checkpointPath, stateJson, 'utf8');
-      await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), 'utf8');
+      await writeFileAtomic(checkpointPath, stateJson);
+      await writeFileAtomic(metadataPath, JSON.stringify(metadata, null, 2));
 
       // Cleanup old checkpoints
       await this.cleanupOldCheckpoints();

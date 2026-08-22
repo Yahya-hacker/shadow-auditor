@@ -1,14 +1,38 @@
-import { tool } from 'ai';
+import { Command } from '@langchain/langgraph';
 import * as fs from 'node:fs/promises';
 import { z } from 'zod';
 
-import { confirmFileEdit } from '../../utils/human-in-loop.js';
+import type { HumanInteractionService } from '../../utils/human-in-loop.js';
+
+import { recoverAtomicWrite, writeFileAtomic } from '../../utils/fs-atomic.js';
 import { type PathGuard, PathGuardError } from '../policy/path-guard.js';
 
-export function createEditFileTool(pathGuard: PathGuard) {
-  return tool({
+/**
+ * Replace every exact occurrence of {@link target} with {@link replacement} in
+ * {@link content}, returning the resulting content and how many matches were
+ * replaced. Using a single global replace (and reporting the real count) avoids
+ * silently patching only the first of several identical snippets — the same
+ * cause as the edit_file "Lines changed" under-reporting below.
+ */
+export function replaceAllExact(
+  content: string,
+  target: string,
+  replacement: string,
+): { content: string; occurrences: number } {
+  if (!target) return { content, occurrences: 0 };
+  const pieces = content.split(target);
+  if (pieces.length === 1) return { content, occurrences: 0 };
+  return { content: pieces.join(replacement), occurrences: pieces.length - 1 };
+}
+
+export function createEditFileTool(pathGuard: PathGuard, humanInteraction: HumanInteractionService) {
+  return {
     description:
-      'Proposes and applies a patch to a file. Requires user confirmation before writing changes.',
+      'Proposes and applies a patch to a file. Requires user confirmation before writing changes. ' +
+      'Provide the EXACT target code to replace and the replacement code.\n\n' +
+      'USAGE: { filePath: "src/auth/login.ts", targetCode: "const q = \\"SELECT * FROM users WHERE id=\\" + userId", replacementCode: "const q = \\"SELECT * FROM users WHERE id=?\\"; // use parameterized query" }\n' +
+      'NOTE: If target code is not found (exact match required), the tool will error. Re-read the file and try again.\n' +
+      'CONFIRMATION: The user will be prompted to approve or deny this edit before it is applied.',
     async execute({
       filePath,
       replacementCode,
@@ -19,21 +43,80 @@ export function createEditFileTool(pathGuard: PathGuard) {
       targetCode: string;
     }) {
       try {
+        if (targetCode.length === 0) {
+          return '[ERROR] Target code must not be empty.';
+        }
+
         const absolutePath = await pathGuard.resolvePathForWrite(filePath);
+        await recoverAtomicWrite(absolutePath);
+        const initialStats = await fs.lstat(absolutePath);
+        if (initialStats.isSymbolicLink() || !initialStats.isFile()) {
+          return `[ERROR] Refusing to edit non-regular file "${filePath}".`;
+        }
+
         const content = await fs.readFile(absolutePath, 'utf8');
         if (!content.includes(targetCode)) {
-          return `[ERROR] Target code not found in "${filePath}". Read the file again and provide the exact snippet.`;
+          return [
+            `── edit_file ── FAILED: ${filePath} ──`,
+            `[ERROR] Target code not found in "${filePath}".`,
+            `The exact snippet provided was not found in the file.`,
+            `💡 Re-read the file with read_file_content to get the exact current code, then try again.`,
+          ].join('\n');
         }
 
-        const confirmed = await confirmFileEdit(filePath, targetCode, replacementCode);
+        // Request human confirmation. In LangGraph context this throws a Command
+        // (interrupting the graph at HumanIntervention). On resume, the tool is
+        // called again and this returns true. Outside a compiled graph, this
+        // returns the blocking confirmation result.
+        const confirmed = await humanInteraction.confirmFileEdit(filePath, targetCode, replacementCode);
         if (!confirmed) {
-          return `[DENIED] User denied patch for "${filePath}".`;
+          return `── edit_file ── DENIED ──\n[DENIED] User denied file edit: "${filePath}".`;
         }
 
-        const nextContent = content.replace(targetCode, replacementCode);
-        await fs.writeFile(absolutePath, nextContent, 'utf8');
-        return `[SUCCESS] Patch applied to "${filePath}".`;
+        // ── TOCTOU mitigation ──────────────────────────────────────────
+        // Re-read the file after confirmation to detect concurrent changes.
+        // If the file changed between the initial read and now, compute a
+        // hash of the original and re-check. This prevents silent corruption
+        // when another process (or agent worker) modified the file while the
+        // confirmation dialog was open.
+        await recoverAtomicWrite(absolutePath);
+        const freshStats = await fs.lstat(absolutePath);
+        if (freshStats.isSymbolicLink() || !freshStats.isFile()) {
+          return `[ERROR] Refusing to edit non-regular file "${filePath}".`;
+        }
+
+        const freshContent = await fs.readFile(absolutePath, 'utf8');
+                let result: ReturnType<typeof replaceAllExact>;
+                if (freshContent === content) {
+                  result = replaceAllExact(content, targetCode, replacementCode);
+                  await writeFileAtomic(absolutePath, result.content);
+                } else {
+                  // Content changed since our initial read — verify target still exists
+                  if (!freshContent.includes(targetCode)) {
+                    return [
+                      `── edit_file ── FAILED: ${filePath} ──`,
+                      `[ERROR] File was modified by another process while awaiting confirmation.`,
+                      `The target code no longer exists in the current version of the file.`,
+                      `💡 Re-read the file and try again with the updated content.`,
+                    ].join('\n');
+                  }
+
+                  // Target still exists — use the fresh content as the base
+                  result = replaceAllExact(freshContent, targetCode, replacementCode);
+                  await writeFileAtomic(absolutePath, result.content);
+                }
+
+                return [
+                  `── edit_file ── SUCCESS: ${filePath} ──`,
+                  `[SUCCESS] Patch applied to "${filePath}".`,
+                  `Lines changed: ${result.occurrences} occurrence(s) replaced ` +
+                    `(${targetCode.split('\n').length} removed, ${replacementCode.split('\n').length} added per occurrence).`,
+                ].join('\n');
       } catch (error) {
+        if (error instanceof Command) {
+          throw error;
+        }
+
         if (error instanceof PathGuardError) {
           return `[ERROR] ${error.message}`;
         }
@@ -44,7 +127,7 @@ export function createEditFileTool(pathGuard: PathGuard) {
     inputSchema: z.object({
       filePath: z.string().describe('Relative file path from repository root.'),
       replacementCode: z.string().describe('Replacement code to write into the file.'),
-      targetCode: z.string().describe('Exact code snippet to replace.'),
+      targetCode: z.string().min(1).describe('Exact non-empty code snippet to replace.'),
     }),
-  });
+  };
 }

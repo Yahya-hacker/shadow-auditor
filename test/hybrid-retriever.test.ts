@@ -14,7 +14,32 @@ import {
   NullEmbeddingProvider,
   SemanticIndex,
 } from '../src/core/memory/semantic-index.js';
+import type { EmbeddingProvider } from '../src/core/memory/semantic-index.js';
 
+/**
+ * Deterministic embedding provider for tests. Every text maps to the same unit
+ * vector, so cosine similarity with any query is 1.0 and every chunk clears a
+ * positive minScore floor. This keeps semantic-strategy tests deterministic
+ * after the H71 fix (semantic search no longer defaults to an unlimited -1
+ * minScore, which let pseudo-random NullEmbeddingProvider vectors with negative
+ * cosine through and made assertions order/hash-dependent).
+ */
+class AligningEmbeddingProvider implements EmbeddingProvider {
+  readonly dimension = 8;
+  readonly fingerprint = 'aligning:v1';
+  readonly name = 'aligning';
+
+  async embed(_texts: string[]): Promise<number[][]> {
+    // [1, 0, 0, ...] normalized — identical for every input.
+    const v = [1.0, 0, 0, 0, 0, 0, 0, 0];
+    return Array.from({ length: _texts.length }, () => v);
+  }
+
+  async testConnection(signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted();
+    return true;
+  }
+}
 describe('HybridRetriever', () => {
   let tmpDir: string;
   let repoDir: string;
@@ -45,7 +70,7 @@ describe('HybridRetriever', () => {
   }> {
     // Create semantic index
     const semanticIndex = new SemanticIndex({
-      provider: new NullEmbeddingProvider(64),
+      provider: new AligningEmbeddingProvider(),
       rootPath: repoDir,
       storagePath: path.join(storageDir, 'semantic'),
     });
@@ -109,6 +134,36 @@ export function executeQuery(sql: string): void {
 
       expect(results.length).to.be.greaterThan(0);
       expect(results[0].provenance.some((p) => p.strategy === 'lexical')).to.be.true;
+    });
+
+    it('keeps lexical retrieval available when semantic embeddings are disabled', async () => {
+      await writeFile('src/command.ts', `
+export function runCommand(input: string): void {
+  exec(input);
+}
+`);
+      const semanticIndex = new SemanticIndex({
+        provider: new NullEmbeddingProvider(64),
+        rootPath: repoDir,
+        semanticSearchEnabled: false,
+        storagePath: path.join(storageDir, 'semantic'),
+      });
+      await semanticIndex.initialize();
+      await semanticIndex.indexRepository();
+      const graph = await KnowledgeGraph.create({
+        runId: 'lexical-degradation',
+        storagePath: path.join(storageDir, 'graph'),
+      });
+      const retrieval = new Retrieval(graph);
+      const retriever = new HybridRetriever(graph, retrieval, semanticIndex, {rootPath: repoDir});
+
+      const results = await retriever.search('command exec', {
+        strategies: ['semantic', 'lexical'],
+      });
+
+      expect(results).not.to.be.empty;
+      expect(results[0]?.provenance.map(({strategy}) => strategy)).to.deep.equal(['lexical']);
+      expect(await semanticIndex.search('command exec')).to.deep.equal([]);
     });
 
     it('should fuse results from multiple strategies', async () => {
@@ -180,7 +235,7 @@ export function testFunc(): void {
 `);
 
       const semanticIndex = new SemanticIndex({
-        provider: new NullEmbeddingProvider(64),
+        provider: new AligningEmbeddingProvider(),
         rootPath: repoDir,
         storagePath: path.join(storageDir, 'semantic'),
       });
@@ -251,6 +306,26 @@ export function uniqueFunction(): string {
         expect(dedupKeys.has(key)).to.be.false;
         dedupKeys.add(key);
       }
+    });
+
+    it('keeps every window of an oversized function retrievable (no dedup collision)', async () => {
+      // A single very long line forces splitChunk() to produce multiple windowed
+      // chunks that share the same startLine. A filePath:startLine dedup key would
+      // collapse them into one, making the tail of the function unreachable.
+      // One long single line: both windows share the same startLine, which is
+      // exactly the collision a filePath:startLine dedup key would trigger.
+      const longLine = 'x'.repeat(5000);
+      await writeFile('src/large.ts', `export function hugeFunction(): string { const payload = '${longLine}'; const tail = 'TAIL_MARKER_XYZ'; return tail; }
+`);
+
+      const { retriever, semanticIndex } = await createRetriever();
+      await semanticIndex.indexRepository();
+
+      const results = await retriever.search('hugeFunction', { strategies: ['lexical'] });
+
+      // Both windows must survive retrieval.
+      expect(results.length).to.be.greaterThan(1);
+      expect(results.some((r) => r.text.includes('TAIL_MARKER_XYZ'))).to.equal(true);
     });
   });
 

@@ -166,6 +166,47 @@ describe('verification gates', () => {
       const result = gates.verify(candidate);
       expect(result.gateResults.data_flow.passed).to.equal(true);
     });
+
+    it('fails for injection CWE when source and sink exist but no path connects them', () => {
+      const sourceId = generateCanonicalId('source', { name: 'request.query.param' });
+      const sinkId = generateCanonicalId('sink', { lineNumber: 55, name: 'db.query' });
+
+      graph.addEntity(
+        entity(
+          'source',
+          'request.query.param',
+          { fileCanonicalId: generateCanonicalId('file', { path: 'src/api/user.ts' }), lineNumber: 20 },
+          0.95,
+          sourceId,
+        ),
+      );
+      graph.addEntity(
+        entity(
+          'sink',
+          'db.query',
+          {
+            fileCanonicalId: generateCanonicalId('file', { path: 'src/db/user-repo.ts' }),
+            filePath: 'src/db/user-repo.ts',
+            lineNumber: 55,
+          },
+          0.95,
+          sinkId,
+        ),
+      );
+      // Deliberately no edge between source and sink.
+
+      const candidate: FindingCandidate = {
+        cwe: 'CWE-89',
+        entityIds: [sinkId],
+        sinkId,
+        sourceId,
+        title: 'SQL injection with no connecting data-flow path',
+      };
+
+      const result = gates.verify(candidate);
+      expect(result.gateResults.data_flow.passed).to.equal(false);
+      expect(result.gateResults.data_flow.reason).to.include('No path found');
+    });
   });
 
   describe('assumptions and truncation gates', () => {
@@ -175,6 +216,14 @@ describe('verification gates', () => {
         cwe: 'CWE-79',
         entityIds: [],
         title: 'Assumption test',
+        toolRunRefs: [
+          {
+            timestamp: new Date().toISOString(),
+            toolCallId: 'toolcall_assumption',
+            toolName: 'scanner',
+            truncated: false,
+          },
+        ],
       };
 
       const result = gates.verify(candidate);

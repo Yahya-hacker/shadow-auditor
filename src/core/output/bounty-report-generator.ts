@@ -27,11 +27,17 @@ export interface BountyFindingData {
 }
 
 export interface BountyReportOptions {
+  evidenceByFindingId?: Record<string, BountyFindingEvidence>;
   findings: BountyFindingData[];
   oastCallbacks?: OastCallback[];
   platform?: 'bugcrowd' | 'generic' | 'hackerone';
   sandboxLogs?: SandboxExecResult[];
   targetName: string;
+}
+
+export interface BountyFindingEvidence {
+  oastCallbacks?: OastCallback[];
+  sandboxLogs?: SandboxExecResult[];
 }
 
 // =============================================================================
@@ -188,7 +194,14 @@ export function generatePerFindingReport(
  * It does NOT call any LLM — it templates pure data into Markdown.
  */
 export function generateBountyReport(options: BountyReportOptions): string {
-  const { findings, oastCallbacks = [], platform = 'generic', sandboxLogs = [], targetName } = options;
+  const {
+    evidenceByFindingId = {},
+    findings,
+    oastCallbacks = [],
+    platform = 'generic',
+    sandboxLogs = [],
+    targetName,
+  } = options;
 
   const sections: string[] = [];
 
@@ -218,20 +231,11 @@ export function generateBountyReport(options: BountyReportOptions): string {
 
   // Individual findings
   for (const finding of findings) {
-    // Match sandbox logs and OAST callbacks to this finding
-    const matchedLogs = sandboxLogs.filter((log) =>
-      log.command.includes(finding.vulnId) ||
-      log.stdout.includes(finding.vulnId) ||
-      log.stderr.includes(finding.vulnId),
-    );
-
-    const matchedCallbacks = oastCallbacks.filter((cb) =>
-      cb.url.includes(finding.vulnId),
-    );
-
-    // Fall back to all logs if no specific match
-    const logsForFinding = matchedLogs.length > 0 ? matchedLogs : sandboxLogs;
-    const callbacksForFinding = matchedCallbacks.length > 0 ? matchedCallbacks : oastCallbacks;
+    const explicitEvidence = evidenceByFindingId[finding.vulnId];
+    const logsForFinding =
+      explicitEvidence?.sandboxLogs ?? (findings.length === 1 ? sandboxLogs : []);
+    const callbacksForFinding =
+      explicitEvidence?.oastCallbacks ?? (findings.length === 1 ? oastCallbacks : []);
 
     sections.push(generatePerFindingReport(finding, logsForFinding, callbacksForFinding), '---', '');
   }

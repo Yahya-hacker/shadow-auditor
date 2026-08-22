@@ -16,6 +16,8 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { recoverAtomicWrite, writeFileAtomic } from '../../utils/fs-atomic.js';
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -44,8 +46,13 @@ interface LicenseCacheEntry {
 // Constants
 // =============================================================================
 
-/** Replace with your actual Polar.sh Organization ID */
-const POLAR_ORG_ID = 'POLAR_ORG_ID_PLACEHOLDER';
+/**
+ * Polar.sh Organization ID for license validation.
+ *
+ * Set via SHADOW_POLAR_ORG_ID. There is deliberately no fake default:
+ * operators must bind license keys to the organization that issued them.
+ */
+const POLAR_ORG_ID = process.env.SHADOW_POLAR_ORG_ID?.trim() ?? '';
 
 const POLAR_VALIDATE_URL = 'https://api.polar.sh/v1/customer-portal/license-keys/validate';
 const CACHE_FILENAME = '.shadow-auditor-license.json';
@@ -67,8 +74,30 @@ function hashKey(key: string): string {
 
 async function readCache(): Promise<LicenseCacheEntry | null> {
   try {
-    const raw = await fs.readFile(getCachePath(), 'utf8');
-    const parsed = JSON.parse(raw) as LicenseCacheEntry;
+    const cachePath = getCachePath();
+    await recoverAtomicWrite(cachePath);
+    const raw = await fs.readFile(cachePath, 'utf8');
+    // Prototype pollution guard: use JSON.parse with a reviver that strips
+    // __proto__, constructor, and prototype keys before object construction.
+    const parsed = JSON.parse(raw, (_key: string, value: unknown) => {
+      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        // Strip dangerous keys from plain objects
+        const obj = value as Record<string, unknown>;
+        if ('__proto__' in obj || 'constructor' in obj || 'prototype' in obj) {
+          const clean: Record<string, unknown> = Object.create(null);
+          for (const k of Object.keys(obj)) {
+            if (k !== '__proto__' && k !== 'constructor' && k !== 'prototype') {
+              clean[k] = (obj as Record<string, unknown>)[k];
+            }
+          }
+
+          return clean;
+        }
+      }
+
+      return value;
+    }) as LicenseCacheEntry;
+
     if (parsed.keyHash && parsed.tier && parsed.validatedAt && parsed.expiresAt) {
       return parsed;
     }
@@ -81,7 +110,7 @@ async function readCache(): Promise<LicenseCacheEntry | null> {
 
 async function writeCache(entry: LicenseCacheEntry): Promise<void> {
   try {
-    await fs.writeFile(getCachePath(), JSON.stringify(entry, null, 2), 'utf-8');
+    await writeFileAtomic(getCachePath(), JSON.stringify(entry, null, 2));
   } catch {
     // Non-fatal: cache write failure doesn't block the user
   }
@@ -105,10 +134,12 @@ interface PolarValidateResponse {
  * Returns the parsed response or null on network failure.
  */
 async function callPolarApi(key: string): Promise<null | PolarValidateResponse> {
+  const controller = new AbortController();
+  // Timeout is cleared unconditionally in `finally` so a network/DNS failure
+  // cannot leak a pending timer that would otherwise keep the event loop alive
+  // and fire abort() against an already-settled request.
+  const timeoutId = setTimeout(() => { controller.abort(); }, REQUEST_TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => { controller.abort(); }, REQUEST_TIMEOUT_MS);
-
     const response = await fetch(POLAR_VALIDATE_URL, {
       body: JSON.stringify({
         key,
@@ -119,14 +150,14 @@ async function callPolarApi(key: string): Promise<null | PolarValidateResponse> 
       signal: controller.signal,
     });
 
-    clearTimeout(timeoutId);
-
     if (!response.ok) return null;
 
     return (await response.json()) as PolarValidateResponse;
   } catch {
     // Network error, timeout, DNS failure, etc.
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -172,6 +203,15 @@ export async function validateLicense(licenseKey?: string): Promise<LicenseValid
   }
 
   const key = licenseKey.trim();
+  if (!POLAR_ORG_ID) {
+    return {
+      cached: false,
+      error: 'License validation is not configured: SHADOW_POLAR_ORG_ID is missing.',
+      tier: 'free',
+      validatedAt: new Date().toISOString(),
+    };
+  }
+
   const currentKeyHash = hashKey(key);
   const now = Date.now();
 

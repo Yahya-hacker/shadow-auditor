@@ -1,0 +1,4 @@
+# Shebang-carrying CLI entry scripts must always be checked out with LF
+# line endings. CRLF here breaks `#!/usr/bin/env node` on Linux/macOS/WSL
+# (the kernel sees `node\r` and fails with "env: 'node\r': No such file").
+bin/*.js text eol=lf

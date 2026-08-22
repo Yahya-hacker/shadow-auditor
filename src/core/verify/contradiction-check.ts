@@ -3,7 +3,6 @@
  */
 
 import type { KnowledgeGraph } from '../memory/knowledge-graph.js';
-import type { BaseEntity, GraphEdge } from '../memory/memory-schema.js';
 
 export interface Contradiction {
   description: string;

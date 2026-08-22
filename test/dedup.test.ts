@@ -3,6 +3,7 @@ import { expect } from 'chai';
 import type { SecurityFinding } from '../src/core/output/report-schema.js';
 
 import { deduplicateFindings, highestSeverity } from '../src/core/output/dedup.js';
+import { computeVulnId } from '../src/core/output/vuln-fingerprint.js';
 
 function makeFinding(overrides: Partial<SecurityFinding> = {}): SecurityFinding {
   return {
@@ -85,6 +86,29 @@ describe('dedup', () => {
       expect(result).to.have.length(1);
       expect(result[0].cvss_v31_score).to.equal(9);
     });
+
+        it('keeps vuln_id frozen when a higher-CVSS occurrence from another file replaces the primary', () => {
+          // #16 regression: when the higher-CVSS finding (search.ts) is merged in,
+          // it replaces `primary`. The merged vuln_id must still derive from the
+          // first-seen occurrence (query.ts) and not silently switch to the
+          // swapped-in primary's path.
+          const f1 = makeFinding({ cvss_v31_score: 6, file_paths: ['src/db/query.ts'] });
+          const f2 = makeFinding({ cvss_v31_score: 9, file_paths: ['src/db/search.ts'] });
+
+          const merged = deduplicateFindings([f1, f2])[0];
+
+          // Primary was replaced by the higher-CVSS finding…
+          expect(merged.cvss_v31_score).to.equal(9);
+          // …but the vuln_id is still the first-seen (query.ts) fingerprint.
+          expect(merged.vuln_id).to.equal(
+            computeVulnId({ cwe: f1.cwe, filePaths: f1.file_paths, title: f1.title }),
+          );
+
+          // A rerun that starts from the same first-seen occurrence yields the
+          // identical ID regardless of how many later duplicates are merged.
+          const rerun = deduplicateFindings([f1]);
+          expect(rerun[0].vuln_id).to.equal(merged.vuln_id);
+        });
   });
 
   describe('highestSeverity', () => {
