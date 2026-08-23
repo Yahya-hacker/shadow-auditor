@@ -70,6 +70,12 @@ describe('runtime mode wiring', () => {
     expect(report.metadata.modes?.swarm).to.equal(true);
   });
 
+    it('accepts --fail-on info as a valid failure threshold', () => {
+      const config = buildEffectiveConfig(baseConfig, { ciEnabled: true, failOn: 'info' });
+      expect(config.ci?.enabled).to.equal(true);
+      expect(config.ci?.failOn).to.equal('info');
+    });
+
   it('assembles DAST tools and cleans up its sandbox', async () => {
     let destroyed = false;
     const dependencies = createRuntimeDependencies({
