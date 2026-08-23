@@ -25,17 +25,17 @@ function toSarifLevel(severity: EnhancedFinding['severityLabel'] | SecurityFindi
     }
 
     case 'Info': {
-          // GitHub code scanning drops results at level "none", making Info
-          // findings invisible. Map to "note" so they surface while still
-          // ranking below Low ("note") findings — SARIF levels: none < note <
-          // warning < error.
-          return 'note';
-        }
+      // GitHub code scanning drops results at level "none", making Info
+      // findings invisible. Map to "note" so they surface while still
+      // ranking below Low ("note") findings — SARIF levels: none < note <
+      // warning < error.
+      return 'note';
+    }
 
-        default: {
-          return 'note';
-        }
-      }
+    default: {
+      return 'note';
+    }
+  }
 }
 
 function toPosixPath(filePath: string): string {

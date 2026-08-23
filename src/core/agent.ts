@@ -33,8 +33,8 @@ import {
   resolveRuntimeSettings,
   type RuntimeSettings,
 } from './model-capabilities.js';
-import { getLangchainModel } from './model-router.js';
 import { withRetry } from './memory/embeddings/retry.js';
+import { getLangchainModel } from './model-router.js';
 import { PersistentCheckpointSaver } from './orchestrator/checkpoint-saver.js';
 import { MissionEngine } from './orchestrator/mission-engine.js';
 import { runObservedModelInvocation } from './orchestrator/mission-runtime.js';
