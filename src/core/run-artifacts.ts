@@ -5,6 +5,8 @@ import * as path from 'node:path';
 
 import type { SecurityReport } from './output/report-schema.js';
 
+import { redactSensitiveJson } from './stream-processor.js';
+
 import { recoverAtomicWrite, writeFileAtomic } from '../utils/fs-atomic.js';
 
 /** Maximum size of a JSONL file before rotation (50 MB) */
@@ -98,7 +100,10 @@ async function repairInterruptedTail(filePath: string): Promise<void> {
  * and a fresh file is started.
  */
 async function appendJsonLine(filePath: string, payload: unknown): Promise<void> {
-  const line = `${JSON.stringify(payload)}\n`;
+  // Scrub secrets from the payload before it ever reaches disk: transcripts
+  // and tool events can carry `.env` contents or Authorization headers
+  // captured by read-file / execute-command tools.
+  const line = `${JSON.stringify(redactSensitiveJson(payload))}\n`;
 
   // Heal a truncated trailing line left by a crash before appending, so the
   // new record never merges into a corrupted partial line.

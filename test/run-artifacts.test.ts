@@ -274,4 +274,47 @@ describe('RunArtifacts recovery', () => {
       await fs.rm(empty, { force: true, recursive: true });
     }
   });
+
+  it('redacts secrets before persisting message and tool-event payloads to disk', async () => {
+    const artifacts = await RunArtifacts.create(targetPath, {
+      maxOutputTokens: 100,
+      maxToolSteps: 10,
+      mcpEnabled: false,
+      model: 'test-model',
+      provider: 'test-provider',
+      targetPath,
+      warnings: [],
+    });
+
+    await artifacts.recordMessage({
+      content: 'the key is api_key = sk-live-1234567890abcdef and token:ghp_secretvalue.',
+      role: 'user',
+      timestamp: '2026-01-01T00:00:00.000Z',
+    });
+
+    await artifacts.recordMessage({
+      content: {payload: 'curl -H "Authorization: Bearer abcdef123456" https://api.example.com'},
+      role: 'tool',
+      timestamp: '2026-01-01T00:00:00.000Z',
+    });
+
+    await artifacts.recordToolEvent({
+      data: {apiKey: 'sk-live-0000000', userInput: 'password=super-secret'},
+      event: 'call',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      toolCallId: 'call-1',
+      toolName: 'read_file_content',
+    });
+
+    const messages = await artifacts.readMessages();
+    for (const message of messages) {
+      const raw = JSON.stringify(message);
+      expect(raw).not.to.contain('sk-live-1234567890abcdef');
+      expect(raw).not.to.contain('ghp_secretvalue');
+      expect(raw).not.to.contain('abcdef123456');
+      expect(raw).not.to.contain('sk-live-0000000');
+      expect(raw).not.contain('super-secret', 'password values should be redacted');
+      expect(raw).to.contain('[REDACTED]');
+    }
+  });
 });
