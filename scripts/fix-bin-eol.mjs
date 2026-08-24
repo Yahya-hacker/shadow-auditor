@@ -4,9 +4,12 @@
 // `#!/usr/bin/env node\r`, and the kernel fails with
 // "env: 'node\r': No such file or directory".
 //
-// This runs as a `postinstall` hook so the installed executable is always LF
-// regardless of how the package was checked out or packed (git autocrlf, npm
-// tarball produced on Windows, etc.).
+// This runs as a `prepack` hook so the packaged tarball's CLI entry script is
+// always LF regardless of how the tree was checked out (git autocrlf, npm
+// tarball produced on Windows, etc.). Normalizing at pack time means consumers
+// install with no lifecycle hook of their own, which keeps installs compatible
+// with npm's `--strict-allow-scripts` (npm v12+ blocks undeclared install
+// scripts by default).
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'

@@ -135,13 +135,12 @@
     "url": "git+https://github.com/Yahya-hacker/shadow-auditor.git"
   },
   "scripts": {
-    "postinstall": "node ./scripts/fix-bin-eol.mjs",
     "start": "node ./bin/run.js shell --reconfigure",
     "build": "shx rm -rf dist && tsc -b --force",
     "lint": "eslint",
     "postpack": "shx rm -f oclif.manifest.json",
     "posttest": "npm run lint",
-    "prepack": "npm run build && oclif manifest && oclif readme",
+    "prepack": "npm run build && oclif manifest && oclif readme && node ./scripts/fix-bin-eol.mjs",
     "relink": "npm install && npm run test:native && npm link",
     "test": "mocha --forbid-only \"test/**/*.test.ts\"",
     "test:native": "mocha --forbid-only \"test/**/*.test.ts\" --grep \"uses Tree-sitter AST chunking across guaranteed production languages\"",
