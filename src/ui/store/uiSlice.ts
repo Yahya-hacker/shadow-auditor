@@ -98,7 +98,7 @@ export const createUiSlice: StateCreator<AppState, [], [], UiSlice> = (set, get)
   compactHeader: false,
   dismissToast: (id) =>
     set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
-  expandLatestReasoning: () => {
+  expandLatestReasoning() {
     const state = get();
     // Find the most recent reasoning activity that is collapsed.
     for (let i = state.activity.length - 1; i >= 0; i--) {
@@ -116,10 +116,7 @@ export const createUiSlice: StateCreator<AppState, [], [], UiSlice> = (set, get)
     // All reasoning blocks are already expanded — collapse all.
     if (state.reasoningExpandedIds.size > 0) {
       set({ reasoningExpandedIds: new Set() });
-      return undefined;
     }
-
-    return undefined;
   },
   focus: 'input',
   focusScope: 'Global',
