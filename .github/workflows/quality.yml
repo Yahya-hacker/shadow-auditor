@@ -59,7 +59,7 @@ jobs:
           fi
           rm -rf node_modules package-lock.json
           npm config set allow-scripts \
-           @tree-sitter-grammars/tree-sitter-markdown,@tree-sitter-grammars/tree-sitter-toml,@tree-sitter-grammars/tree-sitter-yaml,tree-sitter,tree-sitter-c,tree-sitter-c-sharp,tree-sitter-cpp,tree-sitter-elixir,tree-sitter-go,tree-sitter-haskell,tree-sitter-html,tree-sitter-java,tree-sitter-javascript,tree-sitter-json,tree-sitter-php,tree-sitter-python,tree-sitter-ruby,tree-sitter-rust,tree-sitter-scala,tree-sitter-typescript,unrs-resolver \
+           shadow-auditor,@tree-sitter-grammars/tree-sitter-markdown,@tree-sitter-grammars/tree-sitter-toml,@tree-sitter-grammars/tree-sitter-yaml,tree-sitter,tree-sitter-c,tree-sitter-c-sharp,tree-sitter-cpp,tree-sitter-elixir,tree-sitter-go,tree-sitter-haskell,tree-sitter-html,tree-sitter-java,tree-sitter-javascript,tree-sitter-json,tree-sitter-php,tree-sitter-python,tree-sitter-ruby,tree-sitter-rust,tree-sitter-scala,tree-sitter-sql,tree-sitter-typescript,unrs-resolver,tree-sitter-bash \
            --location=project
           npm install "$package_path" --strict-allow-scripts --no-audit --no-fund
           ./node_modules/.bin/shadow-auditor --help
