@@ -127,8 +127,8 @@ export function createRemediationTools(options: RemediationToolsOptions): ToolSe
                     if (recordError) {
                       return JSON.stringify({
                         findingId,
-                        status: 'applied_unrecorded',
                         recordError: recordError.message,
+                        status: 'applied_unrecorded',
                         testExitCode: validation.testResult.exitCode,
                         testNewFailures: validation.testResult.newFailures,
                         testPassed: validation.testResult.passed,

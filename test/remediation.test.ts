@@ -3,8 +3,8 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { createRemediationTools } from '../src/core/remediation/remediation-tools.js';
 import { RemediationLoop } from '../src/core/remediation/remediation-loop.js';
+import { createRemediationTools } from '../src/core/remediation/remediation-tools.js';
 import { type TestFingerprint, TestRunner } from '../src/core/remediation/test-runner.js';
 
 describe('remediation', () => {
@@ -771,7 +771,6 @@ describe('remediation', () => {
       }
     });
   });
-});
 
   describe('createRemediationTools', () => {
     it('reports applied_unrecorded when the audit write fails after a successful apply', async () => {
@@ -794,14 +793,11 @@ describe('remediation', () => {
         token: 'token-1',
       };
       const applyCalls: string[] = [];
-      const recordDecision = async () => {
-        throw new Error('disk full');
-      };
       const fakeLoop = {
-        applyValidatedPatch: async (token: string) => {
+        async applyValidatedPatch(token: string) {
           applyCalls.push(token);
         },
-        discardValidation: () => undefined,
+        discardValidation() {},
         recordDecision,
         validatePatch: async () => validation,
       };
@@ -824,6 +820,7 @@ describe('remediation', () => {
       expect(result.recordError).to.equal('disk full');
       expect(result.testPassed).to.equal(true);
     });
+});
   });
 
   const targetPatch = `diff --git a/target.txt b/target.txt
@@ -834,6 +831,10 @@ index 90be1f3..3b18e51 100644
 -before
 +after
 `;
+
+async function recordDecision(): Promise<never> {
+  throw new Error('disk full');
+}
 
 async function initializeGitRepository(directory: string): Promise<void> {
   const { execFile } = await import('node:child_process');

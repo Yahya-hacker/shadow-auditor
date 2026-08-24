@@ -38,6 +38,23 @@ function createPatchProposal(
   };
 }
 
+function task(overrides: Partial<{ assignedAgent: string; status: string; updatedAt: string }>) {
+  return {
+    assignedAgent: 'agent-1',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    dependencies: [],
+    description: 'task',
+    parameters: {},
+    priority: 'high' as const,
+    requiredRole: 'recon',
+    status: 'in_progress',
+    taskId: 'task-1',
+    taskType: 'recon',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
 describe('SwarmCoordinator', () => {
   let tmpDir: string;
   let storageDir: string;
@@ -716,52 +733,37 @@ describe('SwarmCoordinator', () => {
     expect(blackboard.getConsensusRecords()).to.have.length(0);
     expect(blackboard.getRegisteredAgents()).to.have.length(0);
   });
-});
 
-describe('releaseStaleTasks', () => {
-  function task(overrides: Partial<{ assignedAgent: string; status: string; updatedAt: string }>) {
-    return {
-      assignedAgent: 'agent-1',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      dependencies: [],
-      description: 'task',
-      parameters: {},
-      priority: 'high' as const,
-      requiredRole: 'recon',
-      status: 'in_progress',
-      taskId: 'task-1',
-      taskType: 'recon',
-      updatedAt: '2026-01-01T00:00:00.000Z',
-      ...overrides,
-    };
-  }
+  describe('releaseStaleTasks', () => {
 
-  it('does not release an in-progress task whose worker is still alive and heartbeating', () => {
-    const released: string[] = [];
-    const taskGraph = {
-      getTasksByStatus: () => [task({ updatedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString() })],
-      releaseTask: (taskId: string) => { released.push(taskId); return { ok: true }; },
-    } as any;
+    it('does not release an in-progress task whose worker is still alive and heartbeating', () => {
+      const released: string[] = [];
+      const taskGraph = {
+        getTasksByStatus: () => [task({ updatedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString() })],
+        releaseTask(taskId: string) { released.push(taskId); return { ok: true }; },
+      } as any;
 
-    // The agent is present and online even though the task has been running
-    // for 20 minutes — a slow-but-live worker must not be re-dispatched.
-    releaseStaleTasks(taskGraph, [{ agentId: 'agent-1', status: 'active' }] as any);
+      // The agent is present and online even though the task has been running
+      // for 20 minutes — a slow-but-live worker must not be re-dispatched.
+      releaseStaleTasks(taskGraph, [{ agentId: 'agent-1', status: 'active' }] as any);
 
-    expect(released).to.deep.equal([]);
+      expect(released).to.deep.equal([]);
+    });
+
+    it('releases an in-progress task whose agent is gone or offline', () => {
+      const released: string[] = [];
+      const taskGraph = {
+        getTasksByStatus: () => [task({})],
+        releaseTask(taskId: string) { released.push(taskId); return { ok: true }; },
+      } as any;
+
+      releaseStaleTasks(taskGraph, [] as any);
+      expect(released).to.deep.equal(['task-1']);
+
+      released.length = 0;
+      releaseStaleTasks(taskGraph, [{ agentId: 'agent-1', status: 'offline' }] as any);
+      expect(released).to.deep.equal(['task-1']);
+    });
   });
 
-  it('releases an in-progress task whose agent is gone or offline', () => {
-    const released: string[] = [];
-    const taskGraph = {
-      getTasksByStatus: () => [task({})],
-      releaseTask: (taskId: string) => { released.push(taskId); return { ok: true }; },
-    } as any;
-
-    releaseStaleTasks(taskGraph, [] as any);
-    expect(released).to.deep.equal(['task-1']);
-
-    released.length = 0;
-    releaseStaleTasks(taskGraph, [{ agentId: 'agent-1', status: 'offline' }] as any);
-    expect(released).to.deep.equal(['task-1']);
-  });
 });

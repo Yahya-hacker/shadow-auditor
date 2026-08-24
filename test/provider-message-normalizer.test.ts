@@ -144,7 +144,7 @@ describe('provider message normalizer', () => {
       const message = new AIMessage({
         content: '',
         tool_calls: [{
-          args: '{"arguments": "{\\"name\\": \\"get\\"}"}' as unknown as Record<string, unknown>,
+          args: String.raw`{"arguments": "{\"name\": \"get\"}"}` as unknown as Record<string, unknown>,
           id: 'call_qwen_env',
           name: 'search',
           type: 'tool_call',

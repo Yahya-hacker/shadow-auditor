@@ -154,7 +154,7 @@ export async function runCiAudit(
       try {
         await session.dispose();
       } catch (error) {
-        // eslint-disable-next-line no-console
+         
         console.error('Warning: failed to dispose audit session:', error);
       }
     }

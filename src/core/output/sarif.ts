@@ -16,6 +16,14 @@ function toSarifLevel(severity: EnhancedFinding['severityLabel'] | SecurityFindi
       return 'error';
     }
 
+    case 'Info': {
+      // GitHub code scanning drops results at level "none", making Info
+      // findings invisible. Map to "note" so they surface while still
+      // ranking below Low ("note") findings — SARIF levels: none < note <
+      // warning < error.
+      return 'note';
+    }
+
     case 'Low': {
       return 'note';
     }
@@ -24,9 +32,8 @@ function toSarifLevel(severity: EnhancedFinding['severityLabel'] | SecurityFindi
       return 'warning';
     }
 
-    case 'Info':
     default: {
-      return 'none';
+      return 'note';
     }
   }
 }

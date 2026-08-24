@@ -127,6 +127,7 @@ function dispatchFocusKey(evt: KeyEvent): void {
       state.setSearchActive(false);
       state.setSearchQuery('');
     }
+
     return;
   }
 

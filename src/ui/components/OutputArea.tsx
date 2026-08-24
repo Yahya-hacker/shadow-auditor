@@ -224,7 +224,6 @@ const ActivityLine: React.FC<{ event: ActivityEvent }> = memo(({ event }) => {
   const isTool = event.kind === 'tool_call' || event.kind === 'tool_result';
   const isReasoning = event.kind === 'reasoning';
   const reasoningExpandedIds = useAppStore((s) => s.reasoningExpandedIds);
-  const toggleReasoningExpand = useAppStore((s) => s.toggleReasoningExpand);
 
   if (isTool) {
     return (

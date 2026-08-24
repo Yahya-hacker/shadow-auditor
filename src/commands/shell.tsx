@@ -21,6 +21,12 @@ interface ShellRuntimeFlags {
   target?: string;
 }
 
+// SIGINT (Ctrl-C) is conventionally 128+2 = 130; SIGTERM is 128+15 = 143.
+// Reporting 0 here would mask the abort and make CI think the run succeeded.
+function signalExitCode(signal: string): number {
+  return signal === 'SIGTERM' ? 143 : 130;
+}
+
 function resolveShellRuntime(
   flags: ShellRuntimeFlags,
   config: null | ShadowConfig,
@@ -207,10 +213,6 @@ export default class Shell extends Command {
       },
     );
 
-    // SIGINT (Ctrl-C) is conventionally 128+2 = 130; SIGTERM is 128+15 = 143.
-    // Reporting 0 here would mask the abort and make CI think the run succeeded.
-    const signalExitCode = (signal: string) => (signal === 'SIGTERM' ? 143 : 130);
-
     configureShutdown(async (exitCode) => {
       try {
         await disposeActiveAgentSessions();
@@ -224,22 +226,32 @@ export default class Shell extends Command {
     // dispose is still in flight forces an immediate hard exit with the signal
     // exit code, so the process can never hang after the user aborts twice.
     let forceExitStarted = false;
+    // Signal exit codes follow the 128+signum convention (see signalExitCode).
     const gracefulShutdown = (signal: string) => {
       const code = signalExitCode(signal);
       if (isShuttingDown()) {
         if (!forceExitStarted) {
           forceExitStarted = true;
           process.stderr.write(`\n[ShadowAuditor] Second ${signal}, forcing exit.\n`);
+          // An oclif CLI command: a second signal must hard-exit even if the
+          // graceful dispose hangs, otherwise the process never terminates.
+          // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit
           process.exit(code);
         }
+
         return;
       }
+
       const runId = getActiveSessionRunId();
       process.stderr.write(`\n[ShadowAuditor] Received ${signal}, shutting down...\n`);
       if (runId) {
         process.stderr.write(`[ShadowAuditor] To resume this session, run: shadow-auditor --resume ${runId}\n`);
       }
-      void requestShutdown(code).catch(() => undefined);
+
+      // Fire-and-forget: requestShutdown drives cleanup and may already have
+      // been invoked for an earlier signal; we must not block the handler.
+      // eslint-disable-next-line no-void
+      void requestShutdown(code).catch(() => {});
     };
 
     process.on('SIGINT', () => gracefulShutdown('SIGINT'));

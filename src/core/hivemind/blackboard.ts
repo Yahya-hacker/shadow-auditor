@@ -427,6 +427,26 @@ export class Blackboard {
   }
 
   /**
+   * Reset all mission-scoped collaboration state (claims, conflicts, consensus
+   * records, agent registrations and trust scores) so a new mission starts from
+   * a clean slate. The supervisor calls this when a previous mission has fully
+   * finished. Without it, the reporter would re-report the previous run's
+   * verified/consensus claims on a new codebase or refactor, and stale agents
+   * would accumulate across runs.
+   */
+  resetForNewMission(): void {
+    this.claims.clear();
+    this.conflicts.clear();
+    this.consensusManager.importRecords([]);
+    this.agents.clear();
+    this.agentTrustScores.clear();
+  }
+
+  // ==========================================================================
+  // Persistence
+  // ==========================================================================
+
+  /**
    * Resolve a conflict.
    */
   resolveConflict(conflictId: string, resolution: string): Result<ConflictMarker, string> {
@@ -445,10 +465,6 @@ export class Blackboard {
     this.conflicts.set(conflictId, updated);
     return ok(updated);
   }
-
-  // ==========================================================================
-  // Persistence
-  // ==========================================================================
 
   /**
    * Save blackboard state.
@@ -478,22 +494,6 @@ export class Blackboard {
 
       await writeFileAtomic(this.snapshotPath, JSON.stringify(state, null, 2));
     });
-  }
-
-  /**
-   * Reset all mission-scoped collaboration state (claims, conflicts, consensus
-   * records, agent registrations and trust scores) so a new mission starts from
-   * a clean slate. The supervisor calls this when a previous mission has fully
-   * finished. Without it, the reporter would re-report the previous run's
-   * verified/consensus claims on a new codebase or refactor, and stale agents
-   * would accumulate across runs.
-   */
-  resetForNewMission(): void {
-    this.claims.clear();
-    this.conflicts.clear();
-    this.consensusManager.importRecords([]);
-    this.agents.clear();
-    this.agentTrustScores.clear();
   }
 
   setAgentTrustScore(agentId: string, trustScore: number): Result<void, string> {
@@ -680,6 +680,40 @@ export class Blackboard {
     return ok(updated);
   }
 
+  /**
+   * Propagate a final consensus decision to the claim it was created for.
+   *
+   * Without this, a claim's status is derived purely from raw verify/contest
+   * counts (`determineClaimStatus`), and the consensus manager's majority
+   * verdict — which weighs vote trust scores and evidence hashes — never
+   * influences the label the reporter sees. A majority "reject" in the consensus
+   * layer could therefore coexist with the claim still being labeled
+   * `verified`/`consensus` by the count heuristic, and vice-versa.
+   *
+   * When the proposal for a claim has fully closed (`reached` or `timeout`),
+   * apply its decision: rejections become `rejected`, approvals stay at the
+   * already-computed count-based status. Proposals still `voting` are left
+   * untouched so the count heuristic remains the live source of truth until the
+   * decision is final.
+   */
+  private applyConsensusDecision(claimId: string): void {
+    const claim = this.claims.get(claimId);
+    if (!claim) return;
+
+    const record = this.consensusManager
+      .getProposalsByTopic(claimId)
+      .find((r) => r.topic === claimId);
+    if (!record || record.status === 'voting') return;
+
+    // Apply the consensus verdict only for a *final, explicit* majority
+    // rejection. A `failed`/timeout status carries no decision (it merely means
+    // not enough eligible votes arrived) and must not void a claim the count
+    // heuristic already accepted.
+    if (record.decision === 'rejected') {
+      this.claims.set(claimId, { ...claim, status: 'rejected' });
+    }
+  }
+
   private checkForClaimConflicts(newClaim: EvidenceClaim): void {
     if (!newClaim.entityId) return;
 
@@ -733,40 +767,6 @@ export class Blackboard {
     return 'proposed';
   }
 
-    /**
-     * Propagate a final consensus decision to the claim it was created for.
-     *
-     * Without this, a claim's status is derived purely from raw verify/contest
-     * counts (`determineClaimStatus`), and the consensus manager's majority
-     * verdict — which weighs vote trust scores and evidence hashes — never
-     * influences the label the reporter sees. A majority "reject" in the consensus
-     * layer could therefore coexist with the claim still being labeled
-     * `verified`/`consensus` by the count heuristic, and vice-versa.
-     *
-     * When the proposal for a claim has fully closed (`reached` or `timeout`),
-     * apply its decision: rejections become `rejected`, approvals stay at the
-     * already-computed count-based status. Proposals still `voting` are left
-     * untouched so the count heuristic remains the live source of truth until the
-     * decision is final.
-     */
-    private applyConsensusDecision(claimId: string): void {
-      const claim = this.claims.get(claimId);
-      if (!claim) return;
-
-      const record = this.consensusManager
-        .getProposalsByTopic(claimId)
-        .find((r) => r.topic === claimId);
-      if (!record || record.status === 'voting') return;
-
-      // Apply the consensus verdict only for a *final, explicit* majority
-      // rejection. A `failed`/timeout status carries no decision (it merely means
-      // not enough eligible votes arrived) and must not void a claim the count
-      // heuristic already accepted.
-      if (record.decision === 'rejected') {
-        this.claims.set(claimId, { ...claim, status: 'rejected' });
-      }
-    }
-
   private enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
       const result = this.writeQueue.then(operation);
       // Single-settle: the next queued operation chains off `result` so the queue
@@ -774,7 +774,7 @@ export class Blackboard {
       // the rejection directly; `saveSnapshot` reaching `evaluateConsensus` lets
       // the run pause or notify instead of silently proceeding on a lost write.
       this.writeQueue = result.then(
-        () => undefined,
+        () => {},
         (error) => {
           logToStderr(`[Blackboard] Queued write operation failed: ${error instanceof Error ? error.message : String(error)}`);
         },

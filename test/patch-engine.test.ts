@@ -1,4 +1,8 @@
 import { expect } from 'chai';
+import { spawn } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { PatchConflict, PatchProposal } from '../src/core/orchestrator/patch-competition-schema.js';
 
@@ -8,11 +12,6 @@ import {
   recomputeLineNumbers,
   synthesizePatches,
 } from '../src/core/orchestrator/patch-synthesizer.js';
-
-import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 function proposal(patchDiff: string): PatchProposal {
   return {
@@ -120,8 +119,8 @@ describe('patch engine integrity', () => {
         filePath: 'file1.ts',
         hunkA: '-a\n+A',
         hunkB: '-a\n+B',
-        overlappingRangeA: { start: 1, end: 1 },
-        overlappingRangeB: { start: 1, end: 1 },
+        overlappingRangeA: { end: 1, start: 1 },
+        overlappingRangeB: { end: 1, start: 1 },
         proposalAId: 'A',
         proposalBId: 'B',
         resolutionStrategy: 'prefer_security',
@@ -134,8 +133,8 @@ describe('patch engine integrity', () => {
         filePath: 'file4.ts',
         hunkA: '-c\n+C',
         hunkB: '-c\n+D',
-        overlappingRangeA: { start: 7, end: 7 },
-        overlappingRangeB: { start: 7, end: 7 },
+        overlappingRangeA: { end: 7, start: 7 },
+        overlappingRangeB: { end: 7, start: 7 },
         proposalAId: 'C',
         proposalBId: 'D',
         resolutionStrategy: 'merge_both',
@@ -160,10 +159,12 @@ describe('patch engine integrity', () => {
       const count = Number(inAccepted.has(id)) + Number(inMerged.has(id)) + Number(inRejected.has(id));
       expect(count, `proposal ${id} must be in exactly one bucket`).to.equal(1);
     }
+
     // Every proposal is accounted for exactly once.
     expect([...new Set([...result.acceptedProposals, ...result.mergedProposals, ...result.rejectedProposals])].sort())
       .to.deep.equal(['A', 'B', 'C', 'D']);
   });
+
   it('synthesized multi-proposal patches apply cleanly via real git apply', async () => {
     const tmpDir = await mkdtemp(tmpdir() + '/sa-patch-');
     try {
@@ -204,7 +205,7 @@ describe('patch engine integrity', () => {
       });
 
       const applied = await readFile(file, 'utf8');
-      const lines = applied.replace(/\r/g, '').split('\n');
+      const lines = applied.replaceAll('\r', '').split('\n');
       expect(lines).to.include.members(['a','d','g','h','i','j','new']);
       expect(lines).to.not.include('old');
       expect(lines).to.not.include('e');

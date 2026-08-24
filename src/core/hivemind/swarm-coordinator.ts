@@ -169,6 +169,7 @@ export class SwarmCoordinator implements SwarmCoordinatorRuntime {
       if (signal?.aborted) this.terminateAllWorkers();
       throw error;
     }
+
     // The graph reached a terminal state successfully - the mission is done, so
     // clean up its checkpoint to avoid leaking it on disk. (Cleaned only on the
     // success path; the failure path above intentionally leaves it in place.)

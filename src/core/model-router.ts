@@ -73,12 +73,13 @@ export function getLangchainModel(config: ShadowConfig): BaseChatModel {
     case 'anthropic': {
       return asBaseChatModel(new ChatAnthropic({
         apiKey,
-        maxRetries: 2,
-        maxTokens,
-        modelName: model,
-        temperature,
-      }));
-    }
+            clientOptions: {timeout: 120_000},
+            maxRetries: 2,
+            maxTokens,
+            modelName: model,
+            temperature,
+          }));
+        }
 
     case 'azure': {
       if (!config.azure) {
@@ -103,7 +104,7 @@ export function getLangchainModel(config: ShadowConfig): BaseChatModel {
 
       return asBaseChatModel(new ChatOpenAI({
         apiKey,
-        configuration: { baseURL: customBaseUrl },
+              configuration: { baseURL: customBaseUrl, timeout: 120_000 },
         maxRetries: 2,
         maxTokens,
         modelName: model,
@@ -119,7 +120,7 @@ export function getLangchainModel(config: ShadowConfig): BaseChatModel {
 
       return asBaseChatModel(new DeepSeekChatOpenAI({
         apiKey,
-        configuration: {baseURL},
+              configuration: {baseURL, timeout: 120_000},
         maxRetries: 2,
         maxTokens,
         modelKwargs: deepSeekReasoningSettings(config.reasoningEffort),
@@ -169,8 +170,9 @@ export function getLangchainModel(config: ShadowConfig): BaseChatModel {
         modelName: model,
         reasoning,
         temperature,
-        useResponsesApi,
-      }));
+              timeout: 120_000,
+              useResponsesApi,
+            }));
     }
 
     case 'perplexity': {
@@ -190,7 +192,7 @@ export function getLangchainModel(config: ShadowConfig): BaseChatModel {
 
         return asBaseChatModel(new ChatOpenAI({
           apiKey,
-          configuration: { baseURL },
+                  configuration: { baseURL, timeout: 120_000 },
           maxRetries: 2,
           maxTokens,
           modelName: model,

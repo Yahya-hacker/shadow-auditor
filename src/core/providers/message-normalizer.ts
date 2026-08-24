@@ -100,23 +100,16 @@ function normalizeQwenToolCalls(message: AIMessage): AIMessage['tool_calls'] {
  * (callers decide whether to keep it).
  */
 function decodeAnyObject(input: string): unknown {
-  const attempt = (value: string): unknown => {
-    try {
-      return JSON.parse(value) as unknown;
-    } catch {
-      return value;
-    }
-  };
-
   // First pass: direct parse. Second pass: if the direct parse yielded a
   // string, unwrap the inner JSON (double-encoded Qwen tool call).
-  let parsed: unknown = attempt(input);
+  let parsed: unknown = attemptJson(input);
   for (let pass = 0; pass < 2 && typeof parsed === 'string'; pass += 1) {
-    const inner = attempt(parsed);
+    const inner = attemptJson(parsed);
     if (typeof inner !== 'string') {
       parsed = inner;
       break;
     }
+
     if (inner === parsed) break; // no further unwrap possible
     parsed = inner;
   }
@@ -126,11 +119,22 @@ function decodeAnyObject(input: string): unknown {
 }
 
 /**
+ * Parse a JSON string; return the raw value as-is when it is not valid JSON.
+ */
+function attemptJson(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}
+
+/**
  * If the parsed tool payload is an envelope like {"arguments": "..."} whose
  * value is itself a JSON string, unwrap it to the inner object. Otherwise
  * returns the payload unchanged.
  */
-function unwrapEnvelope(payload: unknown, callName: string): unknown {
+function unwrapEnvelope(payload: unknown, _callName: string): unknown {
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
     return payload;
   }
@@ -150,7 +154,6 @@ function unwrapEnvelope(payload: unknown, callName: string): unknown {
     }
   }
 
-  void callName;
   return payload;
 }
 

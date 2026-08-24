@@ -208,25 +208,27 @@ function parseMcpResponse(body: string, expectedId: number): JsonRpcResponse {
   // line individually would break multi-line JSON, so we first group contiguous
   // `data:` lines into whole events before attempting to parse.
   const lines = body.split(/\r?\n/);
-  const events = lines
-    .reduce<string[]>((events, line) => {
-      if (line.trim() === '') {
-          if (events.length > 0 && events[events.length - 1] !== '') events.push('');
-        return events;
+  const grouped: string[] = [];
+  for (const line of lines) {
+    if (line.trim() === '') {
+      if (grouped.length > 0 && grouped.at(-1) !== '') grouped.push('');
+      continue;
+    }
+
+    if (line.startsWith('data:')) {
+      const payload = line.slice(5).trim();
+      const last = grouped.at(-1);
+      if (last === undefined || last === '') {
+        grouped.push(payload);
+      } else {
+        grouped[grouped.length - 1] = `${last}\n${payload}`;
       }
-      if (line.startsWith('data:')) {
-          const payload = line.slice(5).trim();
-          const last = events[events.length - 1];
-          if (last === undefined || last === '') {
-            events.push(payload);
-          } else {
-            events[events.length - 1] = `${last}\n${payload}`;
-          }
-        }
-        return events;
-      }, [])
-      .map((event) => event.trim())
-      .filter((event) => event && event !== '[DONE]');
+    }
+  }
+
+  const events = grouped
+    .map((event) => event.trim())
+    .filter((event) => event && event !== '[DONE]');
 
   const sources = events.length > 0 ? events : [body];
 

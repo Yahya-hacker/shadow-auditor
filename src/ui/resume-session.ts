@@ -13,12 +13,14 @@ function extractText(content: unknown): string {
   if (typeof content === 'string') {
     return content;
   }
+
   if (Array.isArray(content)) {
     return content
       .map((part) => (part && typeof part === 'object' && 'text' in part ? String((part as {text: unknown}).text) : ''))
       .filter(Boolean)
       .join('\n');
   }
+
   return '';
 }
 
@@ -29,14 +31,21 @@ function extractText(content: unknown): string {
  */
 function toChatRole(role: string): 'agent' | 'error' | 'system' | 'user' | null {
   switch (role) {
-    case 'user':
-      return 'user';
-    case 'assistant':
+    case 'assistant': {
       return 'agent';
-    case 'system':
+    }
+
+    case 'system': {
       return 'system';
-    default:
+    }
+
+    case 'user': {
+      return 'user';
+    }
+
+    default: {
       return null;
+    }
   }
 }
 

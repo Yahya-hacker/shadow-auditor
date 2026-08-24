@@ -283,6 +283,7 @@ describe('executeLangChainToolLoop', () => {
 
     expect(result.text).to.contain('Synthesizing from collected evidence');
   });
+
   it('does not expose an incomplete DeepSeek protocol prefix as worker progress', async () => {
     const activities: string[] = [];
     const model = {

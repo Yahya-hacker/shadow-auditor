@@ -165,6 +165,7 @@ export class SandboxManager {
           });
         }
       }
+
       signal?.throwIfAborted();
 
       // 1. Create the internal Docker network
@@ -342,20 +343,9 @@ export class SandboxManager {
     return execResult;
   }
 
-      // Ring-buffer cap: a long-lived DAST session can run many commands; keeping
-      // every result in memory is unnecessary since the report only needs the tail.
-      // The oldest entries are dropped once the cap is reached.
-      private pushExecutionLog(entry: SandboxExecResult): void {
-        const MAX_LOG_ENTRIES = 500;
-        if (this.executionLog.length >= MAX_LOG_ENTRIES) {
-          this.executionLog.shift();
-        }
-        this.executionLog.push(entry);
-      }
-
-  /**
-   * Get the full execution log (used by the report generator for verbatim PoC).
-   */
+      /**
+       * Get the full execution log (used by the report generator for verbatim PoC).
+       */
   getExecutionLog(): SandboxExecResult[] {
     return [...this.executionLog];
   }
@@ -397,10 +387,6 @@ export class SandboxManager {
     };
   }
 
-  // ===========================================================================
-  // Private
-  // ===========================================================================
-
   /**
    * Execute a Docker command using execFile (NO shell). All arguments are
    * passed as separate array elements, preventing command injection even
@@ -441,6 +427,22 @@ export class SandboxManager {
       );
     });
   }
+
+  // ===========================================================================
+  // Private
+  // ===========================================================================
+
+  // Ring-buffer cap: a long-lived DAST session can run many commands; keeping
+      // every result in memory is unnecessary since the report only needs the tail.
+      // The oldest entries are dropped once the cap is reached.
+      private pushExecutionLog(entry: SandboxExecResult): void {
+        const MAX_LOG_ENTRIES = 500;
+        if (this.executionLog.length >= MAX_LOG_ENTRIES) {
+          this.executionLog.shift();
+        }
+
+        this.executionLog.push(entry);
+      }
 }
 
 async function discoverDependencyMounts(

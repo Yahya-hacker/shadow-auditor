@@ -48,7 +48,7 @@ describe('read-file tool (#41 size guard)', () => {
     await fs.writeFile(f, lines + '\n', 'utf8');
     const guard = await createPathGuard(rootDir);
     const tool = createReadFileTool(guard);
-    const out = String(await tool.execute({ filePath: 'medium.ts', startLine: 40, endLine: 45 }));
+    const out = String(await tool.execute({ endLine: 45, filePath: 'medium.ts', startLine: 40 }));
     expect(out).to.contain('line-40');
     expect(out).to.contain('line-45');
   });

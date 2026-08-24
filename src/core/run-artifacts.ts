@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
 import type { SecurityReport } from './output/report-schema.js';
 
 import { recoverAtomicWrite, writeFileAtomic } from '../utils/fs-atomic.js';
+import { redactSensitiveJson } from './stream-processor.js';
 
 /** Maximum size of a JSONL file before rotation (50 MB) */
 const MAX_JSONL_SIZE = 50 * 1024 * 1024;
@@ -98,7 +99,10 @@ async function repairInterruptedTail(filePath: string): Promise<void> {
  * and a fresh file is started.
  */
 async function appendJsonLine(filePath: string, payload: unknown): Promise<void> {
-  const line = `${JSON.stringify(payload)}\n`;
+  // Scrub secrets from the payload before it ever reaches disk: transcripts
+  // and tool events can carry `.env` contents or Authorization headers
+  // captured by read-file / execute-command tools.
+  const line = `${JSON.stringify(redactSensitiveJson(payload))}\n`;
 
   // Heal a truncated trailing line left by a crash before appending, so the
   // new record never merges into a corrupted partial line.
@@ -177,24 +181,41 @@ export class RunArtifacts {
     return instance;
   }
 
-  static async open(basePath: string, runId: string): Promise<RunArtifacts> {
-    if (path.basename(runId) !== runId || runId === '.' || runId === '..') {
-      throw new Error('Invalid run ID.');
+  /**
+   * Synchronously find the most recent run ID for a target, or null if none.
+   * Used by the CLI argv router, which must resolve a bare `--resume` before
+   * oclif parses flags (oclif v4 string flags require a value).
+   */
+  static findMostRecentRunIdSync(basePath: string): null | string {
+    const runsDirectory = path.join(basePath, '.shadow-auditor', 'runs');
+    let entries: fsSync.Dirent[];
+    try {
+      entries = fsSync.readdirSync(runsDirectory, { withFileTypes: true });
+    } catch {
+      return null;
     }
 
-    const runDirectory = path.join(basePath, '.shadow-auditor', 'runs', runId);
-    const metaPath = path.join(runDirectory, 'session-meta.json');
-    await recoverAtomicWrite(metaPath);
-    const meta = JSON.parse(await fs.readFile(metaPath, 'utf8')) as SessionMetadata;
-    if (meta.runId !== runId) {
-      throw new Error(`Run metadata does not match requested run ID "${runId}".`);
+    let best: null | { runId: string; startedAt: string } = null;
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const runId = entry.name;
+      if (path.basename(runId) !== runId || runId === '.' || runId === '..') continue;
+      const metaPath = path.join(runsDirectory, runId, 'session-meta.json');
+      let startedAt = '';
+      try {
+        const meta = JSON.parse(fsSync.readFileSync(metaPath, 'utf8')) as SessionMetadata;
+        if (meta.runId !== runId) continue;
+        startedAt = meta.startedAt ?? '';
+      } catch {
+        continue;
+      }
+
+      if (!best || startedAt.localeCompare(best.startedAt) > 0) {
+        best = { runId, startedAt };
+      }
     }
 
-    if (path.resolve(meta.targetPath) !== path.resolve(basePath)) {
-      throw new Error(`Run "${runId}" belongs to a different target.`);
-    }
-
-    return new RunArtifacts(runDirectory, meta);
+    return best?.runId ?? null;
   }
 
   /**
@@ -235,39 +256,24 @@ export class RunArtifacts {
     return runs;
   }
 
-  /**
-   * Synchronously find the most recent run ID for a target, or null if none.
-   * Used by the CLI argv router, which must resolve a bare `--resume` before
-   * oclif parses flags (oclif v4 string flags require a value).
-   */
-  static findMostRecentRunIdSync(basePath: string): string | null {
-    const runsDirectory = path.join(basePath, '.shadow-auditor', 'runs');
-    let entries: fsSync.Dirent[];
-    try {
-      entries = fsSync.readdirSync(runsDirectory, { withFileTypes: true });
-    } catch {
-      return null;
+  static async open(basePath: string, runId: string): Promise<RunArtifacts> {
+    if (path.basename(runId) !== runId || runId === '.' || runId === '..') {
+      throw new Error('Invalid run ID.');
     }
 
-    let best: { runId: string; startedAt: string } | null = null;
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const runId = entry.name;
-      if (path.basename(runId) !== runId || runId === '.' || runId === '..') continue;
-      const metaPath = path.join(runsDirectory, runId, 'session-meta.json');
-      let startedAt = '';
-      try {
-        const meta = JSON.parse(fsSync.readFileSync(metaPath, 'utf8')) as SessionMetadata;
-        if (meta.runId !== runId) continue;
-        startedAt = meta.startedAt ?? '';
-      } catch {
-        continue;
-      }
-      if (!best || startedAt.localeCompare(best.startedAt) > 0) {
-        best = { runId, startedAt };
-      }
+    const runDirectory = path.join(basePath, '.shadow-auditor', 'runs', runId);
+    const metaPath = path.join(runDirectory, 'session-meta.json');
+    await recoverAtomicWrite(metaPath);
+    const meta = JSON.parse(await fs.readFile(metaPath, 'utf8')) as SessionMetadata;
+    if (meta.runId !== runId) {
+      throw new Error(`Run metadata does not match requested run ID "${runId}".`);
     }
-    return best?.runId ?? null;
+
+    if (path.resolve(meta.targetPath) !== path.resolve(basePath)) {
+      throw new Error(`Run "${runId}" belongs to a different target.`);
+    }
+
+    return new RunArtifacts(runDirectory, meta);
   }
 
   assertCompatible(expected: Pick<SessionMetadata, 'model' | 'provider'>): void {
@@ -297,10 +303,6 @@ export class RunArtifacts {
     await this.writeMeta();
   }
 
-  async recordMessage(event: MessageArtifactEvent): Promise<void> {
-    await appendJsonLine(this.messagesPath, event);
-  }
-
   /**
    * Read the full persisted transcript for this run, oldest first.
    *
@@ -320,6 +322,7 @@ export class RunArtifacts {
         // No rotated file at this index — stop scanning older suffixes.
       }
     }
+
     files.push(this.messagesPath);
 
     const events: MessageArtifactEvent[] = [];
@@ -330,6 +333,7 @@ export class RunArtifacts {
       } catch {
         continue;
       }
+
       for (const line of raw.split('\n')) {
         const trimmed = line.trim();
         if (!trimmed) continue;
@@ -340,7 +344,12 @@ export class RunArtifacts {
         }
       }
     }
+
     return events;
+  }
+
+  async recordMessage(event: MessageArtifactEvent): Promise<void> {
+    await appendJsonLine(this.messagesPath, event);
   }
 
   async recordToolEvent(event: ToolArtifactEvent): Promise<void> {

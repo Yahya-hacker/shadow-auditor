@@ -55,13 +55,13 @@ export interface MirageOASTOptions {
 export class MirageOAST {
   private readonly callbackLog: OastCallback[] = [];
   private callbackOverflow = false;
+  private containerIP: null | string = null;
   private containerName: string;
-  private readonly managementToken: string;
   private readonly dockerExecutor: typeof execFile;
+  private readonly managementToken: string;
   private readonly networkName: string;
   private readonly runId: string;
   private running = false;
-  private containerIP: string | null = null;
 
   constructor(options: MirageOASTOptions) {
     this.runId = validateSafeIdentifier(options.runId, 'runId');
@@ -113,14 +113,6 @@ export class MirageOAST {
   }
 
     /**
-       * Whether any callback was evicted from the ring buffer (a signal that the
-       * session is producing more OAST traffic than the in-memory cap retains).
-       */
-      hasCallbackOverflow(): boolean {
-        return this.callbackOverflow;
-      }
-
-  /**
    * Get callbacks for a specific domain.
    */
   getCallbacksForDomain(domain: string): OastCallback[] {
@@ -135,18 +127,19 @@ export class MirageOAST {
   }
 
   /**
-   * Get the container name for DNS/proxy configuration.
-   */
-  getContainerName(): string {
-    return this.containerName;
-  }
-  /**
    * Get the container's IP address (discovered at start time). Used so the
    * sandbox can pass it as `--dns` to the target container, letting the
    * target resolve *.shadow.local back to Mirage for OAST callbacks.
    */
-  getContainerIP(): string | null {
+  getContainerIP(): null | string {
     return this.containerIP;
+  }
+
+  /**
+   * Get the container name for DNS/proxy configuration.
+   */
+  getContainerName(): string {
+    return this.containerName;
   }
 
   /**
@@ -154,6 +147,14 @@ export class MirageOAST {
    */
   hasCallback(tokenOrDomain: string): boolean {
     return this.callbackLog.some((cb) => cb.url.includes(tokenOrDomain));
+  }
+
+  /**
+   * Whether any callback was evicted from the ring buffer (a signal that the
+   * session is producing more OAST traffic than the in-memory cap retains).
+   */
+  hasCallbackOverflow(): boolean {
+    return this.callbackOverflow;
   }
 
   /**
@@ -165,17 +166,18 @@ export class MirageOAST {
 
   /**
    * Record an OAST callback (called by the sandbox when polling Mirage logs).
-     * Capped as a ring buffer (oldest evicted) so an aggressively polling or
-     * long-lived session cannot grow this in memory without bound.
-     */
-    recordCallback(callback: OastCallback): void {
-      const MAX_CALLBACK_ENTRIES = 5000;
-      if (this.callbackLog.length >= MAX_CALLBACK_ENTRIES) {
-        this.callbackLog.shift();
-        this.callbackOverflow = true;
-      }
-      this.callbackLog.push(callback);
+   * Capped as a ring buffer (oldest evicted) so an aggressively polling or
+   * long-lived session cannot grow this in memory without bound.
+   */
+  recordCallback(callback: OastCallback): void {
+    const MAX_CALLBACK_ENTRIES = 5000;
+    if (this.callbackLog.length >= MAX_CALLBACK_ENTRIES) {
+      this.callbackLog.shift();
+      this.callbackOverflow = true;
     }
+
+    this.callbackLog.push(callback);
+  }
 
   /**
    * Start the Mirage OAST sidecar container.

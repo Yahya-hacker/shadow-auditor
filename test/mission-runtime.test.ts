@@ -164,6 +164,7 @@ describe('MissionEngine runtime accounting', () => {
     expect(resumed.getState().budget.tokensUsed).to.equal(0);
     expect(resumed.getRemainingBudget().tokens).to.equal(100);
   });
+
   it('reconciles durable usage when a crash precedes the updated checkpoint', async () => {
     const engine = await createEngine();
     const reservationId = await engine.beforeModelInvocation({stage: 'sast_audit'});
@@ -528,7 +529,9 @@ describe('MissionEngine runtime accounting', () => {
 
     expect(engine.getState().budget.reservedToolCallIds).to.deep.equal([]);
     expect(engine.getState().budget.toolCallsUsed).to.equal(1);
-  });  it('does not publish tool-call events when the pre-execution checkpoint fails', async () => {
+  });
+
+  it('does not publish tool-call events when the pre-execution checkpoint fails', async () => {
     const engine = await createEngine();
     engine.saveCheckpoint = async () => {
       throw new Error('checkpoint unavailable');

@@ -3,6 +3,25 @@ import { expect } from 'chai';
 import { enhancedFindingSchema } from '../src/core/output/finding-schema.js';
 import { ReportBuilder } from '../src/core/output/report-builder.js';
 
+
+function makeFinding(over: { cwe: string; filePath: string; startLine: number; title: string; }) {
+  return enhancedFindingSchema.parse({
+    attackerPersonas: ['unauthenticated_remote'],
+    confidence: 0.9,
+    cvssV31Score: 8.6,
+    cvssV31Vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:L',
+    cwe: over.cwe,
+    description: 'A real finding.',
+    exploitability: 'easy',
+    locations: [{ filePath: over.filePath, startLine: over.startLine }],
+    remediation: { breakingChange: false, summary: 'Fix it.' },
+    rootCause: 'Root cause.',
+    severityLabel: 'High',
+    title: over.title,
+    vulnId: 'COLLIDING-LLM-ID', // Same ID on purpose: distinct real findings.
+  });
+}
+
 describe('ReportBuilder audit isolation', () => {
   it('does not fabricate complete coverage when the repository total is unknown', () => {
     const builder = new ReportBuilder({
@@ -52,26 +71,8 @@ describe('ReportBuilder audit isolation', () => {
     expect(builder.build().summary.totalFindings).to.equal(0);
         expect(builder.addFinding(finding).added).to.equal(true);
       });
-    });
 
     describe('ReportBuilder dedup fingerprint (#14)', () => {
-  function makeFinding(over: { cwe: string; title: string; startLine: number; filePath: string; }) {
-    return enhancedFindingSchema.parse({
-      attackerPersonas: ['unauthenticated_remote'],
-      confidence: 0.9,
-      cvssV31Score: 8.6,
-      cvssV31Vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:L',
-      cwe: over.cwe,
-      description: 'A real finding.',
-      exploitability: 'easy',
-      locations: [{ filePath: over.filePath, startLine: over.startLine }],
-      remediation: { breakingChange: false, summary: 'Fix it.' },
-      rootCause: 'Root cause.',
-      severityLabel: 'High',
-      title: over.title,
-      vulnId: 'COLLIDING-LLM-ID', // Same ID on purpose: distinct real findings.
-    });
-  }
 
   it('keeps two distinct findings that collide only in LLM vulnId', () => {
     const builder = new ReportBuilder({
@@ -82,8 +83,8 @@ describe('ReportBuilder audit isolation', () => {
       runId: 'dedup-fingerprint-keep',
     });
 
-    const a = makeFinding({ cwe: 'CWE-89', title: 'SQLi in login', startLine: 42, filePath: 'src/auth/login.ts' });
-    const b = makeFinding({ cwe: 'CWE-79', title: 'XSS in profile', startLine: 10, filePath: 'src/ui/profile.tsx' });
+    const a = makeFinding({ cwe: 'CWE-89', filePath: 'src/auth/login.ts', startLine: 42, title: 'SQLi in login' });
+    const b = makeFinding({ cwe: 'CWE-79', filePath: 'src/ui/profile.tsx', startLine: 10, title: 'XSS in profile' });
 
     expect(builder.addFinding(a).added).to.equal(true);
     expect(builder.addFinding(b).added).to.equal(true);
@@ -99,11 +100,12 @@ describe('ReportBuilder audit isolation', () => {
       runId: 'dedup-fingerprint-drop',
     });
 
-    const a = makeFinding({ cwe: 'CWE-89', title: 'SQLi in login', startLine: 42, filePath: 'src/auth/login.ts' });
+    const a = makeFinding({ cwe: 'CWE-89', filePath: 'src/auth/login.ts', startLine: 42, title: 'SQLi in login' });
     const a2 = { ...a, vulnId: 'DIFFERENT-LLM-ID' };
 
     expect(builder.addFinding(a).added).to.equal(true);
     expect(builder.addFinding(a2).added).to.equal(false);
     expect(builder.build().summary.totalFindings).to.equal(1);
   });
+});
 });

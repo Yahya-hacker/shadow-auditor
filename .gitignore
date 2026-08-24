@@ -7,3 +7,7 @@ shadow-prompt.md
 .aider*
 .serena/
 .idea/
+
+# TypeScript incremental build cache
+tsconfig.tsbuildinfo
+

@@ -8,8 +8,8 @@ import { evaluateMcpPolicy, type MCPActionPolicy } from '../policy/mcp-policy.js
 export interface MCPManagerOptions {
   expertUnsafe: boolean;
   humanInteraction: HumanInteractionService;
-  targetPath: string;
   policy?: Partial<MCPActionPolicy>;
+  targetPath: string;
 }
 
 export interface MCPDiscoveredCapability {
@@ -105,7 +105,7 @@ export class MCPManager {
           signal: executionOptions.abortSignal,
         };
         const policyDecision = evaluateMcpPolicy(adapterId, definition, {
-          ...(policy ?? {}),
+          ...policy,
           expertUnsafe: context.expertUnsafe,
         });
         if (!policyDecision.allowed) {

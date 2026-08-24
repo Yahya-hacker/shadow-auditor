@@ -41,15 +41,20 @@ export function buildDnsAResponse(query: Buffer, ip: string): Buffer | null {
         offset += 1;
         break;
       }
+
       // Compression pointer (unneeded for our own questions, but avoid reading
-      // past the buffer if one appears in a forwarded request).
+      // past the buffer if one appears in a forwarded request). The 0xc0 mask
+      // checks DNS wire-format compression bits (RFC 1035 section 4.1.4).
+      // eslint-disable-next-line no-bitwise
       if ((len & 0xc0) === 0xc0) {
         offset += 2;
         break;
       }
+
       offset += 1 + len;
       if (offset > query.length) return null;
     }
+
     offset += 4;
     if (offset > query.length) return null;
   }
@@ -61,13 +66,13 @@ export function buildDnsAResponse(query: Buffer, ip: string): Buffer | null {
   query.copy(response, 0, 0, questionEnd);
 
   // Flags: QR=1, RD=echoed(we set it), RA=1, opcode=0 => 0x8180.
-  response.writeUInt16BE(0x8180, 2);
+  response.writeUInt16BE(0x81_80, 2);
   // ANCOUNT = the number of questions we answer.
   response.writeUInt16BE(qdcount, 6);
 
   let cursor = questionEnd;
   for (let q = 0; q < qdcount; q++) {
-    response.writeUInt16BE(0xc00c, cursor); // pointer back to question NAME
+    response.writeUInt16BE(0xc0_0c, cursor); // pointer back to question NAME
     response.writeUInt16BE(1, cursor + 2);  // QTYPE A
     response.writeUInt16BE(1, cursor + 4);  // QCLASS IN
     response.writeUInt32BE(60, cursor + 6); // TTL 60s

@@ -167,11 +167,13 @@ export function synthesizePatches(
         contributedSet.add(hunkA.proposalId);
         mergedSet.add(hunkA.proposalId);
       }
+
       if (hunkB) {
         synthesizedHunks.push(hunkB.hunk);
         contributedSet.add(hunkB.proposalId);
         mergedSet.add(hunkB.proposalId);
       }
+
       resolvedConflicts.push(conflict);
       return;
     }

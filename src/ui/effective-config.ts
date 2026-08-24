@@ -9,7 +9,7 @@ export interface RuntimeConfigOverrides {
   swarmEnabled?: boolean;
 }
 
-const FAILURE_THRESHOLDS = new Set(['critical', 'high', 'low', 'medium', 'none']);
+const FAILURE_THRESHOLDS = new Set(['critical', 'high', 'info', 'low', 'medium', 'none']);
 
 export function buildEffectiveConfig(
   config: ShadowConfig,

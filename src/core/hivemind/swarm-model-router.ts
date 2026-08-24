@@ -217,6 +217,7 @@ export function resolveWorkerModel(
         modelCache.delete(oldestKey);
       }
     }
+
     return model;
 }
 

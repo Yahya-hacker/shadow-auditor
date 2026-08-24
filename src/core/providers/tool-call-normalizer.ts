@@ -279,7 +279,7 @@ export function normalizeProviderToolCalls(
     // evidence was collected. Strip the DSML envelope and fall through to
     // the same no-tool-calls path as stream-processor, so any real prose
     // still reaches the report.
-    const stripped = content.replace(DSML_TOOL_BLOCK_PATTERN, '');
+    const stripped = content.replaceAll(DSML_TOOL_BLOCK_PATTERN, '');
     if (stripped.trim()) {
       return new AIMessage({
         additional_kwargs: normalizedMessage.additional_kwargs,
@@ -292,6 +292,7 @@ export function normalizeProviderToolCalls(
         usage_metadata: normalizedMessage.usage_metadata,
       });
     }
+
     throw new Error(
       'DeepSeek emitted only a DSML tool call with no prose after tools were disabled for stage finalization.',
     );

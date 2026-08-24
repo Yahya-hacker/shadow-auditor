@@ -390,13 +390,13 @@ describe('bash tool policy integration', () => {
         describe('pipeline tokenizer', () => {
           it('preserves Windows backslash paths verbatim on win32', function () {
             if (process.platform !== 'win32') this.skip();
-            const expected: string[][] = [['rg', 'C:\\Users\\src\\report.txt', '.']];
+            const expected: string[][] = [['rg', String.raw`C:\Users\src\report.txt`, '.']];
             expect(parsePipeline(String.raw`rg C:\Users\src\report.txt .`)).to.deep.equal(expected);
           });
 
           it('does not treat double-quoted backslash as an escape on win32', function () {
             if (process.platform !== 'win32') this.skip();
-            const expected: string[][] = [['rg', 'C:\\repo\\test dir', '.']];
+            const expected: string[][] = [['rg', String.raw`C:\repo\test dir`, '.']];
             expect(parsePipeline(String.raw`rg "C:\repo\test dir" .`)).to.deep.equal(expected);
           });
 

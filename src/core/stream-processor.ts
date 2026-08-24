@@ -100,8 +100,8 @@ const TOOL_ACTIVITY_LABELS: Readonly<Record<string, string>> = {
   search_codebase: 'Searching code',
 };
 const ANSI_ESCAPE_PATTERN = new RegExp(`${String.fromCodePoint(27)}\\[[0-?]*[ -/]*[@-~]`, 'g');
-const SENSITIVE_VALUE_PATTERN =
-  /((?:api[_-]?key|authorization|password|secret|token)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+export const SENSITIVE_VALUE_PATTERN =
+  /((?:api[_-]?key|authorization|password|secret|access[_-]?token|refresh[_-]?token|token|bearer)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|(?:bearer|basic|token)\s+[^\s,;]+|[^\s,;]+)/gi;
 
 function usageMessageId(message: Record<string, unknown>): string | undefined {
   if (typeof message.id === 'string' && message.id.length > 0) return message.id;
@@ -206,8 +206,49 @@ function toolDetail(toolName: string, args: unknown): string | undefined {
   return toolName === 'execute_command' ? `$ ${safeDetail}` : safeDetail;
 }
 
-function redactSensitiveText(value: string): string {
+export function redactSensitiveText(value: string): string {
   return value.replaceAll(SENSITIVE_VALUE_PATTERN, '$1[REDACTED]');
+}
+
+/**
+ * Deep-redact sensitive values inside a parsed JSON structure (messages,
+ * tool call inputs, tool results). Walks string, array, and object values so
+ * secrets embedded anywhere in a persisted payload are scrubbed before the
+ * data is serialized to disk. Object keys are left intact (renaming keys
+ * could corrupt tool-call argument contracts); only *values* carrying a
+ * sensitive `key=value` / `key:value` shape are redacted.
+ */
+export function redactSensitiveJson(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return redactSensitiveText(value);
+  }
+
+  if (Array.isArray(value)) {
+    let changed = false;
+    const out = Array.from({length: value.length});
+    for (const [i, element] of value.entries()) {
+      const next = redactSensitiveJson(element);
+      changed = changed || next !== element;
+      out[i] = next;
+    }
+
+    return changed ? out : value;
+  }
+
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    let changed = false;
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(record)) {
+      const next = redactSensitiveJson(record[key]);
+      changed = changed || next !== record[key];
+      out[key] = next;
+    }
+
+    return changed ? out : value;
+  }
+
+  return value;
 }
 
 function toolResultSucceeded(message: Record<string, unknown>, output: string): boolean {
@@ -283,15 +324,6 @@ function reasoningBlockText(value: Record<string, unknown>): string {
   for (const key of ['reasoning', 'thinking', 'text', 'delta', 'summary']) {
     const candidate = value[key];
     if (typeof candidate === 'string' && candidate.trim()) return candidate;
-  }
-
-  return '';
-}
-
-function reasoningSummaryText(value: Record<string, unknown>): string {
-  for (const key of ['reasoning', 'text', 'delta', 'summary']) {
-    const candidate = value[key];
-    if (typeof candidate === 'string') return candidate;
   }
 
   return '';

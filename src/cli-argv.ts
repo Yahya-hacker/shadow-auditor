@@ -34,6 +34,7 @@ function normalizeResumeFlag(argv: string[]): string[] {
       }
     }
   }
+
   return routed;
 }
 

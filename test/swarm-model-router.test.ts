@@ -170,7 +170,17 @@ describe('swarm-model-router', () => {
         thinking: {type: 'disabled'},
       });
     });
-  });
+
+          it('sets a bounded request timeout on OpenAI-compatible providers', () => {
+            const model = getLangchainModel({
+              apiKey: 'key',
+              model: 'gpt-4o',
+              provider: 'openai',
+            }) as ChatOpenAI;
+
+            expect(model.timeout).to.equal(120_000);
+          });
+        });
 
   describe('computeTrustScore', () => {
     it('returns 0.9 for premium tier', () => {
