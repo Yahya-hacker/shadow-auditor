@@ -51,6 +51,7 @@ async function acquireCrossProcessLock(filePath: string): Promise<() => Promise<
         } catch {
           // Best-effort close.
         }
+
         await fs.rm(lockPath, { force: true });
       };
     } catch (error) {
@@ -68,7 +69,10 @@ async function acquireCrossProcessLock(filePath: string): Promise<() => Promise<
         if ((statError as NodeJS.ErrnoException).code === 'ENOENT') continue;
         throw statError;
       }
-      await new Promise((resolve) => setTimeout(resolve, CROSS_PROCESS_LOCK_RETRY_MS));
+
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, CROSS_PROCESS_LOCK_RETRY_MS);
+      });
     }
   }
 
@@ -104,6 +108,7 @@ async function recoverAtomicWriteUnlocked(filePath: string): Promise<void> {
     if (journalStats.isSymbolicLink() || !journalStats.isFile()) {
       throw new Error(`Refusing atomic recovery from non-regular journal: ${journalPath}`);
     }
+
     journalExists = true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;

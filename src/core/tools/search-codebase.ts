@@ -76,7 +76,7 @@ const REDOS_QUANTIFIED_ALTERNATION =
 // Strip escaped characters and character classes so alternation detection does
 // not trip on legitimate uses inside classes (e.g. [a|b]).
 function stripCluster(pattern: string): string {
-  return pattern.replace(/\\[\s\S]/g, 'x').replace(/\[[^\]]*\]/g, 'x');
+  return pattern.replaceAll(/\\[\s\S]/g, 'x').replaceAll(/\[[^\]]*\]/g, 'x');
 }
 
 function isReDosRisk(pattern: string): boolean {

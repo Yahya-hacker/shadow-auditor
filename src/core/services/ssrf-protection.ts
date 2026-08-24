@@ -14,6 +14,14 @@
 import { lookup } from 'node:dns/promises';
 import { BlockList, isIP } from 'node:net';
 
+/** Convert a list of hextet strings to 16-bit numbers, using NaN for malformed parts. */
+function toGroups(list: string[]): number[] {
+  return list.map((part) => {
+    if (!/^[0-9a-f]{1,4}$/i.test(part)) return Number.NaN;
+    return Number.parseInt(part, 16);
+  });
+}
+
 const blockedAddresses = new BlockList();
 for (const [network, prefix] of [
   ['0.0.0.0', 8],
@@ -85,6 +93,10 @@ function extractIpv4Compatible(address: string): string | undefined {
   if (groups.slice(0, 6).some((group) => group !== 0)) return undefined;
   const upper = groups[6]!;
   const lower = groups[7]!;
+  // Unpack the final two hextets into four IP octets (each is 16 bits → 1
+  // byte = 8 bits high, 8 bits low). Bitwise ops are the natural way to do
+  // this byte split on a packed IPv6 hextet.
+  // eslint-disable-next-line no-bitwise
   return `${(upper >> 8) & 0xff}.${upper & 0xff}.${(lower >> 8) & 0xff}.${lower & 0xff}`;
 }
 
@@ -96,9 +108,9 @@ function expandHextets(address: string): number[] | undefined {
   if (!address || isIP(address) !== 6) return undefined;
 
   // Replace the dotted IPv4 tail with its two-hextet hex form (A.B.C.D as the
-    // trailing 32 bits → A*256+B : C*256+D) so the whole string splits cleanly
-    // into exactly 8 hextets with the IPv4 in the final two positions.
-    const dotted = address.match(/([0-9]{1,3}(?:\.[0-9]{1,3}){3})$/);
+  // trailing 32 bits → A*256+B : C*256+D) so the whole string splits cleanly
+  // into exactly 8 hextets with the IPv4 in the final two positions.
+  const dotted = address.match(/([0-9]{1,3}(?:\.[0-9]{1,3}){3})$/);
     let groupsText = address;
     if (dotted) {
       const octets = dotted[1]!.split('.').map((octet) => Number.parseInt(octet, 10));
@@ -114,14 +126,9 @@ function expandHextets(address: string): number[] | undefined {
   const [leftText, rightText] = leftPart.length === 2 ? leftPart : [groupsText, undefined];
   const left = leftText ? leftText.split(':').filter(Boolean) : [];
   const right = rightText ? rightText.split(':').filter(Boolean) : [];
-  const toGroups = (list: string[]) =>
-    list.map((part) => {
-      if (!/^[0-9a-f]{1,4}$/i.test(part)) return NaN;
-      return Number.parseInt(part, 16);
-    });
   const leftGroups = toGroups(left);
   const rightGroups = toGroups(right);
-  if (leftGroups.some(Number.isNaN) || rightGroups.some(Number.isNaN)) return undefined;
+  if (leftGroups.some((n) => Number.isNaN(n)) || rightGroups.some((n) => Number.isNaN(n))) return undefined;
   if (leftGroups.length + rightGroups.length > 8) return undefined;
 
   if (!rightText) {

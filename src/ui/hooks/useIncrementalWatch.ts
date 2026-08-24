@@ -45,6 +45,7 @@ export function useIncrementalWatch(
                   findingsBaseline = latestFindings;
                 }
               }
+
               const previousFindings = findingsBaseline;
               store.addSystemMessage(
                 `Watch detected ${changedFiles.length} changed file${changedFiles.length === 1 ? '' : 's'}; starting an incremental security audit.`,

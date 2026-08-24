@@ -228,6 +228,7 @@ function tokenOverlap(queryTokens: Set<string>, candidateTokens: Set<string>): n
   for (const token of queryTokens) {
     if (candidateTokens.has(token)) shared += 1;
   }
+
   return shared / queryTokens.size;
 }
 

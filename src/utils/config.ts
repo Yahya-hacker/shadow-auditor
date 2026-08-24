@@ -80,8 +80,8 @@ export interface ShadowConfig {
     kaliLinuxEndpoint?: string;
     requireDangerousConfirmation?: boolean;
     requireSensitiveConfirmation?: boolean;
-    serverTiers?: Record<string, 'safe' | 'sensitive' | 'dangerous' | 'blocked'>;
-    toolTiers?: Record<string, 'safe' | 'sensitive' | 'dangerous' | 'blocked'>;
+    serverTiers?: Record<string, 'blocked' | 'dangerous' | 'safe' | 'sensitive'>;
+    toolTiers?: Record<string, 'blocked' | 'dangerous' | 'safe' | 'sensitive'>;
   };
   model: string;
   provider: string;

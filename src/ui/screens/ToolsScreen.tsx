@@ -64,6 +64,7 @@ export const ToolsScreen: React.FC = () => {
         if (!session) {
           return false;
         }
+
         session.getToolPolicySnapshot()
           .then((s) => {
             if (!disposed) {
@@ -84,10 +85,9 @@ export const ToolsScreen: React.FC = () => {
         // No session yet: poll until it initializes.
         const poll = () => {
           if (disposed) return;
-          if (load()) {
-            if (timer) clearInterval(timer);
-          }
+          if (load() && timer) clearInterval(timer);
         };
+
         timer = setInterval(poll, 1500);
       }
 

@@ -82,10 +82,6 @@ export class IncrementalWatchService {
     });
   }
 
-  private handleWatchError(error: unknown): void {
-    this.onError(error instanceof Error ? error : new Error(String(error)));
-  }
-
   private enqueue(candidate: string): void {
     if (this.stopped) return;
     const relativePath = path.relative(this.root, path.resolve(candidate));
@@ -136,6 +132,10 @@ export class IncrementalWatchService {
         }
       }
     }
+  }
+
+  private handleWatchError(error: unknown): void {
+    this.onError(error instanceof Error ? error : new Error(String(error)));
   }
 
   private isIgnored(candidate: string): boolean {

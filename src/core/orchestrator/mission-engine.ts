@@ -795,6 +795,7 @@ export class MissionEngine implements MissionRuntimeObserver {
       for (const reservationId of orphanedReservationIds) {
         delete modelReservations[reservationId];
       }
+
       changed = true;
     }
 

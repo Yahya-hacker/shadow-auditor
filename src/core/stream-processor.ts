@@ -225,12 +225,13 @@ export function redactSensitiveJson(value: unknown): unknown {
 
   if (Array.isArray(value)) {
     let changed = false;
-    const out = new Array(value.length);
-    for (let i = 0; i < value.length; i++) {
-      const next = redactSensitiveJson(value[i]);
-      changed = changed || next !== value[i];
+    const out = Array.from({length: value.length});
+    for (const [i, element] of value.entries()) {
+      const next = redactSensitiveJson(element);
+      changed = changed || next !== element;
       out[i] = next;
     }
+
     return changed ? out : value;
   }
 
@@ -243,6 +244,7 @@ export function redactSensitiveJson(value: unknown): unknown {
       changed = changed || next !== record[key];
       out[key] = next;
     }
+
     return changed ? out : value;
   }
 
@@ -322,15 +324,6 @@ function reasoningBlockText(value: Record<string, unknown>): string {
   for (const key of ['reasoning', 'thinking', 'text', 'delta', 'summary']) {
     const candidate = value[key];
     if (typeof candidate === 'string' && candidate.trim()) return candidate;
-  }
-
-  return '';
-}
-
-function reasoningSummaryText(value: Record<string, unknown>): string {
-  for (const key of ['reasoning', 'text', 'delta', 'summary']) {
-    const candidate = value[key];
-    if (typeof candidate === 'string') return candidate;
   }
 
   return '';

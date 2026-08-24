@@ -13,7 +13,6 @@ import type { SignedExecutionEvidence } from '../dast/dast-schema.js';
 import type { ExecutionEvidenceVerifier } from '../dast/evidence-store.js';
 import type { FalsePositiveStore, SuppressionDecision } from '../memory/false-positive-store.js';
 import type { EnhancedFinding } from '../output/finding-schema.js';
-import { parseCvssVector, scoreCvssVector } from '../output/cvss-scorer.js';
 import type { AdversarialVerdict, AuditStage, SastCandidate } from './pipeline-artifacts.js';
 import type { AgentStateType, RecordedClaim } from './state.js';
 import type { ToolEntry } from './tool-retriever.js';
@@ -25,6 +24,7 @@ import {
   type MissionRuntimeObserver,
   runObservedModelInvocation,
 } from '../orchestrator/mission-runtime.js';
+import { parseCvssVector, scoreCvssVector } from '../output/cvss-scorer.js';
 import { enhancedFindingSchema } from '../output/finding-schema.js';
 import {
   normalizeModelHistory,
@@ -167,6 +167,7 @@ function stringifyContent(message: BaseMessage): string {
         if (/reasoning|thinking/.test(blockType)) return [];
         return [record.text];
       }
+
       return [];
     })
     .join('\n')
@@ -185,8 +186,8 @@ function extractHandoffText(message: BaseMessage): string {
   if (fromContent.trim()) return fromContent;
 
   const record = message as unknown as {
-    content_blocks?: unknown;
     additional_kwargs?: Record<string, unknown>;
+    content_blocks?: unknown;
   };
 
   // OpenAI Responses API v1 stores blocks in content_blocks in some adapters.
@@ -201,9 +202,11 @@ function extractHandoffText(message: BaseMessage): string {
         if (typeof block.reasoning === 'string' && block.reasoning.trim()) {
           return [block.reasoning];
         }
+
         if (typeof block.thinking === 'string' && block.thinking.trim()) {
           return [block.thinking];
         }
+
         return [];
       })
       .join('\n')
@@ -725,13 +728,24 @@ function sameLocation(
 
 function severityLabelFor(value: string): string {
   switch (value.toLowerCase()) {
-    case 'critical': return 'Critical';
-    case 'high': return 'High';
-    case 'medium': return 'Medium';
-    case 'low': return 'Low';
+    case 'critical': { return 'Critical';
+    }
+
+    case 'high': { return 'High';
+    }
+
     case 'info':
-    case 'informational': return 'Info';
-    default: return value;
+    case 'informational': { return 'Info';
+    }
+
+    case 'low': { return 'Low';
+    }
+
+    case 'medium': { return 'Medium';
+    }
+
+    default: { return value;
+    }
   }
 }
 
@@ -745,14 +759,14 @@ function cvssForSeverity(severity: string): {score: number; vector: string} {
   const vectorBySeverity: Record<string, string> = {
     Critical: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H',
     High: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N',
-    Medium: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N',
-    Low: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N',
     Info: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N',
+    Low: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N',
+    Medium: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N',
   };
   const vector = vectorBySeverity[severity] ?? vectorBySeverity.Medium!;
   const parsed = parseCvssVector(vector);
   const scored = parsed.valid ? scoreCvssVector(vector) : null;
-  return {score: scored?.baseScore ?? 5.0, vector};
+  return {score: scored?.baseScore ?? 5, vector};
 }
 
 /**
@@ -776,8 +790,8 @@ function buildSalvagedFinding(
         : 'theoretical';
   const locations = candidate.affectedLocations.map((loc) => ({
     filePath: loc.filePath,
-    startLine: loc.lineNumber,
     snippet: loc.snippet,
+    startLine: loc.lineNumber,
   }));
   const dataFlowPath = candidate.sourceToSink.map((step) => ({
     description: step.description,
@@ -800,7 +814,7 @@ function buildSalvagedFinding(
     description: candidate.summary,
     exploitability,
     locations,
-    remediation: {summary: candidate.remediation, breakingChange: false},
+    remediation: {breakingChange: false, summary: candidate.remediation},
     rootCause: candidate.summary,
       severityLabel: severity,
     title: candidate.title,
@@ -877,8 +891,9 @@ function synthesizeSalvageReport(
     lines.push('No confirmed findings could be reconstructed from verified evidence.');
     return lines.join('\n');
   }
+
   lines.push('## Findings', '');
-  findings.forEach((finding, index) => {
+  for (const [index, finding] of findings.entries()) {
     const primary = finding.locations[0];
     const location = primary
       ? `${primary.filePath}${primary.startLine ? `:${primary.startLine}` : ''}`
@@ -904,7 +919,8 @@ function synthesizeSalvageReport(
       finding.remediation.summary,
       '',
     );
-  });
+  }
+
   return lines.join('\n');
 }
 
@@ -1128,6 +1144,7 @@ function reporterEvidence(
       problems.push('report_finding emitted a call without an ID.');
       return undefined;
     }
+
     const resultMessage = history.find((message) =>
       isToolMessageFor(message, callId),
     );
@@ -1191,6 +1208,7 @@ function reporterEvidence(
       );
       return undefined;
     }
+
     const signedEvidence = evidenceVerifier?.verifyForFinding(
       verdict.verification.evidenceArtifactIds,
       sourceClaimId,
@@ -1232,6 +1250,7 @@ function reporterEvidence(
       problems.push('finish_task emitted a call without an ID.');
       continue;
     }
+
     const resultMessage = history.find((message) =>
       isToolMessageFor(message, call.id!),
     );
@@ -1398,7 +1417,7 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
         normalizeTokenUsage,
       ),
       4,
-      2_000,
+      2000,
       signal,
       'AuditPipeline',
     );
@@ -1490,7 +1509,7 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
           normalizeTokenUsage,
         ),
         4,
-        2_000,
+        2000,
         signal,
         'AuditPipeline',
       );
@@ -1877,7 +1896,7 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
         normalizeTokenUsage,
       ),
       4,
-      2_000,
+      2000,
       config.signal,
       'AuditPipeline',
     );
@@ -1901,6 +1920,7 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
         state.stageIterations,
       );
     }
+
     if (hasToolCalls(response)) {
       if (evidence.completionSucceeded) {
         // Reporter finished successfully but then emitted stray tool calls.
@@ -1939,6 +1959,7 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
         stageIterations,
       );
     }
+
     await missionRuntime?.recordStageCompleted('reporting');
     return {
       findings: evidence.acceptedFindings,

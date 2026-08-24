@@ -48,6 +48,8 @@ export const MetadataPanel: React.FC<MetadataPanelProps> = memo(({ compact = fal
   const model = config?.model ?? '—';
   const auditMode = config?.auditMode ?? '—';
   const targetLabel = targetPath
+    // `.findLast` (the rule's suggested replacement) is ES2023; this project targets ES2022.
+    // eslint-disable-next-line unicorn/prefer-array-find
     ? targetPath.split(/[\\/]/).filter(Boolean).at(-1) || targetPath
     : focusScope;
 

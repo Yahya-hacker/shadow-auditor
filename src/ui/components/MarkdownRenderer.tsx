@@ -408,6 +408,7 @@ export function parseInline(raw: string, streaming: boolean): InlineSegment[] {
             if (depth === 0) { closeParen = j; break; }
           }
         }
+
         if (closeParen !== -1) {
           flushText();
           const linkText = raw.slice(i + 1, closeBracket);

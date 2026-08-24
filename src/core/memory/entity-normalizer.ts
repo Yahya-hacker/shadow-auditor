@@ -119,15 +119,17 @@ export function normalizePath(filePath: string): string {
   for (const segment of segments) {
     if (segment === '.' || segment === '') continue;
     if (segment === '..') {
-      if (resolved.length > 0 && resolved[resolved.length - 1] !== '..') {
+      if (resolved.length > 0 && resolved.at(-1) !== '..') {
         resolved.pop();
       } else if (resolved.length === 0) {
         // Leading .. escapes the root; keep it as-is so a path that resolves
         // outside the tree stays distinguishable from one inside it.
         resolved.push(segment);
       }
+
       continue;
     }
+
     resolved.push(segment);
   }
 

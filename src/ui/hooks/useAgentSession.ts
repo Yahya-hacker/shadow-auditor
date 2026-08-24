@@ -35,7 +35,7 @@ export interface AgentSessionLike {
   getLatestFindings(): EnhancedReport['findings'];
   getMessageHistory?(): Promise<import('../../core/run-artifacts.js').MessageArtifactEvent[]>;
   getPendingHumanInput(): Promise<import('../../core/graph/state.js').HumanInputRequest | null>;
-    getRunId?(): string | null;
+    getRunId?(): null | string;
     getToolPolicySnapshot(): Promise<{
     agents: Array<{
       id: string;
@@ -108,11 +108,12 @@ export async function disposeActiveAgentSessions(): Promise<void> {
  * Return the run ID of the most recently started active session, if any.
  * Used to print a "resume this session" hint on shutdown.
  */
-export function getActiveSessionRunId(): string | null {
+export function getActiveSessionRunId(): null | string {
   for (const session of activeSessions) {
     const runId = session.getRunId?.();
     if (runId) return runId;
   }
+
   return null;
 }
 

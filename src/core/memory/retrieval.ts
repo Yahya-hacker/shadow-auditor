@@ -212,6 +212,7 @@ export class Retrieval {
           }
         }
       }
+
       exploitPath.push(...best);
     }
 

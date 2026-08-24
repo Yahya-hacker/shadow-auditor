@@ -37,6 +37,7 @@ export function createReadFileTool(pathGuard: PathGuard) {
             `refusing to read more than ${MAX_READ_BYTES / 1024 / 1024} MB at once. ` +
             `Run read_file_content with an explicit startLine/endLine on a smaller file.`;
         }
+
         const content = await fs.readFile(absolutePath, 'utf8');
         const lines = content.split(/\r?\n/);
         const totalLines = lines.length;
