@@ -4,15 +4,15 @@ import { buildDnsAResponse } from '../src/core/dast/dns-response.js';
 
 // Build a minimal DNS query: 12-byte header + one question.
 function buildQuery(opts: {
+  hostname?: string;
   id?: number;
   qdcount?: number;
-  hostname?: string;
   qtype?: number;
 } = {}): Buffer {
   const {
-    id = 0x1234,
-    qdcount = 1,
     hostname = 'oast-abc123.shadow.local',
+    id = 0x12_34,
+    qdcount = 1,
     qtype = 1,
   } = opts;
 
@@ -22,7 +22,7 @@ function buildQuery(opts: {
   const name = Buffer.concat([...labels, Buffer.from([0])]);
   const header = Buffer.alloc(12);
   header.writeUInt16BE(id, 0); // ID
-  header.writeUInt16BE(0x0100, 2); // RD=1
+  header.writeUInt16BE(0x01_00, 2); // RD=1
   header.writeUInt16BE(qdcount, 4); // QDCOUNT
   const tail = Buffer.alloc(4);
   tail.writeUInt16BE(qtype, 0);
@@ -49,11 +49,11 @@ describe('buildDnsAResponse', () => {
   });
 
   it('echoes the ID and sets standard response flags', () => {
-    const q = buildQuery({ id: 0xbeef });
+    const q = buildQuery({ id: 0xbe_ef });
     const resp = buildDnsAResponse(q, '1.2.3.4')!;
     expect(resp).to.not.equal(null);
-    expect(resp.readUInt16BE(0)).to.equal(0xbeef); // ID echoed
-    expect(resp.readUInt16BE(2)).to.equal(0x8180); // QR + RA + RD
+    expect(resp.readUInt16BE(0)).to.equal(0xbe_ef); // ID echoed
+    expect(resp.readUInt16BE(2)).to.equal(0x81_80); // QR + RA + RD
   });
 
   it('answers a single question with one A record pointing at the IP', () => {
@@ -72,12 +72,11 @@ describe('buildDnsAResponse', () => {
   });
 
   it('parses multi-octet IPs and answers multiple questions', () => {
-    const q = buildQuery({ qdcount: 0 });
     // Rebuild with qdcount 2 by crafting manually
-    const q1 = buildQuery({ hostname: 'a.shadow.local', id: 0x1111, qdcount: 2 });
+    const q1 = buildQuery({ hostname: 'a.shadow.local', id: 0x11_11, qdcount: 2 });
     // q1 currently only has ONE question despite qdcount=2; append a second question
     const secondQuestion = Buffer.from([
-      1, 'b'.charCodeAt(0), 0, // name: "b. root"
+      1, 'b'.codePointAt(0)!, 0, // name: "b. root"
       0, 1, 0, 1,
     ]);
     const multi = Buffer.concat([q1, secondQuestion]);
@@ -88,8 +87,8 @@ describe('buildDnsAResponse', () => {
   it('handles a compression-pointer question without overrunning the buffer', () => {
     // Header + pointer-only name (offset not relevant for parsing) + qtype/qclass
     const q = Buffer.alloc(12 + 2 + 4);
-    q.writeUInt16BE(0x2222, 0);
-    q.writeUInt16BE(0x0100, 2);
+    q.writeUInt16BE(0x22_22, 0);
+    q.writeUInt16BE(0x01_00, 2);
     q.writeUInt16BE(1, 4); // QDCOUNT=1
     q[12] = 0xc0; q[13] = 0x0c; // compression pointer to offset 12
     q.writeUInt16BE(1, 14); // QTYPE A

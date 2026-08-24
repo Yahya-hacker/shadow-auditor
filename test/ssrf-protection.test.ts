@@ -63,6 +63,7 @@ describe('SSRF protection', () => {
         ]) {
           expect(isBlockedHost(address), `block ${address}`).to.equal(true);
         }
+
         for (const address of [
           '::8.8.8.8',
           '::808:808',
@@ -150,11 +151,13 @@ describe('SSRF protection', () => {
           }));
           return;
         }
+
         if (method === 'notifications/initialized') {
           response.statusCode = 202;
           response.end();
           return;
         }
+
         // tools/call deferred with 202 + Location
         if (method === 'tools/call') {
           toolsCallId = body.id;
@@ -164,6 +167,7 @@ describe('SSRF protection', () => {
           response.end();
           return;
         }
+
         // Poll endpoint: return 202 + new Location until the third poll
         if (request.url?.startsWith('/poll/')) {
           if (pollCount < 3) {
@@ -173,6 +177,7 @@ describe('SSRF protection', () => {
             response.end();
             return;
           }
+
           response.setHeader('mcp-session-id', 'session-deferred');
           response.end(JSON.stringify({
             id: toolsCallId,
@@ -181,6 +186,7 @@ describe('SSRF protection', () => {
           }));
           return;
         }
+
         response.statusCode = 404;
         response.end();
       });

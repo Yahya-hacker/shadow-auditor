@@ -2,44 +2,48 @@ import { AIMessage } from '@langchain/core/messages';
 import { expect } from 'chai';
 
 import {normalizeProviderToolCalls} from '../src/core/providers/tool-call-normalizer.js';
-  it('#32 strips DSML block but keeps surrounding prose when tools are disabled', () => {
-    const message = new AIMessage(
-      '## Final Report\n\n' +
-      `${START}` +
-      '<｜｜DSML｜｜invoke name="finish_task">' +
-      '</｜｜DSML｜｜invoke>' +
-      `${END}` +
-      '\n\nEverything is fixed.',
-    );
-
-    const normalized = normalizeProviderToolCalls(message, 'deepseek', {allowTextEncodedToolCalls: false});
-
-    expect(AIMessage.isInstance(normalized)).to.equal(true);
-    const text = String(normalized.content);
-    expect(text).to.contain('## Final Report');
-    expect(text).to.contain('Everything is fixed.');
-    expect(text).to.not.contain('tool_calls');
-    if (!AIMessage.isInstance(normalized)) throw new Error('Expected an AI message.');
-    expect(normalized.tool_calls).to.have.length(0);
-  });
-
-  it('#32 throws only when DSML is the whole output after tools are disabled', () => {
-    const message = new AIMessage(
-      `${START}` +
-      '<｜｜DSML｜｜invoke name="finish_task">' +
-      '</｜｜DSML｜｜invoke>' +
-      `${END}`,
-    );
-
-    expect(() =>
-      normalizeProviderToolCalls(message, 'deepseek', {allowTextEncodedToolCalls: false}),
-    ).to.throw(/no prose|finalization|tool call/i);
-  });
 
 const START = '<｜｜DSML｜｜tool_calls>';
 const END = '</｜｜DSML｜｜tool_calls>';
 
 describe('provider tool-call normalizer', () => {
+  describe('#32 DSML text-encoded tool calls', () => {
+    it('#32 strips DSML block but keeps surrounding prose when tools are disabled', () => {
+      const message = new AIMessage(
+        '## Final Report\n\n' +
+        `${START}` +
+        '<｜｜DSML｜｜invoke name="finish_task">' +
+        '</｜｜DSML｜｜invoke>' +
+        `${END}` +
+        '\n\nEverything is fixed.',
+      );
+
+      const normalized = normalizeProviderToolCalls(message, 'deepseek', {allowTextEncodedToolCalls: false});
+
+      expect(AIMessage.isInstance(normalized)).to.equal(true);
+      const text = String(normalized.content);
+      expect(text).to.contain('## Final Report');
+      expect(text).to.contain('Everything is fixed.');
+      expect(text).to.not.contain('tool_calls');
+      if (!AIMessage.isInstance(normalized)) throw new Error('Expected an AI message.');
+      expect(normalized.tool_calls).to.have.length(0);
+    });
+
+    it('#32 throws only when DSML is the whole output after tools are disabled', () => {
+      const message = new AIMessage(
+        `${START}` +
+        '<｜｜DSML｜｜invoke name="finish_task">' +
+        '</｜｜DSML｜｜invoke>' +
+        `${END}`,
+      );
+
+      expect(() =>
+        normalizeProviderToolCalls(message, 'deepseek', {allowTextEncodedToolCalls: false}),
+      ).to.throw(/no prose|finalization|tool call/i);
+    });
+  });
+
+
   it('converts DeepSeek DSML tool calls into canonical LangChain calls', () => {
     const message = new AIMessage(
       `${START}` +

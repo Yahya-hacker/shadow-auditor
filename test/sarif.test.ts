@@ -30,7 +30,7 @@ describe('sarif output', () => {
         const sarif = generateSarifReport({
           findings: [
             {
-              cvss_v31_score: 0.0,
+              cvss_v31_score: 0,
               cvss_v31_vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N',
               cvss_v40_score: null,
               cwe: 'CWE-1041',

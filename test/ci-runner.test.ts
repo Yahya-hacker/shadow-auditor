@@ -124,8 +124,8 @@ describe('CI runner', () => {
     const createSession = deps.createSession;
     deps.createSession = (...args) => ({
       ...createSession(...args),
-      async sendMessage() { throw new Error('provider unavailable'); },
       async dispose() { throw new Error('dispose exploded'); },
+      async sendMessage() { throw new Error('provider unavailable'); },
     });
 
     let error: unknown;

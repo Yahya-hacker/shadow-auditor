@@ -130,6 +130,7 @@ describe('incremental watch', () => {
           failFirst = false;
           throw new Error('audit failed');
         }
+
         batches.push(batch);
       },
       root,

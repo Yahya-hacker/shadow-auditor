@@ -103,6 +103,7 @@ describe('atomic file recovery', () => {
       await fs.rm(secretDirectory, {force: true, recursive: true});
     }
   });
+
 it('steals a stale cross-process lockfile left by a crashed process', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'atomic-stale-lock-'));
     const filePath = path.join(directory, 'state.json');
@@ -135,7 +136,6 @@ it('steals a stale cross-process lockfile left by a crashed process', async () =
         fs.rm(lockPath, {force: true}).catch(() => {});
       }, 100);
 
-      const started = Date.now();
       await writeFileAtomic(filePath, '{"version":1}');
       clearTimeout(releaseTimer);
 

@@ -34,12 +34,13 @@ function cancellableDockerExecutor(
   return {};
 }
 
-function ipForInspect(args: readonly string[]): string | null {
+function ipForInspect(args: readonly string[]): null | string {
   // The IP-inspect uses `--format '{{range .NetworkSettings...}}'`; the
   // running-state inspect uses `--format '{{.State.Running}}'`.
   if (args[0] === 'inspect' && args[1] === '--format' && String(args[2]).includes('{{range')) {
     return '172.18.0.2\n';
   }
+
   return null;
 }
 

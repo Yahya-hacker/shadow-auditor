@@ -3,11 +3,51 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import type { MissionState } from '../src/core/orchestrator/mission-state.js';
+
 import {
   CheckpointManager,
 } from '../src/core/orchestrator/checkpoints.js';
-import type { MissionState } from '../src/core/orchestrator/mission-state.js';
 import { missionStateSchema } from '../src/core/orchestrator/mission-state.js';
+
+function makeState(missionId: string): MissionState {
+  const now = new Date().toISOString();
+  return missionStateSchema.parse({
+    budget: {
+      maxTokens: 10_000,
+      maxToolCalls: 100,
+      modelReservations: {},
+      reservedToolCallIds: [],
+      tokensUsed: 0,
+      toolCallsUsed: 0,
+    },
+    completedActions: [],
+    confidence: 0,
+    currentPhase: 'OBSERVE',
+    hypotheses: [],
+    lastTransitionAt: now,
+    missionId,
+    objectives: [
+      {
+        constraints: [],
+        description: 'Audit target for security vulnerabilities',
+        objectiveId: 'objective01',
+        priority: 'high',
+        scope: {
+          excludePaths: [],
+          includePaths: ['src'],
+          targetTypes: ['typescript'],
+        },
+        status: 'pending',
+      },
+    ],
+    pendingActions: [],
+    phaseHistory: [
+      { phase: 'OBSERVE', reason: 'evidence_collected', timestamp: now },
+    ],
+    startedAt: now,
+  });
+}
 
 describe('CheckpointManager latest-checkpoint selection', () => {
   let storagePath: string;
@@ -22,45 +62,6 @@ describe('CheckpointManager latest-checkpoint selection', () => {
   afterEach(async () => {
     await fs.rm(storagePath, { force: true, recursive: true });
   });
-
-  function makeState(missionId: string): MissionState {
-    const now = new Date().toISOString();
-    return missionStateSchema.parse({
-      budget: {
-        maxTokens: 10_000,
-        maxToolCalls: 100,
-        modelReservations: {},
-        reservedToolCallIds: [],
-        tokensUsed: 0,
-        toolCallsUsed: 0,
-      },
-      completedActions: [],
-      confidence: 0,
-      currentPhase: 'OBSERVE',
-      hypotheses: [],
-      lastTransitionAt: now,
-      missionId,
-      objectives: [
-        {
-          constraints: [],
-          description: 'Audit target for security vulnerabilities',
-          objectiveId: 'objective01',
-          priority: 'high',
-          scope: {
-            excludePaths: [],
-            includePaths: ['src'],
-            targetTypes: ['typescript'],
-          },
-          status: 'pending',
-        },
-      ],
-      pendingActions: [],
-      phaseHistory: [
-        { phase: 'OBSERVE', reason: 'evidence_collected', timestamp: now },
-      ],
-      startedAt: now,
-    });
-  }
 
   it('returns the newest checkpoint by creation time', async () => {
     const state = makeState('mission01');

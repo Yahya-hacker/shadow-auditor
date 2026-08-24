@@ -83,7 +83,7 @@ describe('HistoryScreen session metadata validation', () => {
   it('rejects a payload with a non-string completedAt', () => {
     expect(
       isSessionMetadata({
-        completedAt: 12345,
+        completedAt: 12_345,
         maxOutputTokens: 8000,
         maxToolSteps: 50,
         mcpEnabled: false,

@@ -193,13 +193,13 @@ describe('processAgentStream', () => {
 
     const reasoningEvents = emitted.filter((event) => event.kind === 'reasoning');
     expect(reasoningEvents.length).to.be.greaterThan(0);
-    expect(reasoningEvents[reasoningEvents.length - 1]).to.deep.include({
+    expect(reasoningEvents.at(-1)).to.deep.include({
       agent: 'SAST Auditor',
       kind: 'reasoning',
       stage: 'sast_audit',
     });
     // The full accumulated reasoning is emitted on block finish.
-    expect(reasoningEvents[reasoningEvents.length - 1]?.message).to.include('trace the request boundary');
+    expect(reasoningEvents.at(-1)?.message).to.include('trace the request boundary');
   });
 
   it('never exposes DeepSeek raw reasoning content as public progress', async () => {

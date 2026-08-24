@@ -7,6 +7,8 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import type { EmbeddingProvider } from '../src/core/memory/semantic-index.js';
+
 import { HybridRetriever } from '../src/core/memory/hybrid-retriever.js';
 import { KnowledgeGraph } from '../src/core/memory/knowledge-graph.js';
 import { Retrieval } from '../src/core/memory/retrieval.js';
@@ -14,7 +16,6 @@ import {
   NullEmbeddingProvider,
   SemanticIndex,
 } from '../src/core/memory/semantic-index.js';
-import type { EmbeddingProvider } from '../src/core/memory/semantic-index.js';
 
 /**
  * Deterministic embedding provider for tests. Every text maps to the same unit
@@ -31,7 +32,7 @@ class AligningEmbeddingProvider implements EmbeddingProvider {
 
   async embed(_texts: string[]): Promise<number[][]> {
     // [1, 0, 0, ...] normalized — identical for every input.
-    const v = [1.0, 0, 0, 0, 0, 0, 0, 0];
+    const v = [1, 0, 0, 0, 0, 0, 0, 0];
     return Array.from({ length: _texts.length }, () => v);
   }
 

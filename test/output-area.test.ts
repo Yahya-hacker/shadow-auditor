@@ -129,7 +129,9 @@ describe('OutputArea activity filtering', () => {
     const ids = new Set(activity.map((item) => item.id));
     expect(ids.size).to.equal(2);
     expect(activity.every((item) => item.text === 'Reasoning about taint propagation')).to.equal(true);
-  });  it('uses structured finding IDs instead of presentation labels', () => {
+  });
+
+  it('uses structured finding IDs instead of presentation labels', () => {
     const finding = {
       agent: 'SAST Auditor',
       id: 'finding',

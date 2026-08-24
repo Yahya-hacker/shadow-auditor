@@ -40,9 +40,8 @@ describe('MarkdownRenderer', () => {
       'paragraph',
     ]);
   });
-});
 
-    describe('MarkdownRenderer.parseInline', () => {
+  describe('MarkdownRenderer.parseInline', () => {
       it('parses triple-asterisk content as a single bold segment before the bold branch', () => {
         const segments = parseInline('***strong + emphasized***', false);
         expect(segments).to.deep.equal([{text: 'strong + emphasized', type: 'bold'}]);
@@ -73,3 +72,4 @@ describe('MarkdownRenderer', () => {
         ]);
       });
     });
+  });
