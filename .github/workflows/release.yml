@@ -115,6 +115,7 @@ jobs:
       - name: Upload verified artifact to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
@@ -163,9 +164,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::NPM_TOKEN secret is not configured. The verified tarball is already" \
-              "attached to the GitHub Release; add an 'npm' environment with an NPM_TOKEN secret" \
-              "and re-run this workflow to publish to registry.npmjs.org."
-            exit 1
+            echo "::warning::NPM_TOKEN secret is not configured. Skipping npm publish; the" \
+              "verified tarball is already attached to the GitHub Release. Add an 'npm'" \
+              "environment with an NPM_TOKEN secret and re-run to publish to registry.npmjs.org."
+            exit 0
           fi
           npm publish release-artifact/package.tgz --access public --ignore-scripts --provenance --registry=https://registry.npmjs.org/
