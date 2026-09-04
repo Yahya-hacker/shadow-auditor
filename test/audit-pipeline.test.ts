@@ -1014,6 +1014,279 @@ describe('deterministic audit pipeline', () => {
     expect(stageCounts.get('codebase')).to.equal(2);
   });
 
+  it('executes unconfirmed siblings and denies only the confirmed tool in a mixed batch', async () => {
+    const stageCounts = new Map<string, number>();
+    const model = createModel((messages) => {
+      const stage = stageFromSystem(String(messages[0]?.content ?? ''));
+      const count = (stageCounts.get(stage) ?? 0) + 1;
+      stageCounts.set(stage, count);
+
+      if (stage === 'codebase' && count === 1) {
+        return toolCall('cb-read', 'read_file_content', {filePath: 'src/index.ts'});
+      }
+
+      if (stage === 'codebase') {
+        return new AIMessage(
+          '<repo_map>\n- src/index.ts: entry point\n</repo_map>\n' +
+            '<codebase_report>\n# Architecture\nInspected `src/index.ts`.\n</codebase_report>',
+        );
+      }
+
+      if (stage === 'sast' && count === 1) {
+        return new AIMessage({
+          content: '',
+          tool_calls: [
+            {args: {command: 'find . -name "*.ts"'}, id: 'call_1', name: 'execute_command', type: 'tool_call'},
+            {args: {filePath: 'src/index.ts'}, id: 'call_2', name: 'read_file_content', type: 'tool_call'},
+          ],
+        });
+      }
+
+      if (stage === 'sast') {
+        return new AIMessage(
+          '<sast_report>\n# SAST\nNo candidates.\n</sast_report>\n' +
+            '<sast_candidates_json>\n[]\n</sast_candidates_json>',
+        );
+      }
+
+      if (stage === 'devil') {
+        return new AIMessage(
+          '<adversarial_report>\n# Validation\nNo candidates.\n</adversarial_report>\n' +
+            '<verdicts_json>\n[]\n</verdicts_json>',
+        );
+      }
+
+      if (stage === 'reporter' && count === 1) {
+        return toolCall('finish-isolated', 'finish_task', {summary: 'Audit complete.'});
+      }
+
+      return new AIMessage('# Security Audit Report\n\nNo confirmed findings.');
+    });
+    let commandAttempts = 0;
+    const commandTool: ToolEntry = {
+      name: 'execute_command',
+      tool: {
+        description: 'Run a host command.',
+        async execute() {
+          commandAttempts++;
+          return 'command output';
+        },
+        inputSchema: z.object({command: z.string()}),
+      },
+    } as ToolEntry;
+
+    const state = await compileWorkflow({
+      model,
+      repoMap: '- src/index.ts',
+      systemPrompt: 'You are Shadow.',
+      tools: [...tools(), commandTool],
+    }).invoke(
+      {
+        auditRunId: 'audit-run-isolation',
+        messages: [new HumanMessage('Audit this repository.')],
+        mission: 'Audit this repository.',
+      },
+      {recursionLimit: WORKFLOW_RECURSION_LIMIT},
+    );
+
+    expect(commandAttempts).to.equal(0);
+    const batchedIndex = state.messages.findIndex(
+      (message) => AIMessage.isInstance(message) && message.tool_calls?.length === 2,
+    );
+    expect(batchedIndex).to.be.greaterThan(-1);
+    const results = state.messages
+      .slice(batchedIndex + 1, batchedIndex + 3)
+      .map((message) => message._getType() === 'tool' ? message : undefined)
+      .filter((message) => message !== undefined) as ToolMessage[];
+    expect(results).to.have.length(2);
+    const denied = results.find((message) => message.name === 'execute_command');
+    const read = results.find((message) => message.name === 'read_file_content');
+    expect(String(read?.content)).to.include('source:src/index.ts');
+    expect(String(denied?.content)).to.include('ONLY tool call');
+    expect(String(denied?.content)).to.include('execute_command');
+
+    // Every tool result must reference an id from its preceding assistant
+    // message and no id may appear twice, or OpenAI-compatible endpoints
+    // reject the replayed history with HTTP 400.
+    const requestedIds = new Set(
+      state.messages.flatMap((message) =>
+        AIMessage.isInstance(message) ? message.tool_calls?.map((call) => call.id) ?? [] : []),
+    );
+    const answeredIds = new Set<string>();
+    for (const message of state.messages) {
+      if (message._getType() !== 'tool') continue;
+      const toolMessage = message as ToolMessage;
+      expect(requestedIds.has(toolMessage.tool_call_id)).to.equal(true);
+      expect(answeredIds.has(toolMessage.tool_call_id)).to.equal(false);
+      answeredIds.add(toolMessage.tool_call_id);
+    }
+
+    expect(state.pipelineReport).to.include('No confirmed findings.');
+  });
+
+  it('denies every confirmed tool in a confirmed-only batch without executing any', async () => {
+    const stageCounts = new Map<string, number>();
+    const model = createModel((messages) => {
+      const stage = stageFromSystem(String(messages[0]?.content ?? ''));
+      const count = (stageCounts.get(stage) ?? 0) + 1;
+      stageCounts.set(stage, count);
+
+      if (stage === 'codebase' && count === 1) {
+        return toolCall('cb-read', 'read_file_content', {filePath: 'src/index.ts'});
+      }
+
+      if (stage === 'codebase') {
+        return new AIMessage(
+          '<repo_map>\n- src/index.ts: entry point\n</repo_map>\n' +
+            '<codebase_report>\n# Architecture\nInspected `src/index.ts`.\n</codebase_report>',
+        );
+      }
+
+      if (stage === 'sast' && count === 1) {
+        return new AIMessage({
+          content: '',
+          tool_calls: [
+            {args: {command: 'find . -name "*.ts"'}, id: 'cmd-1', name: 'execute_command', type: 'tool_call'},
+            {args: {command: 'ls -la'}, id: 'cmd-2', name: 'execute_command', type: 'tool_call'},
+          ],
+        });
+      }
+
+      if (stage === 'sast' && count === 2) {
+        return toolCall('sast-read', 'read_file_content', {filePath: 'src/index.ts'});
+      }
+
+      if (stage === 'sast') {
+        return new AIMessage(
+          '<sast_report>\n# SAST\nNo candidates.\n</sast_report>\n' +
+            '<sast_candidates_json>\n[]\n</sast_candidates_json>',
+        );
+      }
+
+      if (stage === 'devil') {
+        return new AIMessage(
+          '<adversarial_report>\n# Validation\nNo candidates.\n</adversarial_report>\n' +
+            '<verdicts_json>\n[]\n</verdicts_json>',
+        );
+      }
+
+      if (stage === 'reporter' && count === 1) {
+        return toolCall('finish-denied-batch', 'finish_task', {summary: 'Audit complete.'});
+      }
+
+      return new AIMessage('# Security Audit Report\n\nNo confirmed findings.');
+    });
+    let commandAttempts = 0;
+    const commandTool: ToolEntry = {
+      name: 'execute_command',
+      tool: {
+        description: 'Run a host command.',
+        async execute() {
+          commandAttempts++;
+          return 'command output';
+        },
+        inputSchema: z.object({command: z.string()}),
+      },
+    } as ToolEntry;
+
+    const state = await compileWorkflow({
+      model,
+      repoMap: '- src/index.ts',
+      systemPrompt: 'You are Shadow.',
+      tools: [...tools(), commandTool],
+    }).invoke(
+      {
+        auditRunId: 'audit-run-denied-batch',
+        messages: [new HumanMessage('Audit this repository.')],
+        mission: 'Audit this repository.',
+      },
+      {recursionLimit: WORKFLOW_RECURSION_LIMIT},
+    );
+
+    expect(commandAttempts).to.equal(0);
+    const deniedMessages = state.messages.filter(
+      (message) => message._getType() === 'tool' &&
+        String((message as ToolMessage).content).includes('ONLY tool call'),
+    ) as ToolMessage[];
+    expect(deniedMessages).to.have.length(2);
+    expect(deniedMessages[0]?.tool_call_id).to.equal('cmd-1');
+    expect(deniedMessages[1]?.tool_call_id).to.equal('cmd-2');
+  });
+
+  it('lets a single human-confirmed tool call execute without isolation denial', async () => {
+    const stageCounts = new Map<string, number>();
+    const model = createModel((messages) => {
+      const stage = stageFromSystem(String(messages[0]?.content ?? ''));
+      const count = (stageCounts.get(stage) ?? 0) + 1;
+      stageCounts.set(stage, count);
+
+      if (stage === 'codebase' && count === 1) {
+        return toolCall('cb-read', 'read_file_content', {filePath: 'src/index.ts'});
+      }
+
+      if (stage === 'codebase') {
+        return new AIMessage(
+          '<repo_map>\n- src/index.ts: entry point\n</repo_map>\n' +
+            '<codebase_report>\n# Architecture\nInspected `src/index.ts`.\n</codebase_report>',
+        );
+      }
+
+      if (stage === 'sast' && count === 1) {
+        return toolCall('solo-cmd', 'execute_command', {command: 'find . -name "*.ts"'});
+      }
+
+      if (stage === 'sast') {
+        return new AIMessage(
+          '<sast_report>\n# SAST\nNo candidates.\n</sast_report>\n' +
+            '<sast_candidates_json>\n[]\n</sast_candidates_json>',
+        );
+      }
+
+      if (stage === 'devil') {
+        return new AIMessage(
+          '<adversarial_report>\n# Validation\nNo candidates.\n</adversarial_report>\n' +
+            '<verdicts_json>\n[]\n</verdicts_json>',
+        );
+      }
+
+      if (stage === 'reporter' && count === 1) {
+        return toolCall('finish-solo', 'finish_task', {summary: 'Audit complete.'});
+      }
+
+      return new AIMessage('# Security Audit Report\n\nNo confirmed findings.');
+    });
+    const commandTool: ToolEntry = {
+      name: 'execute_command',
+      tool: {
+        description: 'Run a host command.',
+        async execute() {
+          return 'command output';
+        },
+        inputSchema: z.object({command: z.string()}),
+      },
+    } as ToolEntry;
+
+    const state = await compileWorkflow({
+      model,
+      repoMap: '- src/index.ts',
+      systemPrompt: 'You are Shadow.',
+      tools: [...tools(), commandTool],
+    }).invoke(
+      {
+        auditRunId: 'audit-run-solo',
+        messages: [new HumanMessage('Audit this repository.')],
+        mission: 'Audit this repository.',
+      },
+      {recursionLimit: WORKFLOW_RECURSION_LIMIT},
+    );
+
+    const soloResult = state.messages.find(
+      (message) => message._getType() === 'tool' && (message as ToolMessage).name === 'execute_command',
+    ) as ToolMessage | undefined;
+    expect(String(soloResult?.content)).to.include('command output');
+    expect(String(soloResult?.content)).to.not.include('DENIED');
+  });
+
   it('fails closed when a stage returns a malformed handoff', async () => {
     let invocation = 0;
     const model = createModel(() => {

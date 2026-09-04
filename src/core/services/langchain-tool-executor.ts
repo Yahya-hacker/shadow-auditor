@@ -21,7 +21,11 @@ import {
 } from '../orchestrator/mission-runtime.js';
 import { normalizeModelHistory } from '../providers/message-normalizer.js';
 import {bindToolsForProvider} from '../providers/tool-binding.js';
-import {normalizeProviderToolCalls} from '../providers/tool-call-normalizer.js';
+import {
+  collectUsedToolCallIds,
+  ensureUniqueToolCallIds,
+  normalizeProviderToolCalls,
+} from '../providers/tool-call-normalizer.js';
 import { type NormalizedTokenUsage, normalizeTokenUsage } from '../usage.js';
 import {
   canRunToolBatchConcurrently,
@@ -346,7 +350,10 @@ export async function executeLangChainToolLoop(
       ),
       normalizeTokenUsage,
     );
-    const normalizedResponse = normalizeProviderToolCalls(rawResponse, options.providerHint);
+    const normalizedResponse = ensureUniqueToolCallIds(
+      normalizeProviderToolCalls(rawResponse, options.providerHint),
+      collectUsedToolCallIds(messages),
+    );
     if (!AIMessage.isInstance(normalizedResponse)) {
       throw new TypeError('Provider tool-call normalization returned a non-AI message.');
     }

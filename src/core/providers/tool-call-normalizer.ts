@@ -92,6 +92,76 @@ function generatedToolCallId(index: number, prefix = 'call'): string {
   return `${prefix}_${index}_${randomUUID()}`;
 }
 
+/**
+ * Every tool_call id already present in the conversation (assistant requests
+ * and tool results). Some OpenAI-compatible servers (e.g. self-hosted Qwen
+ * endpoints) hand out deterministic ids like `call_1` on every response, so
+ * retries reuse ids from earlier turns. Replayed history then contains
+ * duplicate tool_call_ids, which those endpoints reject with HTTP 400 — and
+ * LangGraph's ToolNode silently skips any call whose id already has a result,
+ * leaving orphaned tool calls that also crash the next request.
+ */
+export function collectUsedToolCallIds(messages: readonly BaseMessage[]): Set<string> {
+  const used = new Set<string>();
+  for (const message of messages) {
+    const type = message._getType();
+    if (type === 'ai') {
+      for (const call of (message as AIMessage).tool_calls ?? []) {
+        if (call.id) used.add(call.id);
+      }
+    } else if (type === 'tool') {
+      const id = (message as BaseMessage & {tool_call_id?: string}).tool_call_id;
+      if (id) used.add(id);
+    }
+  }
+
+  return used;
+}
+
+/**
+ * Rewrites any tool_call id that collides with an id already used in the
+ * conversation (or with a sibling call inside the same message) so every call
+ * stays uniquely addressable. Missing ids are synthesized the same way
+ * normalizeStructuredToolCalls does.
+ */
+export function ensureUniqueToolCallIds(
+  message: BaseMessage,
+  usedIds: ReadonlySet<string>,
+): BaseMessage {
+  if (message._getType() !== 'ai') return message;
+
+  const aiMessage = message as AIMessage;
+  const calls = aiMessage.tool_calls;
+  if (!Array.isArray(calls) || calls.length === 0) return message;
+
+  const taken = new Set(usedIds);
+  let changed = false;
+  const toolCalls = calls.map((call, index) => {
+    if (call.id && !taken.has(call.id)) {
+      taken.add(call.id);
+      return call;
+    }
+
+    changed = true;
+    let id = generatedToolCallId(index);
+    while (taken.has(id)) id = generatedToolCallId(index);
+    taken.add(id);
+    return {...call, id};
+  });
+  if (!changed) return message;
+
+  return new AIMessage({
+    additional_kwargs: aiMessage.additional_kwargs,
+    content: aiMessage.content,
+    id: aiMessage.id,
+    invalid_tool_calls: aiMessage.invalid_tool_calls,
+    name: aiMessage.name,
+    response_metadata: aiMessage.response_metadata,
+    tool_calls: toolCalls,
+    usage_metadata: aiMessage.usage_metadata,
+  });
+}
+
 function parseInvoke(block: string, attributesSource: string, body: string, index: number): ToolCall {
   const attributes = parseAttributes(attributesSource, new Set(['name']));
   const name = attributes.name?.trim();

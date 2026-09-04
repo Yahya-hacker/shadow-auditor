@@ -1,7 +1,11 @@
-import { AIMessage } from '@langchain/core/messages';
+import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import { expect } from 'chai';
 
-import {normalizeProviderToolCalls} from '../src/core/providers/tool-call-normalizer.js';
+import {
+  collectUsedToolCallIds,
+  ensureUniqueToolCallIds,
+  normalizeProviderToolCalls,
+} from '../src/core/providers/tool-call-normalizer.js';
 
 const START = '<｜｜DSML｜｜tool_calls>';
 const END = '</｜｜DSML｜｜tool_calls>';
@@ -278,5 +282,60 @@ describe('provider tool-call normalizer', () => {
     expect(() => normalizeProviderToolCalls(message, 'deepseek', {
       allowTextEncodedToolCalls: false,
     })).to.throw('after tools were disabled');
+  });
+
+  it('rewrites tool-call ids that collide with ids already used in the conversation', () => {
+    // Deterministic providers (e.g. self-hosted Qwen endpoints) reuse ids like
+    // call_1 on every response. Replaying both turns must not produce
+    // duplicate tool_call_ids, which OpenAI-compatible servers reject with 400.
+    const history = [
+      new AIMessage({
+        content: '',
+        tool_calls: [{args: {filePath: 'src/index.ts'}, id: 'call_1', name: 'read_file_content', type: 'tool_call'}],
+      }),
+      new ToolMessage({content: 'source', tool_call_id: 'call_1'}),
+    ];
+    const repeat = new AIMessage({
+      content: '',
+      tool_calls: [
+        {args: {filePath: 'src/index.ts'}, id: 'call_1', name: 'read_file_content', type: 'tool_call'},
+        {args: {filePath: 'src/other.ts'}, id: 'call_2', name: 'read_file_content', type: 'tool_call'},
+      ],
+    });
+
+    const used = collectUsedToolCallIds(history);
+    expect(used.has('call_1')).to.equal(true);
+    expect(used.has('call_2')).to.equal(false);
+
+    const ensured = ensureUniqueToolCallIds(repeat, used);
+    if (!AIMessage.isInstance(ensured)) throw new Error('Expected an AI message.');
+    const ids = ensured.tool_calls?.map((call) => call.id) ?? [];
+    expect(ids).to.have.length(2);
+    expect(new Set(ids).size).to.equal(2);
+    expect(ids[0]).to.not.equal('call_1');
+    expect(ids[1]).to.equal('call_2');
+    expect(used.has(ids[0] ?? '')).to.equal(false);
+  });
+
+  it('leaves collision-free tool calls untouched and synthesizes missing ids', () => {
+    const message = new AIMessage({
+      content: '',
+      tool_calls: [
+        {args: {filePath: 'src/index.ts'}, id: 'fresh-1', name: 'read_file_content', type: 'tool_call'},
+        {args: {filePath: 'src/other.ts'}, id: 'fresh-2', name: 'read_file_content', type: 'tool_call'},
+      ],
+    });
+
+    expect(ensureUniqueToolCallIds(message, collectUsedToolCallIds([]))).to.equal(message);
+
+    const withMissing = ensureUniqueToolCallIds(
+      new AIMessage({
+        content: '',
+        tool_calls: [{args: {command: 'ls'}, name: 'execute_command', type: 'tool_call'}],
+      }),
+      collectUsedToolCallIds([]),
+    );
+    if (!AIMessage.isInstance(withMissing)) throw new Error('Expected an AI message.');
+    expect(withMissing.tool_calls?.[0]?.id).to.be.a('string').and.to.have.length.greaterThan(0);
   });
 });

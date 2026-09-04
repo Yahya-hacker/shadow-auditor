@@ -31,6 +31,8 @@ import {
 } from '../providers/message-normalizer.js';
 import {bindToolsForProvider} from '../providers/tool-binding.js';
 import {
+  collectUsedToolCallIds,
+  ensureUniqueToolCallIds,
   normalizeProviderToolCalls,
   toolCallSignature,
 } from '../providers/tool-call-normalizer.js';
@@ -528,6 +530,28 @@ async function invokeBoundedToolNode(
   return {messages};
 }
 
+function isolationDenialsFor(
+  confirmed: ToolCall[],
+  stage: AuditStage,
+  iteration: number,
+): ToolMessage[] {
+  const denials: ToolMessage[] = [];
+  for (const [index, call] of confirmed.entries()) {
+    denials.push(new ToolMessage({
+      content:
+        `[DENIED] ${call.name} requires human approval and cannot be requested together ` +
+        'with other tool calls. The other tool calls from your message were executed and ' +
+        `their results are included. To run ${call.name}, re-issue it as the ONLY tool ` +
+        'call in your next message.',
+      name: call.name,
+      status: 'error',
+      tool_call_id: call.id ?? `${stage}:${iteration}:denied:${index}`,
+    }));
+  }
+
+  return denials;
+}
+
 function memoryAwareToolNode(
   tools: DynamicStructuredTool[],
   stage: AuditStage,
@@ -537,38 +561,81 @@ function memoryAwareToolNode(
   const node = new ToolNode(tools);
   return async (state: AgentStateType, config: {signal?: AbortSignal}) => {
     const latestMessage = state.messages.at(-1);
-    const calls = getToolCalls(latestMessage).map((call, index) => ({
+    const allCalls = getToolCalls(latestMessage);
+    let executionCalls = allCalls;
+    let executionState = state;
+    const isolationDenials: ToolMessage[] = [];
+
+    // A human-confirmed tool must never share an assistant message with other
+    // calls: the approval that resumes the interrupt would replay the siblings.
+    // Denying the entire batch (the previous behaviour) left the model with zero
+    // progress, so it retried the identical batch forever and the reused
+    // tool_call ids eventually crashed the run with an HTTP 400. Instead,
+    // execute the unconfirmed calls and deny only the confirmed ones with an
+    // actionable repair hint.
+    if (
+      allCalls.length > 1 &&
+      allCalls.some((call) => HUMAN_CONFIRMATION_TOOL_NAMES.has(call.name))
+    ) {
+      const confirmed = allCalls.filter((call) =>
+        HUMAN_CONFIRMATION_TOOL_NAMES.has(call.name));
+      const executable = allCalls.filter((call) =>
+        !HUMAN_CONFIRMATION_TOOL_NAMES.has(call.name));
+      isolationDenials.push(...isolationDenialsFor(
+        confirmed,
+        stage,
+        state.stageIterations[stage],
+      ));
+
+      if (executable.length === 0) {
+        return {
+          messages: isolationDenials.map((message) =>
+            tagStageMessage(message, stage, state.auditRunId)),
+        };
+      }
+
+      let latestAssistantIndex = -1;
+      for (let index = state.messages.length - 1; index >= 0; index--) {
+        if (AIMessage.isInstance(state.messages[index])) {
+          latestAssistantIndex = index;
+          break;
+        }
+      }
+
+      const latestAssistant = state.messages[latestAssistantIndex];
+      if (AIMessage.isInstance(latestAssistant)) {
+        executionState = {
+          ...state,
+          messages: [
+            ...state.messages.slice(0, latestAssistantIndex),
+            assistantWithToolCalls(latestAssistant, executable),
+            ...state.messages.slice(latestAssistantIndex + 1),
+          ],
+        };
+      }
+
+      executionCalls = executable;
+    }
+
+    const calls = executionCalls.map((call, index) => ({
       callId: `${stage}:${state.stageIterations[stage]}:${index}`,
       name: call.name,
     }));
-    if (
-      calls.length > 1 &&
-      calls.some(({name}) => HUMAN_CONFIRMATION_TOOL_NAMES.has(name))
-    ) {
-      return {
-        messages: getToolCalls(latestMessage).map((call) => new ToolMessage({
-          content: '[DENIED] A human-confirmed tool must be requested alone so approval cannot replay another side effect.',
-          name: call.name,
-          status: 'error',
-          tool_call_id: call.id ?? `${call.name}-isolated-confirmation`,
-        })),
-      };
-    }
-
     const invocation = {
       executionId: `${stage}:${state.stageIterations[stage]}`,
       resumeReservedTools,
       stage,
     };
     await missionRuntime?.beforeToolExecution(invocation, calls);
-    const result = await invokeBoundedToolNode(node, state, config);
+    const result = await invokeBoundedToolNode(node, executionState, config);
     if (!result || typeof result !== 'object' || !('messages' in result)) {
       return result;
     }
 
+    const resultMessages: BaseMessage[] = [...(result.messages ?? []), ...isolationDenials];
     await missionRuntime?.afterToolExecution(
       invocation,
-      (result.messages ?? [])
+      resultMessages
         .filter((message: BaseMessage) => message._getType() === 'tool')
         .map((message: BaseMessage, index: number) => {
           const toolMessage = message as BaseMessage & {
@@ -588,7 +655,7 @@ function memoryAwareToolNode(
     const auditedFiles: string[] = [];
     const discoveredFindings: string[] = [];
     let successfulEvidenceActions = 0;
-    for (const message of result.messages ?? []) {
+    for (const message of resultMessages) {
       const succeeded = toolSucceeded(message);
       if (!succeeded) continue;
 
@@ -613,7 +680,7 @@ function memoryAwareToolNode(
         ...new Set([...discoveredFindings, ...state.discoveredFindings]),
       ],
       evidenceActions: state.evidenceActions + successfulEvidenceActions,
-      messages: (result.messages ?? []).map((message: BaseMessage) =>
+      messages: resultMessages.map((message: BaseMessage) =>
         tagStageMessage(message, stage, state.auditRunId)),
       workingMemory: memoryState.workingMemory,
     };
@@ -1424,9 +1491,12 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
     return enforceStageToolBudget(
       state,
       stage,
-      normalizeProviderToolCalls(response, providerHint, {
-        allowTextEncodedToolCalls: !finalizing,
-      }),
+      ensureUniqueToolCallIds(
+        normalizeProviderToolCalls(response, providerHint, {
+          allowTextEncodedToolCalls: !finalizing,
+        }),
+        collectUsedToolCallIds(state.messages),
+      ),
       stageToolSteps[stage],
     );
   }
@@ -1900,13 +1970,16 @@ export function compileWorkflow(options: CompileWorkflowOptions) {
       config.signal,
       'AuditPipeline',
     );
-    const response = enforceStageToolBudget(state, 'reporting', normalizeReporterToolCalls(normalizeProviderToolCalls(tagStageMessage(
-      rawReportingResponse,
-      'reporting',
-      state.auditRunId,
-    ), providerHint, {
-      allowTextEncodedToolCalls: !evidence.completionSucceeded,
-    }), state), stageToolSteps.reporting);
+    const response = enforceStageToolBudget(state, 'reporting', ensureUniqueToolCallIds(
+      normalizeReporterToolCalls(normalizeProviderToolCalls(tagStageMessage(
+        rawReportingResponse,
+        'reporting',
+        state.auditRunId,
+      ), providerHint, {
+        allowTextEncodedToolCalls: !evidence.completionSucceeded,
+      }), state),
+      collectUsedToolCallIds(state.messages),
+    ), stageToolSteps.reporting);
     let stageIterations: Record<AuditStage, number>;
     try {
       stageIterations = nextIterations(state, 'reporting', maxStageInvocations);
