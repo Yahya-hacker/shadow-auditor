@@ -1,7 +1,7 @@
 {
   "name": "shadow-auditor",
   "description": "Autonomous AI-powered Static Application Security Testing (SAST) CLI",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "author": "Yahya-hacker",
   "allowScripts": {
     "@tree-sitter-grammars/tree-sitter-markdown": true,
