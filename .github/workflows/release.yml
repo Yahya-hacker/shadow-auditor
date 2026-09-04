@@ -36,8 +36,8 @@ jobs:
           git merge-base --is-ancestor HEAD origin/main
       - run: npm ci
       - run: npm audit --audit-level=high
-      - run: npm test
-      - run: npm run build
+            - run: npm run build
+            - run: npm test
       - run: npm run test:native
       - name: Build release artifact
         run: |
