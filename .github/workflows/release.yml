@@ -95,6 +95,31 @@ jobs:
           node -e 'const Parser = require("tree-sitter"); const TypeScript = require("tree-sitter-typescript").typescript; const parser = new Parser(); parser.setLanguage(TypeScript); if (parser.parse("const value: number = 1").rootNode.hasError) process.exit(1);'
           node -e 'const Parser = require("tree-sitter"); for (const [name, source] of [["toml", "enabled = true"], ["yaml", "enabled: true"]]) { const grammar = require("@tree-sitter-grammars/tree-sitter-" + name); const parser = new Parser(); parser.setLanguage(grammar); if (parser.parse(source).rootNode.hasError) process.exit(1); }'
 
+  attach-artifact:
+    name: Attach verified artifact to GitHub Release
+    needs:
+      - build-package
+      - smoke-package
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download verified artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: npm-package
+          path: release-artifact
+      - name: Verify artifact digest
+        run: cd release-artifact && sha256sum --check package.tgz.sha256
+      - name: Upload verified artifact to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          gh release upload "${RELEASE_TAG}" release-artifact/package.tgz --clobber
+          echo "Verified artifact uploaded to GitHub Release ${RELEASE_TAG}"
   publish:
     name: Publish verified package
     needs:
@@ -135,4 +160,12 @@ jobs:
       - name: Publish verified artifact
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish release-artifact/package.tgz --access public --ignore-scripts --provenance --registry=https://registry.npmjs.org/
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN secret is not configured. The verified tarball is already" \
+              "attached to the GitHub Release; add an 'npm' environment with an NPM_TOKEN secret" \
+              "and re-run this workflow to publish to registry.npmjs.org."
+            exit 1
+          fi
+          npm publish release-artifact/package.tgz --access public --ignore-scripts --provenance --registry=https://registry.npmjs.org/
