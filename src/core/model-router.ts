@@ -14,6 +14,7 @@ import {
 } from '../utils/provider-catalog.js';
 import {createAzureModel} from './providers/azure-model.js';
 import {DeepSeekChatOpenAI} from './providers/deepseek-model.js';
+import {diagnosticOpenAIFetch} from './providers/diagnostic-fetch.js';
 
 /**
  * Bridge cast for LangChain model type interop.
@@ -104,7 +105,11 @@ export function getLangchainModel(config: ShadowConfig): BaseChatModel {
 
       return asBaseChatModel(new ChatOpenAI({
         apiKey,
-              configuration: { baseURL: customBaseUrl, timeout: 120_000 },
+              configuration: {
+                baseURL: customBaseUrl,
+                fetch: diagnosticOpenAIFetch(globalThis.fetch, {provider: normalizedProvider}),
+                timeout: 120_000,
+              },
         maxRetries: 2,
         maxTokens,
         modelName: model,
@@ -120,7 +125,11 @@ export function getLangchainModel(config: ShadowConfig): BaseChatModel {
 
       return asBaseChatModel(new DeepSeekChatOpenAI({
         apiKey,
-              configuration: {baseURL, timeout: 120_000},
+              configuration: {
+                baseURL,
+                fetch: diagnosticOpenAIFetch(globalThis.fetch, {provider: normalizedProvider}),
+                timeout: 120_000,
+              },
         maxRetries: 2,
         maxTokens,
         modelKwargs: deepSeekReasoningSettings(config.reasoningEffort),
@@ -192,7 +201,11 @@ export function getLangchainModel(config: ShadowConfig): BaseChatModel {
 
         return asBaseChatModel(new ChatOpenAI({
           apiKey,
-                  configuration: { baseURL, timeout: 120_000 },
+                  configuration: {
+                    baseURL,
+                    fetch: diagnosticOpenAIFetch(globalThis.fetch, {provider: normalizedProvider}),
+                    timeout: 120_000,
+                  },
           maxRetries: 2,
           maxTokens,
           modelName: model,

@@ -88,6 +88,13 @@ export function toUserFacingError(message: string): string {
     return 'Authentication failed. Run again with --reconfigure.';
   }
 
+  const emptyBodyStatus = /(\d{3})\s+status code \(no body\)/i.exec(message);
+  if (emptyBodyStatus) {
+    return `The model provider returned HTTP ${emptyBodyStatus[1]} with no error details, so the request was rejected without an explanation. ` +
+      'This usually means the configured model is not served by this endpoint, or the request exceeded the model context window. ' +
+      'Run with --reconfigure to verify the model name and base URL, reduce the audit scope, or switch models.';
+  }
+
   if (/exceeded its \d+-invocation safety limit/i.test(message)) {
     return 'The audit stage exhausted its invocation ceiling before finalizing its evidence handoff. ' +
       'No partial findings were reported. Increase the affected agent budget with /tools or narrow the audit scope.';
