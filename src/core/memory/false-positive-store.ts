@@ -596,7 +596,16 @@ export class FalsePositiveStore {
       }
 
       const acquisitionCode = (acquisitionError as NodeJS.ErrnoException).code;
-      if (acquisitionCode !== 'EEXIST' && acquisitionCode !== 'ENOTEMPTY') {
+      // Windows maps "destination directory already exists" to EPERM/EACCES
+      // (MoveFileEx -> ERROR_ACCESS_DENIED), while POSIX uses EEXIST/ENOTEMPTY.
+      // Treat all of them as "lock is currently held" so the contender waits and
+      // reclaims instead of crashing the store.
+      if (
+        acquisitionCode !== 'EEXIST' &&
+        acquisitionCode !== 'ENOTEMPTY' &&
+        acquisitionCode !== 'EPERM' &&
+        acquisitionCode !== 'EACCES'
+      ) {
         throw acquisitionError;
       }
 

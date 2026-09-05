@@ -13,6 +13,8 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { removePathResilient } from '../../utils/fs-atomic.js';
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -604,7 +606,7 @@ export class TestRunner {
         timeoutMs: this.timeoutMs,
       });
     } finally {
-      await fs.rm(workspaceParent, { force: true, recursive: true });
+      await removePathResilient(workspaceParent);
     }
   }
 
@@ -699,7 +701,7 @@ function applyPatchToWorkspace(
     signal?: AbortSignal,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
-      const child = spawn('git', ['apply', '--whitespace=nowarn', '-'], {
+      const child = spawn('git', ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'apply', '--whitespace=nowarn', '-'], {
         cwd: workspace,
         signal,
         stdio: ['pipe', 'ignore', 'pipe'],

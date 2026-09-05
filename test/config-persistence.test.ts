@@ -10,20 +10,28 @@ import {
   validateConfig,
 } from '../src/utils/config.js';
 
+// `os.homedir()` reads `HOME` on POSIX and `USERPROFILE` (falling back to
+// `HOMEDRIVE`+`HOMEPATH`) on Windows, so override both to sandbox config paths.
+const HOME_ENV_VARS = ['HOME', 'USERPROFILE'] as const;
+
 describe('configuration persistence', () => {
-  let originalHome: string | undefined;
+  let originalEnv: Record<string, string | undefined>;
   let tempPath: string;
 
   beforeEach(async () => {
-    originalHome = process.env.HOME;
+    originalEnv = Object.fromEntries(HOME_ENV_VARS.map(key => [key, process.env[key]]));
     tempPath = await fs.mkdtemp(path.join(os.tmpdir(), 'shadow-config-'));
-    process.env.HOME = tempPath;
+    for (const key of HOME_ENV_VARS) process.env[key] = tempPath;
   });
 
   afterEach(async () => {
     registerSecretStoreAdapter(null);
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
+    for (const key of HOME_ENV_VARS) {
+      const value = originalEnv[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+
     await fs.rm(tempPath, {force: true, recursive: true});
   });
 

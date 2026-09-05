@@ -246,6 +246,36 @@ export async function withPathLock<T>(filePath: string, operation: () => Promise
   }
 }
 
+// Windows can hold a directory handle for a few milliseconds after a spawned
+// child process (git, a test runner, etc.) exits, so a single `fs.rm` can fail
+// with EBUSY/EPERM/ENOTEMPTY. Retry with a short backoff before giving up.
+const REMOVABLE_BUSY_CODES = new Set(['EACCES', 'EBUSY', 'ENOTEMPTY', 'EPERM']);
+
+export async function removePathResilient(
+  target: string,
+  options: {force?: boolean; recursive?: boolean} = {},
+  maxAttempts = 5,
+): Promise<void> {
+  const {force = true, recursive = true} = options;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      await fs.rm(target, {force, recursive});
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') return;
+      if (!REMOVABLE_BUSY_CODES.has(code ?? '')) throw error;
+      lastError = error;
+      await new Promise<void>(resolve => {
+        setTimeout(resolve, 50 * 2 ** attempt);
+      });
+    }
+  }
+
+  throw lastError;
+}
+
 async function restoreBackup(
   filePath: string,
   backupPath: string,

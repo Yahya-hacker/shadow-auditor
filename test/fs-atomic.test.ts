@@ -78,14 +78,27 @@ describe('atomic file recovery', () => {
     }
   });
 
-  it('rejects attacker-controlled recovery symlinks', async () => {
+  it('rejects attacker-controlled recovery symlinks', async function () {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'atomic-symlink-'));
     const secretDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'atomic-secret-'));
     const filePath = path.join(directory, 'state.json');
     const secretPath = path.join(secretDirectory, 'secret.txt');
     try {
       await fs.writeFile(secretPath, 'host secret');
-      await fs.symlink(secretPath, `${filePath}.shadow-atomic-backup`);
+      try {
+        // File symlinks need Developer Mode or admin on Windows; skip when the
+        // platform refuses to create one rather than failing the build.
+        await fs.symlink(secretPath, `${filePath}.shadow-atomic-backup`);
+      } catch (error) {
+        const {code} = (error as NodeJS.ErrnoException);
+        if (code === 'EPERM' || code === 'EACCES') {
+          this.skip();
+          return;
+        }
+
+        throw error;
+      }
+
       await fs.writeFile(`${filePath}.shadow-atomic-journal`, '{}');
 
       let error: unknown;

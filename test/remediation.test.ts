@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { RemediationLoop } from '../src/core/remediation/remediation-loop.js';
 import { createRemediationTools } from '../src/core/remediation/remediation-tools.js';
 import { type TestFingerprint, TestRunner } from '../src/core/remediation/test-runner.js';
+import { removePathResilient } from '../src/utils/fs-atomic.js';
 
 describe('remediation', () => {
   describe('TestRunner', () => {
@@ -732,7 +733,9 @@ describe('remediation', () => {
         expect(await fs.readFile(path.join(tmpDir, 'target.txt'), 'utf8')).to.equal('before\n');
         expect(await fs.readFile(path.join(tmpDir, 'user.txt'), 'utf8')).to.equal('user-change\n');
       } finally {
-        await fs.rm(tmpDir, { force: true, recursive: true });
+        // The aborted test-runner child can leave a directory handle briefly on
+        // Windows, so retry removal rather than failing the test.
+        await removePathResilient(tmpDir);
       }
     });
 

@@ -22,7 +22,9 @@ describe('audit target identity', () => {
       const target = path.join(root, 'target');
       const link = path.join(root, 'link');
       await fs.mkdir(target);
-      await fs.symlink(target, link, 'dir');
+      // Junctions require no Developer Mode/admin on Windows; `realpath` resolves
+      // them exactly like POSIX directory symlinks.
+      await fs.symlink(target, link, process.platform === 'win32' ? 'junction' : 'dir');
 
       const selection = resolveAuditTarget(link);
       expect(selection.canonicalPath).to.equal(await fs.realpath(target));

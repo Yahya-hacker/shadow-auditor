@@ -65,7 +65,9 @@ function gitExec(
 ): Promise<{ exitCode: number; stderr: string; stdout: string }> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const child = spawn('git', args, {
+    // Apply patches byte-for-byte so Windows `core.autocrlf=true` (the default)
+    // cannot rewrite LF working-tree bytes into CRLF and corrupt remediated files.
+    const child = spawn('git', ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', ...args], {
       cwd,
       signal,
       stdio: ['pipe', 'pipe', 'pipe'],
