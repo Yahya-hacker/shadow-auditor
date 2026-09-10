@@ -15,6 +15,7 @@ import { saveConfig, type ShadowConfig } from '../utils/config.js';
 import { diagnoseAzureError } from '../utils/error-classification.js';
 import { HumanInteractionService } from '../utils/human-in-loop.js';
 import { logToStderr } from '../utils/stderr-logger.js';
+import { getPackageVersion } from '../version.js';
 import { calculateWorkflowRecursionLimit, compileWorkflow } from './graph/workflow.js';
 import { SwarmCoordinator } from './hivemind/swarm-coordinator.js';
 import { type SwarmStateSnapshot } from './hivemind/swarm-supervisor.js';
@@ -693,7 +694,7 @@ Use your tools to inspect implementation details, verify assumptions, and produc
       runId: path.basename(this.artifacts!.getRunDirectory()),
       scanMode: this.config.auditMode,
       targetName: path.basename(resolvedTargetPath),
-      toolVersion: '1.0.0',
+      toolVersion: getPackageVersion(),
     });
     this.reportBuilder.setStartTime(Date.now());
   }

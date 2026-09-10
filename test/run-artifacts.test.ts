@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { RunArtifacts } from '../src/core/run-artifacts.js';
+import { rotateJsonlFile, RunArtifacts } from '../src/core/run-artifacts.js';
 import { persistMessages } from '../src/core/services/message-persistence.js';
 
 describe('RunArtifacts recovery', () => {
@@ -316,5 +316,32 @@ describe('RunArtifacts recovery', () => {
       expect(raw).not.contain('super-secret', 'password values should be redacted');
       expect(raw).to.contain('[REDACTED]');
     }
+  });
+
+  it('shifts the rotated file chain without losing a generation', async () => {
+    const filePath = path.join(targetPath, 'tool-events.jsonl');
+    await fs.writeFile(filePath, 'active\n');
+    await fs.writeFile(`${filePath}.1`, 'gen1\n');
+    await fs.writeFile(`${filePath}.2`, 'gen2\n');
+
+    await rotateJsonlFile(filePath);
+
+    expect(await fs.readFile(`${filePath}.1`, 'utf8')).to.equal('active\n');
+    expect(await fs.readFile(`${filePath}.2`, 'utf8')).to.equal('gen1\n');
+    expect(await fs.readFile(`${filePath}.3`, 'utf8')).to.equal('gen2\n');
+  });
+
+  it('degrades rotation on locked targets without throwing or losing the live file', async () => {
+    const filePath = path.join(targetPath, 'messages.jsonl');
+    await fs.writeFile(filePath, '{"record":1}\n');
+    for (const suffix of ['.1', '.2', '.3']) {
+      const blocker = `${filePath}${suffix}`;
+      await fs.mkdir(blocker);
+      await fs.writeFile(path.join(blocker, 'lock.txt'), 'held');
+    }
+
+    await rotateJsonlFile(filePath);
+
+    expect(await fs.readFile(filePath, 'utf8')).to.equal('{"record":1}\n');
   });
 });

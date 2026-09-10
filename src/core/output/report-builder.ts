@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import type { VerificationGates, VerificationResult } from '../verify/gates.js';
 
 import { writeFileAtomic } from '../../utils/fs-atomic.js';
+import { getPackageVersion } from '../../version.js';
 import { SCHEMA_VERSION } from '../schema/base.js';
 import {
   type EnhancedFinding,
@@ -86,7 +87,7 @@ export class ReportBuilder {
       generateSarif: true,
       scanMode: undefined,
       targetName: 'unknown',
-      toolVersion: '1.0.0',
+      toolVersion: getPackageVersion(),
       verificationGates: undefined,
       ...options,
     };
@@ -201,7 +202,7 @@ export class ReportBuilder {
       scanMode: this.options.scanMode,
       schemaVersion: SCHEMA_VERSION,
       targetName: this.options.targetName,
-      toolVersion: this.options.toolVersion ?? '1.0.0',
+      toolVersion: this.options.toolVersion ?? 'unknown',
     };
     
     const summary = this.computeSummary();

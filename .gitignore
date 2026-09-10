@@ -11,3 +11,5 @@ shadow-prompt.md
 # TypeScript incremental build cache
 tsconfig.tsbuildinfo
 
+# Qoder extension workspace state
+.qoder/
