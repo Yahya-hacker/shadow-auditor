@@ -198,6 +198,7 @@ export type ConsensusRecord = z.infer<typeof consensusRecordSchema>;
 
 export const blackboardStateSchema = z.object({
   agents: z.array(agentRegistrationSchema).default([]),
+  agentTrustScores: z.record(z.number().min(0).max(1)).default({}),
   claims: z.array(evidenceClaimSchema).default([]),
   conflicts: z.array(conflictMarkerSchema).default([]),
   consensusRecords: z.array(consensusRecordSchema).default([]),

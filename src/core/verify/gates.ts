@@ -60,6 +60,14 @@ export interface VerificationGatesOptions {
 
   /** Require data flow verification for injection findings (default: true) */
   requireDataFlow?: boolean;
+
+  /**
+   * Treat `minimum_confidence` as a hard emission gate (default: false).
+   * Confidence remains advisory by default: it is still computed and stamped
+   * onto accepted findings, but low confidence alone never silently drops a
+   * finding that otherwise passed evidence gates.
+   */
+  requireMinimumConfidence?: boolean;
 }
 
 const DEFAULT_OPTIONS: Required<VerificationGatesOptions> = {
@@ -67,6 +75,7 @@ const DEFAULT_OPTIONS: Required<VerificationGatesOptions> = {
   minConfidence: CONFIDENCE_THRESHOLDS.reportInclusion,
   requireCodeEvidence: true,
   requireDataFlow: true,
+  requireMinimumConfidence: false,
 };
 
 /**
@@ -166,8 +175,15 @@ export class VerificationGates {
       }
     }
 
-    // Determine if finding can be emitted
-    const requiredGates = ['minimum_confidence'];
+    // Determine if finding can be emitted. Proven blocking contradictions are
+    // ALWAYS a hard gate: an entity marked both vulnerable and protected — or a
+    // claimed source→sink flow the graph cannot connect — must never reach a
+    // report. Other gates are required only when their policy option is set.
+    const requiredGates = ['no_contradictions'];
+    if (this.options.requireMinimumConfidence) {
+      requiredGates.push('minimum_confidence');
+    }
+
     if (this.options.requireCodeEvidence) {
       requiredGates.push('code_evidence');
     }

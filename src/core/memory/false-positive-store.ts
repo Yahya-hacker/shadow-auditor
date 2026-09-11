@@ -7,7 +7,7 @@ import { z } from 'zod';
 import type { SastCandidate } from '../graph/pipeline-artifacts.js';
 import type { EnhancedFinding } from '../output/finding-schema.js';
 
-import { recoverAtomicWrite, writeFileAtomic } from '../../utils/fs-atomic.js';
+import { recoverAtomicWrite, removePathResilient, writeFileAtomic } from '../../utils/fs-atomic.js';
 import { createPathGuard, type PathGuard } from '../policy/path-guard.js';
 
 const STORE_VERSION = 1;
@@ -16,6 +16,30 @@ const STORE_RELATIVE_PATH = path.join('.shadow-auditor', 'memory', 'false-positi
 const LOCK_RETRY_MS = 25;
 const LOCK_TIMEOUT_MS = 10_000;
 const STALE_LOCK_MS = 60_000;
+
+// Windows can transiently deny directory renames while a real-time scanner or
+// file indexer holds a handle on a freshly created lock directory. Retry with
+// a short backoff before surfacing the error, mirroring removePathResilient.
+const RENAME_BUSY_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
+
+async function renameWithRetry(fromPath: string, toPath: string, maxAttempts = 5): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      await fs.rename(fromPath, toPath);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!RENAME_BUSY_CODES.has(code ?? '')) throw error;
+      lastError = error;
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 50 * 2 ** attempt);
+      });
+    }
+  }
+
+  throw lastError;
+}
 
 const locationFingerprintSchema = z.object({
   fileDigest: z.string().regex(/^[a-f0-9]{64}$/),
@@ -195,13 +219,13 @@ async function reclaimAbandonedLock(lockPath: string): Promise<boolean> {
 
   const abandonedPath = `${lockPath}.abandoned-${crypto.randomUUID()}`;
   try {
-    await fs.rename(lockPath, abandonedPath);
+    await renameWithRetry(lockPath, abandonedPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
     throw error;
   }
 
-  await fs.rm(abandonedPath, {force: true, recursive: true});
+  await removePathResilient(abandonedPath);
   return true;
 }
 
@@ -219,7 +243,7 @@ async function removeAbandonedLock(lockPath: string): Promise<boolean> {
     reclaimed = await reclaimAbandonedLock(lockPath);
   } catch (operationError) {
     try {
-      await fs.rm(reclaimPath, {force: true, recursive: true});
+      await removePathResilient(reclaimPath);
     } catch (releaseError) {
       throw new AggregateError(
         [operationError, releaseError],
@@ -230,7 +254,7 @@ async function removeAbandonedLock(lockPath: string): Promise<boolean> {
     throw operationError;
   }
 
-  await fs.rm(reclaimPath, {force: true, recursive: true});
+  await removePathResilient(reclaimPath);
   return reclaimed;
 }
 
@@ -523,8 +547,8 @@ export class FalsePositiveStore {
         throw new Error('False-positive memory lock ownership changed unexpectedly.');
       }
 
-      await fs.rename(lockPath, releasedPath);
-      await fs.rm(releasedPath, {force: true, recursive: true});
+      await renameWithRetry(lockPath, releasedPath);
+      await removePathResilient(releasedPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -587,7 +611,7 @@ export class FalsePositiveStore {
       }
 
       try {
-        await fs.rm(candidatePath, {force: true, recursive: true});
+        await removePathResilient(candidatePath);
       } catch (cleanupError) {
         throw new AggregateError(
           [acquisitionError, cleanupError],

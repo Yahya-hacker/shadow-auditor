@@ -132,6 +132,7 @@ function mergeBlackboard(
 ): BlackboardState {
   return {
     agents: right.agents ?? left.agents,
+    agentTrustScores: right.agentTrustScores ?? left.agentTrustScores,
     claims: mergeById(left.claims, right.claims ?? [], 'claimId'),
     conflicts: mergeById(left.conflicts, right.conflicts ?? [], 'conflictId'),
     consensusRecords: right.consensusRecords ?? left.consensusRecords,
@@ -183,6 +184,7 @@ export const AgentState = Annotation.Root({
   blackboard: Annotation<BlackboardState>({
     default: () => ({
       agents: [],
+      agentTrustScores: {},
       claims: [],
       conflicts: [],
       consensusRecords: [],

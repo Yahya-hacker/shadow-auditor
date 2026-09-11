@@ -65,6 +65,7 @@ import {
 } from './tools/report-finding.js';
 import { createSearchCodebaseTool } from './tools/search-codebase.js';
 import { type NormalizedTokenUsage, normalizeTokenUsage } from './usage.js';
+import { VerificationGates } from './verify/gates.js';
 
 interface ContextCompactionValues {
   auditedFiles?: string[];
@@ -699,6 +700,29 @@ Use your tools to inspect implementation details, verify assumptions, and produc
     this.reportBuilder.setStartTime(Date.now());
   }
 
+  /**
+   * Wire verification gates into the report builder. This must run after
+   * mission-runtime initialization because the gates operate on the mission's
+   * knowledge graph. The production policy is deliberately conservative:
+   * only proven blocking contradictions hard-reject a finding (an entity the
+   * graph marks both vulnerable and protected, or a source→sink flow the graph
+   * cannot connect). Confidence is still recomputed and stamped onto every
+   * accepted finding, and failed-gate diagnostics are recorded on rejections.
+   */
+  private wireVerificationGates(): void {
+    const graph = this.missionEngine?.getGraph();
+    if (!graph || !this.reportBuilder) {
+      return;
+    }
+
+    this.reportBuilder.setVerificationGates(
+      new VerificationGates(graph, {
+        requireCodeEvidence: false,
+        requireDataFlow: false,
+      }),
+    );
+  }
+
   private async initialize(): Promise<void> {
     const {signal} = this.initializationController;
     signal.throwIfAborted();
@@ -738,6 +762,10 @@ Use your tools to inspect implementation details, verify assumptions, and produc
 
     await this.initializeMissionRuntime(resolvedTargetPath);
     signal.throwIfAborted();
+
+    // Verification gates need the mission graph, which only exists after
+    // mission-runtime initialization above.
+    this.wireVerificationGates();
 
     // Initialize semantic indexing after MissionEngine (needs KnowledgeGraph for HybridRetriever)
     const semanticIndex = await initializeSemanticIndex({

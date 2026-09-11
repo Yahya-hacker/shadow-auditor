@@ -86,27 +86,6 @@ export class Blackboard {
     return blackboard;
   }
 
-  /**
-   * Atomic claim and verify operation for cross-agent evidence flow.
-   */
-  claimAndVerify(
-    taskId: string,
-    claimId: string,
-    verifyingAgentId: string,
-  ): Result<{ claim: EvidenceClaim; task: Task; }, string> {
-    const claimRes = this.verifyClaim(claimId, verifyingAgentId);
-    if (!claimRes.ok) {
-      return err(claimRes.error);
-    }
-
-    const taskRes = this.taskGraph.claimTask(taskId, verifyingAgentId);
-    if (!taskRes.ok) {
-      return err(taskRes.error);
-    }
-
-    return ok({ claim: claimRes.value, task: taskRes.value });
-  }
-
   // ==========================================================================
   // Agent Management
   // ==========================================================================
@@ -237,6 +216,17 @@ export class Blackboard {
     return this.getActiveAgents().filter((agent) => agent.role === role);
   }
 
+  getAgentTrustScore(agentId: string): number | undefined {
+    return this.agentTrustScores.get(agentId);
+  }
+
+  /**
+   * Every known agent trust score, for snapshotting and state merges.
+   */
+  getAgentTrustScores(): Record<string, number> {
+    return Object.fromEntries(this.agentTrustScores);
+  }
+
   /**
    * Get all claims.
    */
@@ -291,6 +281,10 @@ export class Blackboard {
     return [...this.conflicts.values()].filter((c) => c.status === 'open' || c.status === 'resolving');
   }
 
+  // ==========================================================================
+  // Evidence Claims
+  // ==========================================================================
+
   /**
    * Get every registered agent, regardless of heartbeat freshness.
    *
@@ -310,10 +304,6 @@ export class Blackboard {
   getRunId(): string {
     return this.runId;
   }
-
-  // ==========================================================================
-  // Evidence Claims
-  // ==========================================================================
 
   /**
    * Get claims with skepticism annotations for cross-tier consumption.
@@ -356,7 +346,9 @@ export class Blackboard {
     const updated: AgentRegistration = {
       ...agent,
       lastHeartbeat: new Date().toISOString(),
-      status: status ?? agent.status,
+      // A silent heartbeat proves liveness: revive a pruned agent instead of
+      // latching it offline forever.
+      status: status ?? (agent.status === 'offline' ? 'idle' : agent.status),
     };
 
     this.agents.set(agentId, updated);
@@ -368,6 +360,10 @@ export class Blackboard {
     return () => this.claimSubmittedListeners.delete(callback);
   }
 
+  // ==========================================================================
+  // Conflict Management
+  // ==========================================================================
+
   onClaimVerified(callback: ClaimListener): () => void {
     this.claimVerifiedListeners.add(callback);
     return () => this.claimVerifiedListeners.delete(callback);
@@ -377,10 +373,6 @@ export class Blackboard {
     this.conflictCreatedListeners.add(callback);
     return () => this.conflictCreatedListeners.delete(callback);
   }
-
-  // ==========================================================================
-  // Conflict Management
-  // ==========================================================================
 
   onTaskCompleted(callback: TaskListener): () => void {
     this.taskCompletedListeners.add(callback);
@@ -399,6 +391,10 @@ export class Blackboard {
       }
     }
   }
+
+  // ==========================================================================
+  // Persistence
+  // ==========================================================================
 
   /**
    * Register an agent.
@@ -442,10 +438,6 @@ export class Blackboard {
     this.agentTrustScores.clear();
   }
 
-  // ==========================================================================
-  // Persistence
-  // ==========================================================================
-
   /**
    * Resolve a conflict.
    */
@@ -478,6 +470,7 @@ export class Blackboard {
     return this.enqueueWrite(async () => {
       const state: BlackboardState = {
         agents: [...this.agents.values()],
+        agentTrustScores: Object.fromEntries(this.agentTrustScores),
         claims: [...this.claims.values()],
         conflicts: [...this.conflicts.values()],
         consensusRecords: this.consensusManager.exportRecords(),
@@ -798,11 +791,20 @@ export class Blackboard {
 
       const state = result.value;
 
-      // Restore agents
+      // Restore agents and their accumulated trust scores. Trust is persisted
+      // in the snapshot so resumed runs do not wipe collaboration reputation.
       for (const agent of state.agents) {
         this.agents.set(agent.agentId, agent);
-        this.agentTrustScores.set(agent.agentId, 0.5);
+        const savedTrust = state.agentTrustScores[agent.agentId];
+        this.agentTrustScores.set(
+          agent.agentId,
+          Number.isFinite(savedTrust) ? savedTrust : 0.5,
+        );
       }
+
+      // Agents from a previous run have not heartbeated since snapshot time;
+      // mark stale registrations offline so they are not treated as live.
+      this.pruneInactiveAgents();
 
       // Restore claims
       for (const claim of state.claims) {

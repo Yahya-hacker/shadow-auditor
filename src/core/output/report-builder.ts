@@ -176,7 +176,7 @@ export class ReportBuilder {
 
     return { added: true };
   }
-  
+
   /**
    * Build the complete report.
    */
@@ -265,12 +265,19 @@ export class ReportBuilder {
     
     return result;
   }
-  
+
   /**
    * Get rejected findings for review.
    */
   getRejectedFindings(): typeof this.rejectedFindings {
     return [...this.rejectedFindings];
+  }
+
+  /**
+   * Current verification gates, if any.
+   */
+  getVerificationGates(): undefined | VerificationGates {
+    return this.options.verificationGates;
   }
   
   reset(): void {
@@ -290,13 +297,22 @@ export class ReportBuilder {
     this.filesTotal = total ?? 0;
     return this;
   }
-
+  
   /**
    * Set analysis start time.
    */
   setStartTime(time: number): this {
     this.startTime = time;
     return this;
+  }
+
+  /**
+   * Attach verification gates after construction. The mission knowledge graph
+   * does not exist yet when the builder is created, so production wiring plugs
+   * the gates in once the mission engine has initialized its graph.
+   */
+  setVerificationGates(gates: VerificationGates): void {
+    this.options.verificationGates = gates;
   }
   
   private computeSummary(): ReportSummary {
