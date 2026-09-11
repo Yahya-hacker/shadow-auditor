@@ -80,6 +80,22 @@ describe('HistoryScreen session metadata validation', () => {
     ).to.equal(false);
   });
 
+  it('rejects a payload with non-string warning entries', () => {
+    expect(
+      isSessionMetadata({
+        maxOutputTokens: 8000,
+        maxToolSteps: 50,
+        mcpEnabled: false,
+        model: 'gpt-4o',
+        provider: 'openai',
+        runId: 'run-1',
+        startedAt: '2024-01-01T00:00:00.000Z',
+        targetPath: '/repo',
+        warnings: ['valid warning', 123] as unknown as string[],
+      }),
+    ).to.equal(false);
+  });
+
   it('rejects a payload with a non-string completedAt', () => {
     expect(
       isSessionMetadata({

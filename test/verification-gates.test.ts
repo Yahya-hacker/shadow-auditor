@@ -264,7 +264,9 @@ describe('verification gates', () => {
       const result = gates.verify(candidate);
       expect(result.confidence).to.be.below(CONFIDENCE_THRESHOLDS.reportInclusion);
       expect(result.gateResults.minimum_confidence.passed).to.equal(false);
+      // Code evidence is absent too, which remains a hard default gate.
       expect(result.canEmit).to.equal(false);
+      expect(result.failedGates).to.include('code_evidence');
     });
 
     it('allows emission when required gates pass with sufficient confidence', () => {
@@ -317,6 +319,100 @@ describe('verification gates', () => {
       expect(result.gateResults.data_flow.passed).to.equal(true);
       expect(result.gateResults.minimum_confidence.passed).to.equal(true);
       expect(result.canEmit).to.equal(true);
+    });
+  });
+
+  describe('contradiction gate', () => {
+    it('blocks emission when an entity is marked both vulnerable and protected', () => {
+      const protectedEntityId = generateCanonicalId('file', { path: 'src/route.ts' });
+      const attackerId = generateCanonicalId('source', { name: 'attacker_input' });
+      const guardId = generateCanonicalId('credential', { name: 'rate_limiter' });
+
+      graph.addEntity(entity('file', 'src/route.ts', {}, 0.9, protectedEntityId));
+      graph.addEntity(entity('source', 'attacker_input', {}, 0.9, attackerId));
+      graph.addEntity(entity('credential', 'rate_limiter', {}, 0.9, guardId));
+
+      graph.addEdge('exploits', attackerId, protectedEntityId, { confidence: 0.85 });
+      graph.addEdge('guards', guardId, protectedEntityId, { confidence: 0.85 });
+
+      const candidate: FindingCandidate = {
+        cwe: 'CWE-79',
+        entityIds: [protectedEntityId],
+        title: 'Contradictory XSS finding',
+        toolRunRefs: [],
+      };
+
+      const result = gates.verify(candidate);
+      expect(result.gateResults.no_contradictions.passed).to.equal(false);
+      expect(result.canEmit).to.equal(false);
+      expect(result.failedGates).to.include('no_contradictions');
+    });
+  });
+
+  describe('minimum confidence gate opt-in', () => {
+    it('lets low-confidence candidates pass by default and emit when no hard gate fails', () => {
+      // Mirror the production policy: evidence gates advisory, contradictions hard.
+      const advisoryGates = new VerificationGates(graph, {
+        requireCodeEvidence: false,
+        requireDataFlow: false,
+      });
+      const sinkId = generateCanonicalId('sink', { lineNumber: 42, name: 'exec' });
+      graph.addEntity(
+        entity(
+          'sink',
+          'exec',
+          {
+            codeSnippet: 'exec(userInput)',
+            fileCanonicalId: generateCanonicalId('file', { path: 'src/cmd.ts' }),
+            lineNumber: 42,
+          },
+          0.95,
+          sinkId,
+        ),
+      );
+
+      const candidate: FindingCandidate = {
+        cwe: 'CWE-78',
+        entityIds: [sinkId],
+        title: 'Command injection with minimal evidence',
+        toolRunRefs: [],
+      };
+
+      const result = advisoryGates.verify(candidate);
+      expect(result.confidence).to.be.below(CONFIDENCE_THRESHOLDS.reportInclusion);
+      expect(result.gateResults.minimum_confidence.passed).to.equal(false);
+      // Advisory-only by default: evidence-linked finding still emits.
+      expect(result.canEmit).to.equal(true);
+    });
+
+    it('blocks emission when requireMinimumConfidence is enabled', () => {
+      const strictGates = new VerificationGates(graph, { requireMinimumConfidence: true });
+      const sinkId = generateCanonicalId('sink', { lineNumber: 7, name: 'eval' });
+      graph.addEntity(
+        entity(
+          'sink',
+          'eval',
+          {
+            codeSnippet: 'eval(userInput)',
+            fileCanonicalId: generateCanonicalId('file', { path: 'src/evil.ts' }),
+            lineNumber: 7,
+          },
+          0.95,
+          sinkId,
+        ),
+      );
+
+      const candidate: FindingCandidate = {
+        cwe: 'CWE-95',
+        entityIds: [sinkId],
+        title: 'Eval injection with minimal evidence',
+        toolRunRefs: [],
+      };
+
+      const result = strictGates.verify(candidate);
+      expect(result.gateResults.minimum_confidence.passed).to.equal(false);
+      expect(result.canEmit).to.equal(false);
+      expect(result.failedGates).to.include('minimum_confidence');
     });
   });
 

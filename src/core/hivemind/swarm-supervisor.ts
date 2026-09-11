@@ -650,6 +650,7 @@ function blackboardToState(blackboard: Blackboard): BlackboardState {
   const taskGraph = blackboard.getTaskGraph();
   return {
     agents: blackboard.getActiveAgents(),
+    agentTrustScores: blackboard.getAgentTrustScores(),
     claims: blackboard.getAllClaims(),
     conflicts: blackboard.getAllConflicts(),
     consensusRecords: blackboard.getConsensusRecords(),

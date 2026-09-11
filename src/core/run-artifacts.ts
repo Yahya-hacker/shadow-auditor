@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import type { SecurityReport } from './output/report-schema.js';
 
 import { recoverAtomicWrite, writeFileAtomic } from '../utils/fs-atomic.js';
+import { logToStderr } from '../utils/stderr-logger.js';
 import { redactSensitiveJson } from './stream-processor.js';
 
 /** Maximum size of a JSONL file before rotation (50 MB) */
@@ -124,8 +125,14 @@ async function appendJsonLine(filePath: string, payload: unknown): Promise<void>
 /**
  * Rotate a JSONL file: shift .2 -> .3, .1 -> .2, current -> .1
  * Keeps at most 3 rotated files to prevent unbounded disk usage.
+ *
+ * Rotation is best-effort: filesystems with resident locks (Windows
+ * antivirus/indexer EPERM, EACCES) can refuse the renames. The run must
+ * never die on a log-housekeeping failure, so it degrades to a
+ * copy-and-truncate of the active file and, if even that fails, keeps
+ * appending to the oversized file rather than losing audit data.
  */
-async function rotateJsonlFile(filePath: string): Promise<void> {
+export async function rotateJsonlFile(filePath: string): Promise<void> {
   for (let i = 2; i >= 1; i--) {
     const oldPath = `${filePath}.${i}`;
     const newPath = `${filePath}.${i + 1}`;
@@ -140,7 +147,22 @@ async function rotateJsonlFile(filePath: string): Promise<void> {
     }
   }
 
-  await fs.rename(filePath, `${filePath}.1`);
+  const rotatedPath = `${filePath}.1`;
+  try {
+    await fs.rename(filePath, rotatedPath);
+    return;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    logToStderr(`[run-artifacts] Rotation rename failed for ${path.basename(filePath)} (${reason}); falling back to copy-and-truncate.`);
+  }
+
+  try {
+    await fs.copyFile(filePath, rotatedPath);
+    await fs.truncate(filePath, 0);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    logToStderr(`[run-artifacts] Rotation copy failed for ${path.basename(filePath)} (${reason}); continuing to append to the oversized file so no audit data is lost.`);
+  }
 }
 
 export class RunArtifacts {

@@ -995,7 +995,18 @@ async function finishStream(context: StreamContext): Promise<ProcessAgentStreamR
     if (!state.fullResponse) {
       emitPublicText(context, report, false);
     } else if (state.fullResponse.trim() !== report.trim()) {
-      throw new Error('The streamed reporter response did not match the checkpointed final report.');
+      // The streamed public text can diverge from the persisted report when a
+      // reporter retries mid-stream (extra invocations append prose), when
+      // protocol re-filtering shifts whitespace, or when host salvage replaces
+      // the final report wholesale. The durable checkpoint is the source of
+      // truth — surface the divergence instead of failing a finished audit.
+      logToStderr(`[${options.logLabel}] WARNING: Streamed reporter output diverged from the checkpointed final report; using the checkpointed report.`);
+      context.emitEvent({
+        kind: 'status',
+        message: 'Streamed output diverged from the checkpointed report; restoring the checkpointed report.',
+      });
+      emitPublicText(context, report, true);
+      state.fullResponse = report;
     }
   }
 

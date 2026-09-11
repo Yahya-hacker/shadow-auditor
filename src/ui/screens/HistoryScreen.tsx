@@ -38,7 +38,8 @@ export function isSessionMetadata(value: unknown): value is SessionMetadata {
     typeof meta.provider === 'string' &&
     typeof meta.model === 'string' &&
     (meta.completedAt === undefined || typeof meta.completedAt === 'string') &&
-    Array.isArray(meta.warnings)
+    Array.isArray(meta.warnings) &&
+    meta.warnings.every((warning) => typeof warning === 'string')
   );
 }
 

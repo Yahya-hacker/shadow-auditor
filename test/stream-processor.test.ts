@@ -676,6 +676,39 @@ describe('processAgentStream', () => {
     expect(result.fullResponse).to.equal('# Verified report');
   });
 
+  it('restores the checkpointed report instead of throwing when streamed output diverges from it', async () => {
+    const chunks: string[] = [];
+    const emitted: Array<Omit<AgentStreamEvent, 'timestamp'>> = [];
+    const result = await processAgentStream(
+      (chunk) => chunks.push(chunk),
+      (event) => emitted.push(event),
+      {
+        inputs: {},
+        lcConfig: {configurable: {thread_id: 'test'}, version: 'v3'},
+        logLabel: 'test',
+        workflow: workflowFor(
+          [
+            toolUpdate('ReportingTools', [
+              {tool_calls: [{args: {summary: 'done'}, id: 'finish-1', name: 'finish_task'}]},
+              {content: 'done', name: 'finish_task', tool_call_id: 'finish-1', type: 'tool'},
+            ]),
+            messageEvent('ReportingAgent', 'content-block-start', {text: '# Streamed report', type: 'text'}),
+            messageEvent('ReportingAgent', 'content-block-delta', {text: '# Streamed report', type: 'text-delta'}),
+            messageEvent('ReportingAgent', 'content-block-finish', {text: '# Streamed report', type: 'text'}),
+          ],
+          {pipelineReport: '# Streamed report\n\n# Host-salvaged final report'},
+        ),
+      },
+    );
+
+    expect(chunks.join('')).to.equal('# Streamed report\n\n# Streamed report\n\n# Host-salvaged final report');
+    expect(result.fullResponse).to.equal('# Streamed report\n\n# Host-salvaged final report');
+    expect(result.finishTaskCompleted).to.equal(true);
+    expect(
+      emitted.some((event) => event.kind === 'status' && event.message?.includes('diverged from the checkpointed')),
+    ).to.equal(true);
+  });
+
   it('filters incomplete DeepSeek protocol prefixes from checkpoint report fallback', async () => {
     const chunks: string[] = [];
     const result = await processAgentStream(
